@@ -180,7 +180,7 @@ final class OPTISTATE
 
             $this->boot_server_caching($settings);
             $this->boot_login_protection($settings);
-            $this->boot_two_factor($settings);
+            $this->get_service('two_factor');
 
             if (is_admin()) {
                 $this->init_admin();
@@ -296,15 +296,6 @@ private function instantiate_admin_services(): void {
         }
     }
 
-    private function boot_two_factor(array $settings): void
-    {
-        if (empty($settings['enable_two_factor'])) {
-            return;
-        }
-
-        $this->get_service('two_factor');
-    }
-
     private function init_admin(): void
     {
         $this->admin_interface = new OPTISTATE_Admin_Interface($this);
@@ -414,13 +405,12 @@ private function instantiate_admin_services(): void {
         add_action('optistate_async_backup_complete', [$this, 'execute_post_backup_tasks']);
         add_action('optistate_scheduled_cleanup', [$this, 'run_scheduled_cleanup']);
 
-        add_action('optistate_run_pagespeed_worker', function (): void {
-            $service = $this->get_service('performance_audit');
-
-            if ($service) {
-                $service->run_pagespeed_worker();
-            }
-        });
+add_action('optistate_run_pagespeed_worker', function ($task_id): void {
+    $service = $this->get_service('performance_audit');
+    if ($service) {
+        $service->run_pagespeed_worker($task_id);
+    }
+});
 
         add_action('optistate_hourly_cleanup', function (): void {
             $service = $this->get_service('login_protection');

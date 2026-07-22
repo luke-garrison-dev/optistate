@@ -586,7 +586,7 @@ class OPTISTATE_Search_Replace
                             $search,
                             $case_sensitive,
                             $partial_match,
-                            140
+                            160
                         );
                         $visible_occurrences = substr_count(
                             $preview_text,

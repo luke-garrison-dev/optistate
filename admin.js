@@ -1798,50 +1798,53 @@ jQuery(document).ready(function($) {
         $container.empty().append(fragment);
     }
 
-    function displayStats(stats) {
-        if (!stats || typeof stats !== 'object') return;
-        const currentHeight = $statsContainer.outerHeight();
-        if (currentHeight > 0) $statsContainer.css({
-            minHeight: currentHeight
-        });
-        const fragment = document.createDocumentFragment();
-        Object.keys(stats).forEach(key => {
-            if (!labels[key]) return;
-            let value = (stats[key] === false || stats[key] === null) ? '0 B' : stats[key];
-            if (key === 'engine_distribution') {
-                if (typeof value === 'object' && value !== null) {
-                    const parts = [];
-                    for (const engine in value) {
-                        if (value.hasOwnProperty(engine)) {
-                            const data = value[engine];
-                            parts.push(engine + ': ' + data.count + ' tables (' + data.size + ')');
-                        }
+function displayStats(stats) {
+    if (!stats || typeof stats !== 'object') return;
+    const currentHeight = $statsContainer.outerHeight();
+    if (currentHeight > 0) $statsContainer.css({
+        minHeight: currentHeight
+    });
+    const fragment = document.createDocumentFragment();
+    Object.keys(stats).forEach(key => {
+        if (!labels[key]) return;
+        let value = (stats[key] === false || stats[key] === null) ? '0 B' : stats[key];
+        let isHtml = false;
+        if (key === 'engine_distribution') {
+            if (typeof value === 'object' && value !== null) {
+                const parts = [];
+                for (const engine in value) {
+                    if (value.hasOwnProperty(engine)) {
+                        const data = value[engine];
+                        parts.push(engine + ': ' + data.count + ' tables (' + data.size + ')');
                     }
-                    value = parts.length ? parts.join(', ') : 'N/A';
-                } else {
-                    value = 'N/A';
                 }
-            }
-            if (key === 'db_creation_date') {
-                value = `<span class="os-nowrap">${esc_html(value)}</span>`;
+                value = parts.length ? parts.join('<br>') : 'N/A';
+                isHtml = true;
             } else {
-                const numValue = typeof value === 'number' ? value : parseInt(value, 10);
-                value = (!isNaN(numValue) && String(numValue) === String(value)) ? esc_html(numValue.toLocaleString()) : esc_html(String(value));
+                value = 'N/A';
             }
-            const label = labels[key];
-            let labelHtml = esc_html(label);
-            if (STATS_TOOLTIPS[key]) {
-                labelHtml += ` <span class="dashicons dashicons-info optistate-info-icon" title="${esc_attr(STATS_TOOLTIPS[key])}" style="cursor:help; color:#999; font-size:16px; vertical-align:middle;"></span>`;
-            }
-            const div = document.createElement('div');
-            div.className = 'optistate-stat-item';
-            div.innerHTML = `<div class="optistate-stat-label">${labelHtml}</div><div class="optistate-stat-value">${value}</div>`;
-            fragment.appendChild(div);
-        });
-        $statsContainer.empty().append(fragment).css({
-            minHeight: ''
-        });
-        debouncedLoadOptimizationLog();
+        }
+        if (key === 'db_creation_date') {
+            value = `<span class="os-nowrap">${esc_html(value)}</span>`;
+            isHtml = true;
+        } else if (!isHtml) {
+            const numValue = typeof value === 'number' ? value : parseInt(value, 10);
+            value = (!isNaN(numValue) && String(numValue) === String(value)) ? esc_html(numValue.toLocaleString()) : esc_html(String(value));
+        }
+        const label = labels[key];
+        let labelHtml = esc_html(label);
+        if (STATS_TOOLTIPS[key]) {
+            labelHtml += ` <span class="dashicons dashicons-info" title="${esc_attr(STATS_TOOLTIPS[key])}" style="cursor:help; font-size:16px; vertical-align:middle;"></span>`;
+        }
+        const div = document.createElement('div');
+        div.className = 'optistate-stat-item';
+        div.innerHTML = `<div class="optistate-stat-label">${labelHtml}</div><div class="optistate-stat-value">${value}</div>`;
+        fragment.appendChild(div);
+    });
+    $statsContainer.empty().append(fragment).css({
+        minHeight: ''
+    });
+    debouncedLoadOptimizationLog();
         const config = window.optistate_OneClickConfig || {};
         let defaultKeys = config.default_keys || [];
         let extraKeys = config.extra_items || [];

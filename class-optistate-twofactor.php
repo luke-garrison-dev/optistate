@@ -13,23 +13,21 @@ class OPTISTATE_TwoFactor
     private static array $secret_cache = [];
     private static array $secret_bytes_cache = [];
     private static array $last_slice_cache = [];
-    public function __construct(
-        OPTISTATE $main_plugin,
-        bool $globally_enabled = false
-    ) {
-        $this->main_plugin = $main_plugin;
-        $this->globally_enabled = $globally_enabled;
-        $this->register_ajax_handlers();
-        if ($this->globally_enabled) {
-            $this->init_hooks();
-            add_action("admin_init", [
-                $this,
-                "verify_user_2fa_status_integrity",
-            ]);
-        }
+public function __construct(OPTISTATE $main_plugin, bool $globally_enabled = false)
+{
+    $this->main_plugin = $main_plugin;
+    $this->globally_enabled = $globally_enabled;
+    $this->register_ajax_handlers();
+    if ($this->globally_enabled) {
+        $this->init_hooks();
+        add_action('admin_init', [$this, 'verify_user_2fa_status_integrity']);
     }
-    public function verify_user_2fa_status_integrity(): void
-    {
+}
+public function verify_user_2fa_status_integrity(): void
+{
+    if (!$this->globally_enabled) {
+        return;
+    }
         $user_id = get_current_user_id();
         if ($user_id && $this->is_user_enabled($user_id)) {
             try {
