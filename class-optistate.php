@@ -238,16 +238,6 @@ private function instantiate_admin_services(): void {
     {
         throw new RuntimeException('OPTISTATE is a singleton and cannot be unserialized.');
     }
-
-    public function has_fatal_error(): bool
-    {
-        return $this->init_error !== null;
-    }
-
-    public function get_fatal_error(): ?string
-    {
-        return $this->init_error;
-    }
     public function get_upload_basedir(): string
     {
         if (!is_array($this->upload_dir_info) || empty($this->upload_dir_info['basedir'])) {
@@ -484,7 +474,6 @@ add_action('optistate_run_pagespeed_worker', function ($task_id = null): void {
             wp_cache_delete($key, 'optistate');
         }
 
-        wp_cache_delete(self::STATS_TRANSIENT, 'optistate');
         wp_cache_delete('optistate_table_analysis_' . md5(DB_NAME), 'optistate');
     }
 
@@ -1693,7 +1682,7 @@ private function is_path_allowed(string $path): bool
         $links_join       = '';
         $links_null_check = '1=1';
 
-        if (isset($wpdb->links)) {
+        if (!empty($wpdb->links) && OPTISTATE_Utils::table_exists($wpdb->links)) {
             $links_join       = "LEFT JOIN {$wpdb->links} l ON tr.object_id = l.link_id";
             $links_null_check = 'l.link_id IS NULL';
         }
