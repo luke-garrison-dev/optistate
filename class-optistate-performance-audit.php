@@ -831,6 +831,7 @@ class OPTISTATE_Performance_Audit
                     )
                 ) {
                     $scheduled = true;
+                    spawn_cron();
                     break;
                 }
                 usleep(100000);
@@ -851,7 +852,7 @@ class OPTISTATE_Performance_Audit
             }
             wp_remote_post(admin_url("admin-ajax.php"), [
                 "blocking" => false,
-                "timeout" => 0.01,
+                "timeout" => 0.5,
                 "sslverify" => apply_filters("https_local_ssl_verify", false),
                 "cookies" => $cookies,
                 "body" => [
