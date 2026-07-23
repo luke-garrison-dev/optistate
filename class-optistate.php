@@ -2732,8 +2732,12 @@ private function is_path_allowed(string $path): bool
         }
     }
 
-    public function execute_post_backup_tasks(string $backup_filename): void
+    public function execute_post_backup_tasks($backup_filename = null): void
     {
+        if (!is_string($backup_filename) || $backup_filename === '') {
+            return;
+        }
+
         try {
             $settings    = $this->settings_manager->get_persistent_settings();
             $backup_only = !empty($settings['auto_backup_only']);
