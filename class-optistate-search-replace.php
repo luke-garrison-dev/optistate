@@ -65,11 +65,14 @@ class OPTISTATE_Search_Replace
             ? "/" . $escaped . "/" . $flags
             : sprintf(self::REGEX_BOUNDARY_FMT, $escaped, $flags);
         if (count($this->pattern_cache) >= self::PATTERN_CACHE_LIMIT) {
-            $this->pattern_cache = [];
+            reset($this->pattern_cache);
+            $oldest_key = key($this->pattern_cache);
+            unset($this->pattern_cache[$oldest_key]);
         }
         $this->pattern_cache[$key] = $pattern;
         return $pattern;
     }
+
     private function build_byte_pattern(
         string $search,
         bool $case_sensitive,
@@ -85,6 +88,7 @@ class OPTISTATE_Search_Replace
             "(?![A-Za-z0-9_\\-'])/" .
             $flags;
     }
+
     private function acquire_or_verify_lock(
         string $lock_key,
         bool $reset,
@@ -120,6 +124,7 @@ class OPTISTATE_Search_Replace
         }
         return $token;
     }
+
     private function save_state_and_lock(
         string $transient_key,
         array $state,
@@ -129,6 +134,7 @@ class OPTISTATE_Search_Replace
         set_transient($transient_key, $state, self::LOCK_TTL);
         set_transient($lock_key, $token, self::LOCK_TTL);
     }
+
     private function count_text_occurrences(
         string $text,
         string $search,
@@ -179,13 +185,13 @@ class OPTISTATE_Search_Replace
         }
         return (int) $matches;
     }
+
     public function get_last_replace_count(): int
     {
         return $this->last_replace_count;
     }
     private function resolve_tables(array $tables_input): array
     {
-        global $wpdb;
         $valid_db_tables = OPTISTATE_Utils::get_all_tables();
         if (!empty($tables_input) && $tables_input[0] === "all") {
             $tables = $valid_db_tables;
@@ -195,19 +201,13 @@ class OPTISTATE_Search_Replace
                 $valid_db_tables
             );
         }
-        $process_store_table = $this->main_plugin->process_store->get_table_name();
         $protected = array_merge(
-            [
-                $process_store_table,
-                $wpdb->prefix . "optistate_backup_metadata",
-                $wpdb->prefix . OPTISTATE_Login_Protection::TABLE_NAME,
-                $wpdb->prefix . "optistate_core_data",
-                $wpdb->prefix . "optistate_trash",
-            ],
+            OPTISTATE_Utils::get_optistate_core_excluded_tables(),
             self::get_additional_protected_tables()
         );
         return array_values(array_diff($tables, $protected));
     }
+
     private function get_protected_options(): array
     {
         if ($this->protected_options_cache !== null) {
@@ -223,6 +223,7 @@ class OPTISTATE_Search_Replace
         ];
         return $this->protected_options_cache;
     }
+
     private function get_deferred_options(): array
     {
         if ($this->deferred_options_cache !== null) {
@@ -233,6 +234,7 @@ class OPTISTATE_Search_Replace
     }
     private function build_options_exclude(): array
     {
+        global $wpdb;
         $protected = $this->get_protected_options();
         $placeholders = array_fill(0, count($protected), "%s");
         $sql =
@@ -244,13 +246,14 @@ class OPTISTATE_Search_Replace
             " AND `option_name` NOT LIKE %s" .
             " AND `option_name` NOT LIKE %s";
         $values = array_merge($protected, [
-            "\_transient\_optistate\_%",
-            "\_transient\_timeout\_optistate\_%",
-            "\_site\_transient\_optistate\_%",
-            "\_site\_transient\_timeout\_optistate\_%",
+            $wpdb->esc_like("_transient_optistate_") . "%",
+            $wpdb->esc_like("_transient_timeout_optistate_") . "%",
+            $wpdb->esc_like("_site_transient_optistate_") . "%",
+            $wpdb->esc_like("_site_transient_timeout_optistate_") . "%",
         ]);
         return ["sql" => $sql, "values" => $values];
     }
+
     private static function get_additional_protected_tables(): array
     {
         return apply_filters("optistate_protected_tables", []);
@@ -275,8 +278,18 @@ class OPTISTATE_Search_Replace
                 $table
             )
         );
+        if ($engine === null) {
+            OPTISTATE_Utils::log_critical_error(
+                "is_transactional_engine: ENGINE query returned NULL for table; " .
+                "table will be skipped this request",
+                ["table" => $table, "db_error" => $wpdb->last_error]
+            );
+            wp_cache_set($cache_key, 0, "optistate_sr", 60);
+            $request_cache[$table] = false;
+            return false;
+        }
         $ok = in_array(
-            strtoupper((string) $engine),
+            strtoupper($engine),
             self::TRANSACTIONAL_ENGINES,
             true
         );
@@ -305,6 +318,9 @@ class OPTISTATE_Search_Replace
             if ($col["Field"] === "guid") {
                 continue;
             }
+            if (preg_match('/^(tiny|medium|long)?blob$/i', $col["Type"])) {
+                continue;
+            }
             if (preg_match("/char|text|blob/i", $col["Type"])) {
                 $text_cols[] = $col["Field"];
             }
@@ -313,6 +329,7 @@ class OPTISTATE_Search_Replace
         wp_cache_set($cache_key, $info, "optistate_sr", HOUR_IN_SECONDS);
         return $info;
     }
+
     public function ajax_dry_run(): void
     {
         check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
@@ -367,7 +384,7 @@ class OPTISTATE_Search_Replace
             return;
         }
         $state = get_transient($transient_key);
-        if ($reset || !$state) {
+        if ($reset || !is_array($state)) {
             $state = [
                 "tables" => $this->resolve_tables($tables_input),
                 "current_idx" => 0,
@@ -553,7 +570,8 @@ class OPTISTATE_Search_Replace
                 if (!$this->string_contains($original, $search)) {
                     continue;
                 }
-                if (is_serialized($original)) {
+                $is_serialized = is_serialized($original);
+                if ($is_serialized) {
                     $has_serialized = true;
                 }
                 $preview_values = $this->find_all_preview_values(
@@ -579,7 +597,6 @@ class OPTISTATE_Search_Replace
                 }
                 $table_matches += $cell_occurrences;
                 if (!$preview_full && !$became_full) {
-                    $is_serialized = is_serialized($original);
                     foreach ($preview_values as $preview_value) {
                         $preview_text = $this->get_highlighted_snippet(
                             $preview_value,
@@ -629,6 +646,7 @@ class OPTISTATE_Search_Replace
             "preview_full" => $became_full,
         ];
     }
+
     public function ajax_execute(): void
     {
         check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
@@ -695,7 +713,7 @@ class OPTISTATE_Search_Replace
             return;
         }
         $state = get_transient($transient_key);
-        if ($reset || !$state) {
+        if ($reset || !is_array($state)) {
             $state = [
                 "tables" => $this->resolve_tables($tables_input),
                 "current_idx" => 0,
@@ -797,7 +815,9 @@ class OPTISTATE_Search_Replace
                 $start_time,
                 $max_exec_time,
                 $total_tables,
-                $token
+                $token,
+                $transient_key,
+                $lock_key
             );
             if ($abort === "error") {
                 return;
@@ -808,46 +828,61 @@ class OPTISTATE_Search_Replace
         }
         if (!empty($state["deferred_updates"])) {
             global $wpdb;
+            $deferred_committed = false;
             $wpdb->query("START TRANSACTION");
-            $deferred_success = true;
-            $deferred_rows = 0;
-            foreach ($state["deferred_updates"] as $deferred) {
-                $result = $wpdb->update(
-                    $deferred["table"],
-                    $deferred["data"],
-                    $deferred["where"]
-                );
-                if ($result === false || !empty($wpdb->last_error)) {
-                    $deferred_success = false;
-                    $error_msg =
-                        $wpdb->last_error !== ""
-                            ? $wpdb->last_error
-                            : "Unknown DB error";
-                    $state["errors"][] = sprintf(
-                        __("Deferred update failed for %s", "optistate"),
-                        $deferred["option_name"] ?? "unknown"
+            try {
+                $deferred_success = true;
+                $deferred_rows = 0;
+                $deferred_error_msg = "";
+                foreach ($state["deferred_updates"] as $deferred) {
+                    $result = $wpdb->update(
+                        $deferred["table"],
+                        $deferred["data"],
+                        $deferred["where"]
                     );
-                    OPTISTATE_Utils::log_critical_error(
-                        "Deferred search/replace update failed",
-                        [
-                            "table" => $deferred["table"],
-                            "option_name" => $deferred["option_name"] ?? null,
-                            "where" => $deferred["where"],
-                            "error" => $error_msg,
-                        ]
-                    );
-                    break;
-                }
-                if ($result > 0) {
-                    $deferred_rows++;
-                    if (($deferred["option_name"] ?? "") !== "") {
-                        $state["touched_options"][
-                            $deferred["option_name"]
-                        ] = true;
+                    if ($result === false || !empty($wpdb->last_error)) {
+                        $deferred_success = false;
+                        $deferred_error_msg =
+                            $wpdb->last_error !== ""
+                                ? $wpdb->last_error
+                                : "Unknown DB error";
+                        $state["errors"][] = sprintf(
+                            __("Deferred update failed for %s", "optistate"),
+                            $deferred["option_name"] ?? "unknown"
+                        );
+                        OPTISTATE_Utils::log_critical_error(
+                            "Deferred search/replace update failed",
+                            [
+                                "table" => $deferred["table"],
+                                "option_name" => $deferred["option_name"] ?? null,
+                                "where" => $deferred["where"],
+                                "error" => $deferred_error_msg,
+                            ]
+                        );
+                        break;
+                    }
+                    if ($result > 0) {
+                        $deferred_rows++;
+                        if (($deferred["option_name"] ?? "") !== "") {
+                            $state["touched_options"][
+                                $deferred["option_name"]
+                            ] = true;
+                        }
                     }
                 }
-            }
-            if ($deferred_success) {
+                if (!$deferred_success) {
+                    $wpdb->query("ROLLBACK");
+                    delete_transient($transient_key);
+                    delete_transient($lock_key);
+                    OPTISTATE_Utils::send_json_error(
+                        __(
+                            "Replacement partially failed: deferred options (siteurl / home) could not be updated and were rolled back.",
+                            "optistate"
+                        ),
+                        500
+                    );
+                    return;
+                }
                 $siteurl_deferred = false;
                 $home_deferred = false;
                 $new_siteurl = null;
@@ -905,14 +940,25 @@ class OPTISTATE_Search_Replace
                     }
                 }
                 $wpdb->query("COMMIT");
+                $deferred_committed = true;
                 $state["rows_affected"] += $deferred_rows;
-            } else {
-                $wpdb->query("ROLLBACK");
+            } catch (\Throwable $e) {
+                if (!$deferred_committed) {
+                    $wpdb->query("ROLLBACK");
+                }
                 delete_transient($transient_key);
                 delete_transient($lock_key);
+                OPTISTATE_Utils::log_critical_error(
+                    "Deferred updates: unexpected exception during transaction",
+                    [
+                        "message" => $e->getMessage(),
+                        "file" => $e->getFile(),
+                        "line" => $e->getLine(),
+                    ]
+                );
                 OPTISTATE_Utils::send_json_error(
                     __(
-                        "Replacement partially failed: deferred options (siteurl / home) could not be updated and were rolled back.",
+                        "An unexpected error occurred while applying deferred updates. Changes were rolled back.",
                         "optistate"
                     ),
                     500
@@ -923,14 +969,12 @@ class OPTISTATE_Search_Replace
         delete_transient($transient_key);
         delete_transient($lock_key);
         $touched = array_keys($state["touched_options"] ?? []);
-        if (!empty($touched) && count($touched) <= 200) {
+        if (!empty($touched)) {
             foreach ($touched as $opt) {
                 wp_cache_delete($opt, "options");
             }
-            wp_cache_delete("alloptions", "options");
-        } else {
-            wp_cache_flush();
         }
+        wp_cache_delete("alloptions", "options");
         $log_message = sprintf(
             "↳↰ Search & Replace Executed by {username}: '%s' -> '%s' (%s rows)",
             $search,
@@ -969,14 +1013,14 @@ class OPTISTATE_Search_Replace
         float $start_time,
         float $max_exec_time,
         int $total_tables,
-        string $token
+        string $token,
+        string $transient_key,
+        string $lock_key
     ): string {
         global $wpdb;
         $primary_key_q = self::quote_ident($primary_key);
         $table_q = self::quote_ident($table);
         $like_value = "%" . $wpdb->esc_like($search) . "%";
-        $transient_key = "optistate_sr_exec_" . get_current_user_id();
-        $lock_key = "optistate_sr_exec_lock_" . get_current_user_id();
         $where_parts = [];
         $where_values = [];
         foreach ($text_cols as $col) {
@@ -1157,7 +1201,7 @@ class OPTISTATE_Search_Replace
             }
             if ($batch_rows > 0) {
                 $state["gc_counter"] += $batch_rows;
-                if ($state["gc_counter"] >= 100) {
+                if ($state["gc_counter"] >= 1000) {
                     gc_collect_cycles();
                     $state["gc_counter"] = 0;
                 }
@@ -1169,6 +1213,7 @@ class OPTISTATE_Search_Replace
             }
         }
     }
+
     private function should_protect_option(string $option_name)
     {
         if (in_array($option_name, $this->get_protected_options(), true)) {
@@ -1194,17 +1239,18 @@ class OPTISTATE_Search_Replace
         bool $case_sensitive = false,
         bool $partial_match = false
     ) {
-        $this->case_sensitive = $case_sensitive;
-        $this->partial_match = $partial_match;
         $this->last_replace_count = 0;
         return $this->recursive_unserialize_replace(
             $from,
             $to,
             $data,
             false,
-            $case_sensitive
+            $case_sensitive,
+            0,
+            $partial_match
         );
     }
+
     public function get_highlighted_snippet(
         string $text,
         string $search,
@@ -1212,8 +1258,6 @@ class OPTISTATE_Search_Replace
         bool $partial_match = false,
         int $length = 140
     ): string {
-        $this->case_sensitive = $case_sensitive;
-        $this->partial_match = $partial_match;
         $snippet = $this->get_snippet($text, $search, $length, $case_sensitive);
         $preview_text = esc_html($snippet);
         $modifier = $case_sensitive ? "" : "i";
@@ -1243,6 +1287,7 @@ class OPTISTATE_Search_Replace
         }
         return $highlighted_text;
     }
+
     private static function contains_incomplete_class(
         $data,
         int $depth = 0
@@ -1274,7 +1319,8 @@ class OPTISTATE_Search_Replace
         $data = "",
         bool $serialised = false,
         bool $case_sensitive = false,
-        int $depth = 0
+        int $depth = 0,
+        bool $partial_match = false
     ) {
         if ($depth > 100) {
             return $data;
@@ -1304,7 +1350,8 @@ class OPTISTATE_Search_Replace
                         $from,
                         $to,
                         $data,
-                        $case_sensitive
+                        $case_sensitive,
+                        $partial_match
                     );
                 } else {
                     $data = $this->recursive_unserialize_replace(
@@ -1313,7 +1360,8 @@ class OPTISTATE_Search_Replace
                         $unserialized,
                         true,
                         $case_sensitive,
-                        $depth + 1
+                        $depth + 1,
+                        $partial_match
                     );
                 }
             } elseif (is_array($data)) {
@@ -1325,7 +1373,8 @@ class OPTISTATE_Search_Replace
                         $value,
                         false,
                         $case_sensitive,
-                        $depth + 1
+                        $depth + 1,
+                        $partial_match
                     );
                 }
                 $data = $_tmp;
@@ -1351,7 +1400,8 @@ class OPTISTATE_Search_Replace
                             $value,
                             false,
                             $case_sensitive,
-                            $depth + 1
+                            $depth + 1,
+                            $partial_match
                         );
                     }
                     $data = $_tmp;
@@ -1362,7 +1412,8 @@ class OPTISTATE_Search_Replace
                         $from,
                         $to,
                         $re_serialized,
-                        $case_sensitive
+                        $case_sensitive,
+                        $partial_match
                     );
                     if ($replaced !== $re_serialized) {
                         $new_data = @unserialize($replaced, [
@@ -1390,7 +1441,8 @@ class OPTISTATE_Search_Replace
                         $unserialized,
                         true,
                         $case_sensitive,
-                        $depth + 1
+                        $depth + 1,
+                        $partial_match
                     );
                 }
             } else {
@@ -1399,7 +1451,8 @@ class OPTISTATE_Search_Replace
                         $from,
                         $to,
                         $data,
-                        $case_sensitive
+                        $case_sensitive,
+                        $partial_match
                     );
                 }
             }
@@ -1430,22 +1483,22 @@ class OPTISTATE_Search_Replace
         string $from,
         string $to,
         string $data,
-        bool $case_sensitive
+        bool $case_sensitive,
+        bool $partial_match = false
     ): string {
         $result = "";
         $i = 0;
         $len = strlen($data);
         $stack = [];
-        $partial = $this->partial_match;
         $to_escaped = addcslashes($to, '\\$');
-        $boundary_pattern = $partial
+        $boundary_pattern = $partial_match
             ? null
             : $this->build_boundary_pattern($from, $case_sensitive, false);
-        $byte_pattern = $partial
+        $byte_pattern = $partial_match
             ? null
             : $this->build_byte_pattern($from, $case_sensitive, false);
         $partial_ci_pattern =
-            $partial && !$case_sensitive
+            $partial_match && !$case_sensitive
                 ? "/" . preg_quote($from, "/") . "/iu"
                 : null;
         while ($i < $len) {
@@ -1513,6 +1566,26 @@ class OPTISTATE_Search_Replace
                     continue;
                 }
             }
+            if (
+                ($ch === "r" || $ch === "R") &&
+                $i + 1 < $len &&
+                $data[$i + 1] === ":"
+            ) {
+                $semi = strpos($data, ";", $i + 1);
+                if ($semi !== false) {
+                    $token = substr($data, $i, $semi - $i + 1);
+                    if (preg_match('/^[rR]:\d+;$/', $token)) {
+                        $result .= $token;
+                        $i += strlen($token);
+                        if (!empty($stack)) {
+                            $stack[count($stack) - 1]["expect_key"] = !$stack[
+                                count($stack) - 1
+                            ]["expect_key"];
+                        }
+                        continue;
+                    }
+                }
+            }
             if ($ch === "s" && $i + 2 < $len && $data[$i + 1] === ":") {
                 $colon_pos = strpos($data, ":", $i + 2);
                 if ($colon_pos === false) {
@@ -1546,7 +1619,7 @@ class OPTISTATE_Search_Replace
                     $result .= "s:" . $str_len . ':"' . $str_content . '";';
                     $stack[count($stack) - 1]["expect_key"] = false;
                 } else {
-                    if (!$partial) {
+                    if (!$partial_match) {
                         $count = 0;
                         $new_content = @preg_replace(
                             $boundary_pattern,
@@ -1636,6 +1709,7 @@ class OPTISTATE_Search_Replace
         }
         return $result;
     }
+
     private static function bsr_unserialize(string $serialized_string)
     {
         if (!is_serialized($serialized_string)) {
@@ -1644,6 +1718,7 @@ class OPTISTATE_Search_Replace
         $serialized_string = trim($serialized_string);
         return @unserialize($serialized_string, ["allowed_classes" => []]);
     }
+
     private static function is_object_cloneable(object $object): bool
     {
         static $cache = [];
@@ -1666,13 +1741,14 @@ class OPTISTATE_Search_Replace
         string $from,
         string $to,
         string $data,
-        bool $case_sensitive = false
+        bool $case_sensitive = false,
+        bool $partial_match = false
     ): string {
         if ($data === "") {
             return $data;
         }
         $to_escaped = addcslashes($to, '\\$');
-        if (!$this->partial_match) {
+        if (!$partial_match) {
             $pattern = $this->build_boundary_pattern(
                 $from,
                 $case_sensitive,
@@ -1720,6 +1796,7 @@ class OPTISTATE_Search_Replace
         $this->last_replace_count += substr_count($data, $from);
         return str_replace($from, $to, $data);
     }
+
     private function string_contains(string $string, string $search): bool
     {
         if ($this->partial_match) {
@@ -1745,6 +1822,7 @@ class OPTISTATE_Search_Replace
         }
         return $r === 1;
     }
+
     private function find_all_preview_values(
         $data,
         string $search,
@@ -1794,6 +1872,7 @@ class OPTISTATE_Search_Replace
         }
         return $results;
     }
+
     private function get_snippet(
         string $text,
         string $search,
