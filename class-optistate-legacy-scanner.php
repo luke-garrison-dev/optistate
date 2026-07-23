@@ -90,43 +90,49 @@ class OPTISTATE_Legacy_Scanner
         }
         $plugin_map = $this->get_legacy_plugin_map();
         self::$prefix_lookup_cache = [];
-        self::$slug_lookup_cache = [];
+        self::$slug_lookup_cache   = [];
+        self::$prefix_to_info_map  = [];
         foreach ($plugin_map as $prefix => $data) {
-            $prefix_lower = strtolower($prefix);
-            $clean_prefix = trim($prefix, "_");
+            $prefix_lower  = strtolower($prefix);
+            $clean_prefix  = trim($prefix, "_");
             if (!empty($clean_prefix) && strlen($clean_prefix) >= 2) {
-                self::$prefix_lookup_cache[$prefix_lower] = [
+                $entry = [
                     "original_prefix" => $prefix,
-                    "data" => $data,
+                    "data"            => $data,
                 ];
+                self::$prefix_lookup_cache[$prefix_lower] = $entry;
+                self::$prefix_to_info_map[$prefix_lower]  = $entry;
                 $clean_prefix_lower = strtolower($clean_prefix);
                 if ($clean_prefix_lower !== $prefix_lower) {
-                    self::$prefix_lookup_cache[$clean_prefix_lower] = [
+                    $clean_entry = [
                         "original_prefix" => $clean_prefix,
-                        "data" => $data,
+                        "data"            => $data,
                     ];
+                    self::$prefix_lookup_cache[$clean_prefix_lower] = $clean_entry;
+                    self::$prefix_to_info_map[$clean_prefix_lower]  = $clean_entry;
                 }
             }
             if (!empty($data["slugs"])) {
                 foreach ((array) $data["slugs"] as $slug) {
-                    $slug_lower = strtolower($slug);
-                    $slug_sanitized = strtolower(sanitize_key($slug));
+                    $slug_lower      = strtolower($slug);
+                    $slug_sanitized  = strtolower(sanitize_key($slug));
+                    $is_wildcard     = strpos($slug, "*") !== false;
                     if (!isset(self::$slug_lookup_cache[$slug_lower])) {
                         self::$slug_lookup_cache[$slug_lower] = [];
                     }
                     self::$slug_lookup_cache[$slug_lower][] = [
-                        "prefix" => $prefix,
-                        "data" => $data,
-                        "is_wildcard" => strpos($slug, "*") !== false,
+                        "prefix"      => $prefix,
+                        "data"        => $data,
+                        "is_wildcard" => $is_wildcard,
                     ];
                     if ($slug_sanitized !== $slug_lower) {
                         if (!isset(self::$slug_lookup_cache[$slug_sanitized])) {
                             self::$slug_lookup_cache[$slug_sanitized] = [];
                         }
                         self::$slug_lookup_cache[$slug_sanitized][] = [
-                            "prefix" => $prefix,
-                            "data" => $data,
-                            "is_wildcard" => strpos($slug, "*") !== false,
+                            "prefix"      => $prefix,
+                            "data"        => $data,
+                            "is_wildcard" => $is_wildcard,
                         ];
                     }
                 }
@@ -139,19 +145,10 @@ class OPTISTATE_Legacy_Scanner
         if (self::$prefix_lookup_regex !== null) {
             return self::$prefix_lookup_regex;
         }
-        if (empty(self::$prefix_lookup_cache)) {
+        if (empty(self::$prefix_to_info_map)) {
             return null;
         }
-        $map = [];
-        foreach (self::$prefix_lookup_cache as $prefix => $info) {
-            $map[$prefix] = $info;
-            $trimmed = trim($prefix, "_");
-            if ($trimmed !== $prefix) {
-                $map[$trimmed] = $info;
-            }
-        }
-        self::$prefix_to_info_map = $map;
-        $keys = array_keys($map);
+        $keys = array_keys(self::$prefix_to_info_map);
         usort($keys, static function ($a, $b) {
             return strlen($b) <=> strlen($a);
         });
@@ -166,8 +163,7 @@ class OPTISTATE_Legacy_Scanner
         array $plugin_slugs,
         array $active_slugs_cache
     ): bool {
-        $cache_key =
-            ($slug ?? "null") . "_" . md5(wp_json_encode($plugin_slugs));
+        $cache_key = ($slug ?? "\x00null") . "\x00" . implode("\x00", $plugin_slugs);
         if (isset($this->active_check_cache[$cache_key])) {
             return $this->active_check_cache[$cache_key];
         }
@@ -221,8 +217,7 @@ class OPTISTATE_Legacy_Scanner
         array $plugin_slugs,
         array $installed_slugs_cache
     ): bool {
-        $cache_key =
-            ($slug ?? "null") . "_" . md5(wp_json_encode($plugin_slugs));
+        $cache_key = ($slug ?? "\x00null") . "\x00" . implode("\x00", $plugin_slugs);
         if (isset($this->installed_check_cache[$cache_key])) {
             return $this->installed_check_cache[$cache_key];
         }
@@ -316,8 +311,8 @@ class OPTISTATE_Legacy_Scanner
             $active["all"][] = $parent_name;
         }
         $active["plugins"] = array_unique($active["plugins"]);
-        $active["themes"] = array_unique($active["themes"]);
-        $active["all"] = array_unique($active["all"]);
+        $active["themes"]  = array_unique($active["themes"]);
+        $active["all"]     = array_unique($active["all"]);
         $cached = $active;
         return $cached;
     }
@@ -334,17 +329,17 @@ class OPTISTATE_Legacy_Scanner
             require_once ABSPATH . "wp-admin/includes/plugin.php";
         }
         $installed = [
-            "plugins" => [],
-            "themes" => [],
+            "plugins"   => [],
+            "themes"    => [],
             "all_slugs" => [],
-            "all_dirs" => [],
+            "all_dirs"  => [],
         ];
         $all_plugins = get_plugins();
         foreach ($all_plugins as $plugin_path => $plugin_data) {
             $dir = dirname($plugin_path);
             if ($dir !== ".") {
                 $dir_normalized = strtolower($dir);
-                $installed["plugins"][] = $dir_normalized;
+                $installed["plugins"][]  = $dir_normalized;
                 $installed["all_dirs"][] = $dir_normalized;
                 $slug_normalized = strtolower(sanitize_key($dir));
                 $installed["all_slugs"][] = $slug_normalized;
@@ -355,8 +350,8 @@ class OPTISTATE_Legacy_Scanner
         $all_themes = wp_get_themes();
         foreach ($all_themes as $theme_slug => $theme_obj) {
             $theme_slug_normalized = strtolower($theme_slug);
-            $installed["themes"][] = $theme_slug_normalized;
-            $installed["all_dirs"][] = $theme_slug_normalized;
+            $installed["themes"][]    = $theme_slug_normalized;
+            $installed["all_dirs"][]  = $theme_slug_normalized;
             $installed["all_slugs"][] = $theme_slug_normalized;
             $theme_name = strtolower(sanitize_key($theme_obj->get("Name")));
             $installed["all_slugs"][] = $theme_name;
@@ -366,13 +361,13 @@ class OPTISTATE_Legacy_Scanner
             $mu_normalized = strtolower(
                 sanitize_key(basename($mu_path, ".php"))
             );
-            $installed["plugins"][] = $mu_normalized;
+            $installed["plugins"][]   = $mu_normalized;
             $installed["all_slugs"][] = $mu_normalized;
         }
-        $installed["plugins"] = array_unique($installed["plugins"]);
-        $installed["themes"] = array_unique($installed["themes"]);
+        $installed["plugins"]   = array_unique($installed["plugins"]);
+        $installed["themes"]    = array_unique($installed["themes"]);
         $installed["all_slugs"] = array_unique($installed["all_slugs"]);
-        $installed["all_dirs"] = array_unique($installed["all_dirs"]);
+        $installed["all_dirs"]  = array_unique($installed["all_dirs"]);
         $cached = $installed;
         return $cached;
     }
@@ -382,8 +377,8 @@ class OPTISTATE_Legacy_Scanner
     ): ?array {
         $this->build_plugin_lookup_tables();
         $item_lower = strtolower($item_name);
-        $item_slug = strtolower(sanitize_key($item_name));
-        $active_cache = $this->get_active_status_cache();
+        $item_slug  = strtolower(sanitize_key($item_name));
+        $active_cache    = $this->get_active_status_cache();
         $installed_cache = $this->get_installed_status_cache();
         if (isset(self::$slug_lookup_cache[$item_slug])) {
             foreach (self::$slug_lookup_cache[$item_slug] as $match) {
@@ -398,8 +393,8 @@ class OPTISTATE_Legacy_Scanner
                         return null;
                     }
                     return [
-                        "prefix" => $match["prefix"],
-                        "data" => $match["data"],
+                        "prefix"     => $match["prefix"],
+                        "data"       => $match["data"],
                         "match_type" => "folder_exact_slug",
                     ];
                 }
@@ -414,25 +409,28 @@ class OPTISTATE_Legacy_Scanner
                     return null;
                 }
                 return [
-                    "prefix" => $match["prefix"],
-                    "data" => $match["data"],
+                    "prefix"     => $match["prefix"],
+                    "data"       => $match["data"],
                     "match_type" => "exact_slug",
                 ];
             }
         }
         if ($item_type === "folder" || $item_type === "upload_folder") {
+            if (strlen($item_lower) < 3) {
+                return null;
+            }
             foreach (self::$slug_lookup_cache as $slug => $matches) {
-                if (strlen($slug) < 3 || strlen($item_lower) < 3) {
+                if (strlen($slug) < 3) {
                     continue;
                 }
                 $match_found = false;
-                $match_type = "";
+                $match_type  = "";
                 if (strpos($item_lower, $slug) !== false) {
                     $match_found = true;
-                    $match_type = "folder_contains_slug";
+                    $match_type  = "folder_contains_slug";
                 } elseif (strpos($slug, $item_lower) !== false) {
                     $match_found = true;
-                    $match_type = "slug_contains_folder";
+                    $match_type  = "slug_contains_folder";
                 } else {
                     $patterns = [
                         $slug . "_uploads",
@@ -448,7 +446,7 @@ class OPTISTATE_Legacy_Scanner
                             strpos($item_lower, $pattern) !== false
                         ) {
                             $match_found = true;
-                            $match_type = "folder_pattern";
+                            $match_type  = "folder_pattern";
                             break;
                         }
                     }
@@ -464,8 +462,8 @@ class OPTISTATE_Legacy_Scanner
                             )
                         ) {
                             return [
-                                "prefix" => $match["prefix"],
-                                "data" => $match["data"],
+                                "prefix"     => $match["prefix"],
+                                "data"       => $match["data"],
                                 "match_type" => $match_type,
                             ];
                         }
@@ -481,9 +479,9 @@ class OPTISTATE_Legacy_Scanner
         ) {
             $matched_prefix = $matches[1];
             if (isset(self::$prefix_to_info_map[$matched_prefix])) {
-                $info = self::$prefix_to_info_map[$matched_prefix];
+                $info         = self::$prefix_to_info_map[$matched_prefix];
                 $plugin_slugs = (array) $info["data"]["slugs"];
-                $is_active = $this->is_plugin_active(
+                $is_active    = $this->is_plugin_active(
                     $item_slug,
                     $plugin_slugs,
                     $active_cache
@@ -502,8 +500,8 @@ class OPTISTATE_Legacy_Scanner
                     }
                 }
                 return [
-                    "prefix" => $matched_prefix,
-                    "data" => $info["data"],
+                    "prefix"     => $matched_prefix,
+                    "data"       => $info["data"],
                     "match_type" => "prefix",
                 ];
             }
@@ -514,7 +512,7 @@ class OPTISTATE_Legacy_Scanner
     {
         $installed_cache = $this->get_installed_status_cache();
         $item_lower = strtolower($item_name);
-        $item_slug = strtolower(sanitize_key($item_name));
+        $item_slug  = strtolower(sanitize_key($item_name));
         if (
             in_array($item_lower, $installed_cache["all_dirs"], true) ||
             in_array($item_slug, $installed_cache["all_slugs"], true)
@@ -611,21 +609,20 @@ class OPTISTATE_Legacy_Scanner
         }
         wp_raise_memory_limit("admin");
         try {
-            $user_id = get_current_user_id();
+            $user_id   = get_current_user_id();
             $state_key = self::FOLDER_SCAN_STATE_KEY . "_" . $user_id;
             $has_scan_state = get_transient($state_key) !== false;
             $is_new_scan =
                 !$has_scan_state ||
-                (!empty($_POST["new_scan"]) && $_POST["new_scan"] === "1");
+                (isset($_POST["new_scan"]) && $_POST["new_scan"] === "1");
             if ($is_new_scan) {
                 $this->invalidate_folder_cache();
             } else {
-                $this->get_legacy_plugin_map(true);
-                self::$plugin_map_cache = null;
+                self::$plugin_map_cache    = null;
                 self::$prefix_lookup_cache = null;
-                self::$slug_lookup_cache = null;
+                self::$slug_lookup_cache   = null;
                 self::$prefix_lookup_regex = null;
-                self::$prefix_to_info_map = null;
+                self::$prefix_to_info_map  = null;
                 $this->clear_status_caches();
             }
             if ($this->main_plugin->trash_manager) {
@@ -635,10 +632,10 @@ class OPTISTATE_Legacy_Scanner
             global $wpdb;
             $this->build_plugin_lookup_tables();
             $installed_cache = $this->get_installed_status_cache();
-            $conditions = $this->build_pattern_conditions();
-            $results = [];
+            $conditions      = $this->build_pattern_conditions();
+            $results         = [];
             if (!empty($conditions)) {
-                $results = $this->scan_database_tables($conditions);
+                $results = $this->scan_database_tables($conditions, !$is_new_scan);
             }
             $this->scan_folders_resumable($results, $installed_cache);
             OPTISTATE_Utils::send_json_success($results);
@@ -647,8 +644,8 @@ class OPTISTATE_Legacy_Scanner
                 "Legacy scanner: unhandled exception",
                 [
                     "message" => $e->getMessage(),
-                    "file" => $e->getFile(),
-                    "line" => $e->getLine(),
+                    "file"    => $e->getFile(),
+                    "line"    => $e->getLine(),
                 ]
             );
             OPTISTATE_Utils::send_json_error(
@@ -662,16 +659,16 @@ class OPTISTATE_Legacy_Scanner
     private function build_pattern_conditions(): array
     {
         global $wpdb;
-        $map = $this->get_legacy_plugin_map();
+        $map        = $this->get_legacy_plugin_map();
         $conditions = [];
-        $seen = [];
+        $seen       = [];
         foreach ($map as $prefix => $data) {
             $trimmed = trim($prefix, "_");
             if (!empty($trimmed) && strlen($trimmed) >= 2) {
                 $key = "prefix_" . $trimmed;
-                if (!in_array($key, $seen, true)) {
-                    $seen[] = $key;
-                    $escaped = $wpdb->esc_like($trimmed);
+                if (!isset($seen[$key])) {
+                    $seen[$key] = true;
+                    $escaped    = $wpdb->esc_like($trimmed);
                     $conditions[] = $wpdb->prepare(
                         "key_name LIKE %s",
                         $escaped . $wpdb->esc_like("_") . "%"
@@ -688,9 +685,9 @@ class OPTISTATE_Legacy_Scanner
                         $base = str_replace("*", "", $slug);
                         if (!empty($base)) {
                             $key = "wildcard_" . $base;
-                            if (!in_array($key, $seen, true)) {
-                                $seen[] = $key;
-                                $escaped = $wpdb->esc_like($base);
+                            if (!isset($seen[$key])) {
+                                $seen[$key] = true;
+                                $escaped    = $wpdb->esc_like($base);
                                 $conditions[] = $wpdb->prepare(
                                     "key_name LIKE %s",
                                     $escaped . "%"
@@ -699,8 +696,8 @@ class OPTISTATE_Legacy_Scanner
                         }
                     } else {
                         $key = "exact_" . $slug;
-                        if (!in_array($key, $seen, true)) {
-                            $seen[] = $key;
+                        if (!isset($seen[$key])) {
+                            $seen[$key] = true;
                             $conditions[] = $wpdb->prepare(
                                 "key_name = %s",
                                 $slug
@@ -712,7 +709,7 @@ class OPTISTATE_Legacy_Scanner
         }
         return $conditions;
     }
-    private function scan_database_tables(array $conditions): array
+    private function scan_database_tables(array $conditions, bool $is_resume = false): array
     {
         global $wpdb;
         $db_prefix = $wpdb->prefix;
@@ -741,7 +738,7 @@ class OPTISTATE_Legacy_Scanner
             $wpdb->esc_like("_transient_timeout_") . "%",
             $wpdb->esc_like("_site_transient_timeout_") . "%",
         ];
-        $results = [];
+        $results    = [];
         $seen_items = [];
         $build_where = static function (string $col) use ($conditions): string {
             $col_conditions = array_map(
@@ -754,13 +751,12 @@ class OPTISTATE_Legacy_Scanner
             );
             return "WHERE (" . implode(" OR ", $col_conditions) . ")";
         };
-        $options_where = $build_where("option_name");
+        $options_where  = $build_where("option_name");
         $meta_where_sql = $build_where("meta_key");
         $batch_size = 1000;
-        $last_option = isset($_POST["resume_option"])
+        $last_option = ($is_resume && isset($_POST["resume_option"]))
             ? sanitize_text_field(wp_unslash($_POST["resume_option"]))
-            : (get_transient("optistate_scan_last_option") ?:
-            "");
+            : (get_transient("optistate_scan_last_option") ?: "");
         do {
             if ($this->should_stop_scan()) {
                 break;
@@ -788,7 +784,7 @@ class OPTISTATE_Legacy_Scanner
             }
             foreach ($opt_rows as $row) {
                 $last_option = $row->option_name;
-                $name = $row->option_name;
+                $name        = $row->option_name;
                 if (empty($name) || strlen($name) > 191) {
                     continue;
                 }
@@ -831,14 +827,14 @@ class OPTISTATE_Legacy_Scanner
                                 ? "high"
                                 : $source["data"]["risk"];
                         $results[] = [
-                            "type" => "option",
-                            "name" => $name,
-                            "count" => size_format($row->size, 2),
+                            "type"         => "option",
+                            "name"         => $name,
+                            "count"        => size_format($row->size, 2),
                             "display_type" => "option",
-                            "label" => $this->get_formatted_label(
+                            "label"        => $this->get_formatted_label(
                                 $source["data"]
                             ),
-                            "risk" => $risk,
+                            "risk"      => $risk,
                             "risk_note" =>
                                 "Data from uninstalled " .
                                 ($source["data"]["type"] ?? "plugin") .
@@ -861,22 +857,21 @@ class OPTISTATE_Legacy_Scanner
         } while (count($opt_rows) === $batch_size);
         $wpdb->flush();
         $meta_tables = [
-            "postmeta" => $wpdb->postmeta,
+            "postmeta"    => $wpdb->postmeta,
             "commentmeta" => $wpdb->commentmeta,
-            "usermeta" => $wpdb->usermeta,
-            "termmeta" => $wpdb->termmeta,
+            "usermeta"    => $wpdb->usermeta,
+            "termmeta"    => $wpdb->termmeta,
         ];
         foreach ($meta_tables as $meta_type => $table) {
             if ($this->should_stop_scan()) {
                 break;
             }
             $transient_key = "optistate_scan_last_meta_" . $meta_type;
-            $last_meta = isset($_POST["resume_meta_" . $meta_type])
+            $last_meta = ($is_resume && isset($_POST["resume_meta_" . $meta_type]))
                 ? sanitize_text_field(
                     wp_unslash($_POST["resume_meta_" . $meta_type])
                 )
-                : (get_transient($transient_key) ?:
-                "");
+                : (get_transient($transient_key) ?: "");
             do {
                 if ($this->should_stop_scan()) {
                     break;
@@ -898,10 +893,11 @@ class OPTISTATE_Legacy_Scanner
                     delete_transient($transient_key);
                     break;
                 }
-                $last_meta = end($meta_rows)->meta_key;
+                $last_meta    = "";
                 $batch_matches = [];
                 foreach ($meta_rows as $row) {
-                    $key = $row->meta_key;
+                    $key       = $row->meta_key;
+                    $last_meta = $key;
                     if (empty($key) || strlen($key) > 191) {
                         continue;
                     }
@@ -911,14 +907,14 @@ class OPTISTATE_Legacy_Scanner
                     if ($this->belongs_to_any_installed_item($key)) {
                         continue;
                     }
-                    $source = $this->identify_legacy_source($key, "meta");
+                    $source   = $this->identify_legacy_source($key, "meta");
                     $item_key = $meta_type . ":" . $key;
                     if ($source && !isset($seen_items[$item_key])) {
                         $batch_matches[$key] = $source;
                     }
                 }
                 if (!empty($batch_matches)) {
-                    $keys_list = array_keys($batch_matches);
+                    $keys_list    = array_keys($batch_matches);
                     $placeholders = implode(
                         ",",
                         array_fill(0, count($keys_list), "%s")
@@ -937,14 +933,14 @@ class OPTISTATE_Legacy_Scanner
                             ? (int) $count_rows[$key]->cnt
                             : 0;
                         $results[] = [
-                            "type" => $meta_type,
-                            "name" => $key,
-                            "count" => number_format_i18n($count) . " rows",
+                            "type"         => $meta_type,
+                            "name"         => $key,
+                            "count"        => number_format_i18n($count) . " rows",
                             "display_type" => $meta_type,
-                            "label" => $this->get_formatted_label(
+                            "label"        => $this->get_formatted_label(
                                 $source["data"]
                             ),
-                            "risk" => $source["data"]["risk"],
+                            "risk"      => $source["data"]["risk"],
                             "risk_note" =>
                                 "Data from uninstalled " .
                                 ($source["data"]["type"] ?? "plugin") .
@@ -1001,7 +997,7 @@ class OPTISTATE_Legacy_Scanner
             if (!$source) {
                 continue;
             }
-            $row_count = 0;
+            $row_count        = 0;
             $table_update_time = "";
             $table_info = $db_tables_info[$table] ?? null;
             if ($table_info) {
@@ -1025,13 +1021,13 @@ class OPTISTATE_Legacy_Scanner
             if (!isset($seen_items[$item_key])) {
                 $seen_items[$item_key] = true;
                 $results[] = [
-                    "type" => "table",
-                    "name" => $table,
-                    "count" => number_format_i18n($row_count) . " rows",
+                    "type"         => "table",
+                    "name"         => $table,
+                    "count"        => number_format_i18n($row_count) . " rows",
                     "display_type" => "table",
-                    "label" => $this->get_formatted_label($source["data"]),
-                    "risk" => "high",
-                    "risk_note" =>
+                    "label"        => $this->get_formatted_label($source["data"]),
+                    "risk"         => "high",
+                    "risk_note"    =>
                         "Table from uninstalled " .
                         ($source["data"]["type"] ?? "plugin") .
                         ": " .
@@ -1048,24 +1044,24 @@ class OPTISTATE_Legacy_Scanner
         array &$results,
         array $installed_cache
     ): void {
-        $user_id = get_current_user_id();
+        $user_id   = get_current_user_id();
         $state_key = self::FOLDER_SCAN_STATE_KEY . "_" . $user_id;
-        $state = get_transient($state_key);
+        $state     = get_transient($state_key);
         if (
             $state &&
             isset($state["index"], $state["seen_items"], $state["dirs"])
         ) {
             $directories = $state["dirs"];
-            $seen_items = $state["seen_items"];
+            $seen_items  = $state["seen_items"];
             $start_index = (int) $state["index"];
         } else {
-            $upload_dir = wp_get_upload_dir();
-            $scan_locations = [];
-            $base_upload_path = $upload_dir["basedir"];
-            $wp_content_dir = WP_CONTENT_DIR;
-            $wp_plugin_dir = WP_PLUGIN_DIR;
-            $wp_theme_dir = get_theme_root();
-            $wp_mu_plugin_dir = WPMU_PLUGIN_DIR;
+            $upload_dir      = wp_get_upload_dir();
+            $scan_locations  = [];
+            $base_upload_path  = $upload_dir["basedir"];
+            $wp_content_dir    = WP_CONTENT_DIR;
+            $wp_plugin_dir     = WP_PLUGIN_DIR;
+            $wp_theme_dir      = get_theme_root();
+            $wp_mu_plugin_dir  = WPMU_PLUGIN_DIR;
             $wordpress_system_dirs = [
                 "upgrade",
                 "upgrade-temp-backup",
@@ -1125,17 +1121,16 @@ class OPTISTATE_Legacy_Scanner
                             continue;
                         }
                         $folder_count = 0;
-                        $max_folders = apply_filters(
+                        $max_folders  = apply_filters(
                             "optistate_max_folders_scan",
                             3000
                         );
                         while (($item = readdir($handle)) !== false) {
-                            $folder_count++;
-                            if ($folder_count > $max_folders) {
-                                break;
-                            }
                             if ($item === "." || $item === "..") {
                                 continue;
+                            }
+                            if ($folder_count++ >= $max_folders) {
+                                break;
                             }
                             if (in_array($item, self::SKIP_FOLDERS, true)) {
                                 continue;
@@ -1171,9 +1166,9 @@ class OPTISTATE_Legacy_Scanner
                                     continue;
                                 }
                                 $found[] = [
-                                    "name" => $item,
-                                    "path" => $full_path,
-                                    "location" => $location_name,
+                                    "name"          => $item,
+                                    "path"          => $full_path,
+                                    "location"      => $location_name,
                                     "relative_path" => str_replace(
                                         ABSPATH,
                                         "",
@@ -1193,12 +1188,12 @@ class OPTISTATE_Legacy_Scanner
                 },
                 HOUR_IN_SECONDS
             );
-            $seen_items = [];
+            $seen_items  = [];
             $start_index = 0;
         }
-        $total_dirs = count($directories);
-        $batch_size = 50;
-        $processed = 0;
+        $total_dirs  = count($directories);
+        $batch_size  = 50;
+        $processed   = 0;
         $max_folders_to_show = apply_filters(
             "optistate_max_folders_display",
             200
@@ -1210,7 +1205,7 @@ class OPTISTATE_Legacy_Scanner
             if ($processed >= $batch_size) {
                 break;
             }
-            $dir_info = $directories[$i];
+            $dir_info    = $directories[$i];
             $folder_name = $dir_info["name"];
             $folder_lower = strtolower($folder_name);
             $location_name = $dir_info["location"];
@@ -1245,36 +1240,36 @@ class OPTISTATE_Legacy_Scanner
                     true,
                     [$this, "should_stop_scan"]
                 );
-                $folder_size = $folder_stats["size"];
+                $folder_size        = $folder_stats["size"];
                 $has_sensitive_files = $folder_stats["sensitive"];
-                $last_modified = filemtime($dir_info["path"]);
+                $last_modified = @filemtime($dir_info["path"]);
                 $days_old = $last_modified
                     ? (int) floor((time() - $last_modified) / DAY_IN_SECONDS)
                     : 0;
                 $risk_level = $source["data"]["risk"];
-                $risk_note =
+                $risk_note  =
                     "Orphaned folder from uninstalled plugin: " .
                     $source["data"]["name"];
                 if ($dir_info["is_plugin_dir"]) {
-                    $risk_level = "high";
-                    $risk_note .=
+                    $risk_level  = "high";
+                    $risk_note  .=
                         " (leftover in plugins directory - security risk)";
                 } elseif ($dir_info["is_theme_dir"]) {
-                    $risk_level = "high";
-                    $risk_note .= " (leftover in themes directory)";
+                    $risk_level  = "high";
+                    $risk_note  .= " (leftover in themes directory)";
                 } elseif (
                     $location_name === "uploads" &&
                     $folder_size > 100000000
                 ) {
-                    $risk_level = "high";
-                    $risk_note .=
+                    $risk_level  = "high";
+                    $risk_note  .=
                         " (large upload folder: " .
                         size_format($folder_size, 1) .
                         ")";
                 }
                 if ($has_sensitive_files) {
-                    $risk_level = "critical";
-                    $risk_note .= " - contains sensitive files";
+                    $risk_level  = "critical";
+                    $risk_note  .= " - contains sensitive files";
                 }
                 $item_key = "folder:" . $dir_info["path"];
                 if (
@@ -1283,19 +1278,19 @@ class OPTISTATE_Legacy_Scanner
                 ) {
                     $seen_items[$item_key] = true;
                     $results[] = [
-                        "type" => "folder",
-                        "name" => $dir_info["relative_path"],
-                        "path" => $dir_info["path"],
+                        "type"          => "folder",
+                        "name"          => $dir_info["relative_path"],
+                        "path"          => $dir_info["path"],
                         "relative_path" => $dir_info["relative_path"],
-                        "location" => $dir_info["location"],
-                        "count" => $folder_size
+                        "location"      => $dir_info["location"],
+                        "count"         => $folder_size
                             ? size_format($folder_size, 1)
                             : "0 B",
-                        "display_type" => "folder",
-                        "label" => $this->get_formatted_label($source["data"]),
-                        "risk" => $risk_level,
-                        "risk_note" => $risk_note,
-                        "days_old" => $days_old,
+                        "display_type"      => "folder",
+                        "label"             => $this->get_formatted_label($source["data"]),
+                        "risk"              => $risk_level,
+                        "risk_note"         => $risk_note,
+                        "days_old"          => $days_old,
                         "last_accessed_date" => $last_modified
                             ? date_i18n("j M Y", $last_modified)
                             : "",
@@ -1310,12 +1305,12 @@ class OPTISTATE_Legacy_Scanner
                             true
                         )
                     ) {
-                        $folder_stats = OPTISTATE_Utils::get_folder_size(
+                        $folder_stats  = OPTISTATE_Utils::get_folder_size(
                             $dir_info["path"]
                         );
-                        $folder_size = $folder_stats["size"];
-                        $last_modified = filemtime($dir_info["path"]);
-                        $days_old = $last_modified
+                        $folder_size   = $folder_stats["size"];
+                        $last_modified = @filemtime($dir_info["path"]);
+                        $days_old      = $last_modified
                             ? (int) floor(
                                 (time() - $last_modified) / DAY_IN_SECONDS
                             )
@@ -1327,22 +1322,22 @@ class OPTISTATE_Legacy_Scanner
                         ) {
                             $seen_items[$item_key] = true;
                             $results[] = [
-                                "type" => "folder",
-                                "name" => $dir_info["relative_path"],
-                                "path" => $dir_info["path"],
+                                "type"          => "folder",
+                                "name"          => $dir_info["relative_path"],
+                                "path"          => $dir_info["path"],
                                 "relative_path" => $dir_info["relative_path"],
-                                "location" => $dir_info["location"],
-                                "count" => $folder_size
+                                "location"      => $dir_info["location"],
+                                "count"         => $folder_size
                                     ? size_format($folder_size, 1)
                                     : "0 B",
-                                "display_type" => "folder",
-                                "label" => "Legacy: Unknown Plugin/Theme",
-                                "risk" => "high",
-                                "risk_note" =>
+                                "display_type"      => "folder",
+                                "label"             => "Legacy: Unknown Plugin/Theme",
+                                "risk"              => "high",
+                                "risk_note"         =>
                                     "Orphaned folder in " .
                                     $dir_info["location"] .
                                     " directory",
-                                "days_old" => $days_old,
+                                "days_old"          => $days_old,
                                 "last_accessed_date" => $last_modified
                                     ? date_i18n("j M Y", $last_modified)
                                     : "",
@@ -1352,14 +1347,14 @@ class OPTISTATE_Legacy_Scanner
                 }
                 if ($location_name === "uploads") {
                     $known_upload_folders = [
-                        "avatars" => [],
-                        "wpforms" => ["wpforms", "wpforms-lite"],
-                        "elementor" => ["elementor"],
-                        "woocommerce" => ["woocommerce"],
+                        "avatars"       => [],
+                        "wpforms"       => ["wpforms", "wpforms-lite"],
+                        "elementor"     => ["elementor"],
+                        "woocommerce"   => ["woocommerce"],
                         "wpcf7_uploads" => ["contact-form-7"],
                     ];
                     if (array_key_exists($folder_name, $known_upload_folders)) {
-                        $plugin_slugs = $known_upload_folders[$folder_name];
+                        $plugin_slugs    = $known_upload_folders[$folder_name];
                         $plugin_installed = false;
                         if (!empty($plugin_slugs)) {
                             $primary = reset($plugin_slugs);
@@ -1370,12 +1365,12 @@ class OPTISTATE_Legacy_Scanner
                             );
                         }
                         if (!$plugin_installed) {
-                            $folder_stats = OPTISTATE_Utils::get_folder_size(
+                            $folder_stats  = OPTISTATE_Utils::get_folder_size(
                                 $dir_info["path"]
                             );
-                            $folder_size = $folder_stats["size"];
-                            $last_modified = filemtime($dir_info["path"]);
-                            $days_old = $last_modified
+                            $folder_size   = $folder_stats["size"];
+                            $last_modified = @filemtime($dir_info["path"]);
+                            $days_old      = $last_modified
                                 ? (int) floor(
                                     (time() - $last_modified) / DAY_IN_SECONDS
                                 )
@@ -1387,25 +1382,24 @@ class OPTISTATE_Legacy_Scanner
                             ) {
                                 $seen_items[$item_key] = true;
                                 $results[] = [
-                                    "type" => "folder",
-                                    "name" => $dir_info["relative_path"],
-                                    "path" => $dir_info["path"],
-                                    "relative_path" =>
-                                        $dir_info["relative_path"],
-                                    "location" => $dir_info["location"],
-                                    "count" => $folder_size
+                                    "type"          => "folder",
+                                    "name"          => $dir_info["relative_path"],
+                                    "path"          => $dir_info["path"],
+                                    "relative_path" => $dir_info["relative_path"],
+                                    "location"      => $dir_info["location"],
+                                    "count"         => $folder_size
                                         ? size_format($folder_size, 1)
                                         : "0 B",
-                                    "display_type" => "folder",
-                                    "label" =>
+                                    "display_type"      => "folder",
+                                    "label"             =>
                                         "Legacy: " .
                                         ucfirst(
                                             str_replace("_", " ", $folder_name)
                                         ),
-                                    "risk" => "medium",
-                                    "risk_note" =>
+                                    "risk"              => "medium",
+                                    "risk_note"         =>
                                         "Orphaned upload folder from uninstalled plugin",
-                                    "days_old" => $days_old,
+                                    "days_old"          => $days_old,
                                     "last_accessed_date" => $last_modified
                                         ? date_i18n("j M Y", $last_modified)
                                         : "",
@@ -1421,9 +1415,9 @@ class OPTISTATE_Legacy_Scanner
             set_transient(
                 $state_key,
                 [
-                    "index" => $i,
+                    "index"      => $i,
                     "seen_items" => $seen_items,
-                    "dirs" => $directories,
+                    "dirs"       => $directories,
                 ],
                 30 * MINUTE_IN_SECONDS
             );
@@ -1435,7 +1429,11 @@ class OPTISTATE_Legacy_Scanner
     {
         global $wpdb;
         $wpdb->query(
-            "DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_optistate_legacy_folder_index%' OR option_name LIKE '_transient_timeout_optistate_legacy_folder_index%'"
+            $wpdb->prepare(
+                "DELETE FROM {$wpdb->options} WHERE option_name LIKE %s OR option_name LIKE %s",
+                '_transient_optistate_legacy_folder_index%',
+                '_transient_timeout_optistate_legacy_folder_index%'
+            )
         );
         $user_id = get_current_user_id();
         if ($user_id > 0) {
@@ -1448,16 +1446,16 @@ class OPTISTATE_Legacy_Scanner
         delete_transient("optistate_scan_last_meta_usermeta");
         delete_transient("optistate_scan_last_meta_termmeta");
         $this->get_legacy_plugin_map(true);
-        self::$plugin_map_cache = null;
+        self::$plugin_map_cache    = null;
         self::$prefix_lookup_cache = null;
-        self::$slug_lookup_cache = null;
+        self::$slug_lookup_cache   = null;
         self::$prefix_lookup_regex = null;
-        self::$prefix_to_info_map = null;
+        self::$prefix_to_info_map  = null;
         $this->clear_status_caches();
     }
     private function clear_status_caches(): void
     {
-        $this->active_check_cache = [];
+        $this->active_check_cache    = [];
         $this->installed_check_cache = [];
         $this->get_active_status_cache(true);
         $this->get_installed_status_cache(true);
@@ -1466,7 +1464,7 @@ class OPTISTATE_Legacy_Scanner
     {
         static $plugin_map = null;
         if ($plugin_map === null || $force) {
-            $file_path = plugin_dir_path(__FILE__) . "data/legacy-map.php";
+            $file_path  = plugin_dir_path(__FILE__) . "data/legacy-map.php";
             $plugin_map = file_exists($file_path) ? require $file_path : [];
             $plugin_map = apply_filters(
                 "optistate_legacy_plugin_map",
@@ -1510,10 +1508,17 @@ class OPTISTATE_Legacy_Scanner
             }
         } catch (Throwable $e) {
             OPTISTATE_Utils::log_critical_error("Restore from trash failed", [
-                "key" => $key,
+                "key"   => $key,
                 "error" => $e->getMessage(),
+                "file"  => $e->getFile(),
+                "line"  => $e->getLine(),
             ]);
-            OPTISTATE_Utils::send_json_error($e->getMessage());
+            OPTISTATE_Utils::send_json_error(
+                __(
+                    "An unexpected error occurred while restoring the item.",
+                    "optistate"
+                )
+            );
         }
     }
     public function ajax_permanently_delete_trash_item(): void
@@ -1565,17 +1570,17 @@ class OPTISTATE_Legacy_Scanner
         $this->main_plugin->settings_manager->check_user_access();
         $type = sanitize_key($_POST["type"]);
         $type_map = [
-            "post_meta" => "postmeta",
+            "post_meta"   => "postmeta",
             "comment_meta" => "commentmeta",
-            "user_meta" => "usermeta",
-            "term_meta" => "termmeta",
-            "postmeta" => "postmeta",
+            "user_meta"   => "usermeta",
+            "term_meta"   => "termmeta",
+            "postmeta"    => "postmeta",
             "commentmeta" => "commentmeta",
-            "usermeta" => "usermeta",
-            "termmeta" => "termmeta",
-            "option" => "option",
-            "table" => "table",
-            "folder" => "folder",
+            "usermeta"    => "usermeta",
+            "termmeta"    => "termmeta",
+            "option"      => "option",
+            "table"       => "table",
+            "folder"      => "folder",
         ];
         if (!isset($type_map[$type])) {
             OPTISTATE_Utils::send_json_error(
@@ -1674,7 +1679,7 @@ class OPTISTATE_Legacy_Scanner
                 );
                 return;
             }
-            $upload_dir = wp_get_upload_dir();
+            $upload_dir      = wp_get_upload_dir();
             $valid_base_paths = array_filter([
                 wp_normalize_path(realpath($upload_dir["basedir"])),
                 wp_normalize_path(realpath(WP_CONTENT_DIR)),
@@ -1692,7 +1697,7 @@ class OPTISTATE_Legacy_Scanner
                 );
                 return;
             }
-            $full_path = wp_normalize_path(ABSPATH . ltrim($name, "/"));
+            $full_path   = wp_normalize_path(ABSPATH . ltrim($name, "/"));
             $real_target = wp_normalize_path(realpath($full_path));
             if (empty($real_target) || !is_dir($real_target)) {
                 OPTISTATE_Utils::send_json_error(
@@ -1704,7 +1709,7 @@ class OPTISTATE_Legacy_Scanner
                 );
                 return;
             }
-            $is_valid = false;
+            $is_valid            = false;
             $real_target_slashed = trailingslashit($real_target);
             foreach ($valid_base_paths as $base_path) {
                 if (
@@ -1727,7 +1732,7 @@ class OPTISTATE_Legacy_Scanner
                 );
                 return;
             }
-            $basename = basename($real_target);
+            $basename  = basename($real_target);
             $core_dirs = [
                 "plugins",
                 "themes",
@@ -1772,7 +1777,7 @@ class OPTISTATE_Legacy_Scanner
             );
             if ($trash_key) {
                 OPTISTATE_Utils::send_json_success([
-                    "count" => 1,
+                    "count"   => 1,
                     "message" => __(
                         "Folder moved to trash. You can restore it within 14 days.",
                         "optistate"
@@ -1792,8 +1797,8 @@ class OPTISTATE_Legacy_Scanner
         if ($trash_key) {
             $type_label = str_replace("_", " ", $trash_type);
             OPTISTATE_Utils::send_json_success([
-                "count" => 1,
-                "message" => sprintf(
+                "count"    => 1,
+                "message"  => sprintf(
                     __(
                         "%s moved to trash. You can restore it within 14 days.",
                         "optistate"
