@@ -1793,7 +1793,15 @@ private function apply_deferred_indexes(
             );
             return [
                 "success" => true,
-                "warnings" => count($failed_indexes) . " indexes failed",
+                "warnings" => sprintf(
+                    _n(
+                        "%s deferred index failed to apply",
+                        "%s deferred indexes failed to apply",
+                        count($failed_indexes),
+                        "optistate"
+                    ),
+                    number_format_i18n(count($failed_indexes))
+                ),
             ];
         }
         return ["success" => true];

@@ -879,13 +879,7 @@ $order_by_clause = "";
             $target_bytes = self::TARGET_BATCH_SIZE;
             $max_rows_per_flush = 5000;
             $flush_count = 0;
-            $last_pk_value = $offset;
-            if (!is_numeric($last_pk_value) && $last_pk_value !== null) {
-            } else {
-                if ($last_pk_value === null) {
-                    $last_pk_value = 0;
-                }
-            }
+            $last_pk_value = $offset === null ? 0 : $offset;
 
             $process_row = function ($row) use (
                 &$row_buffer,
