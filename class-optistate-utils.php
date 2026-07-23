@@ -775,7 +775,6 @@ class OPTISTATE_Utils
         ];
 
         $secret = implode('|', $salt_parts);
-
         if (!$has_salts) {
             $fallback = get_option('optistate_fallback_encryption_key');
 

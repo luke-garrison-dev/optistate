@@ -1587,7 +1587,7 @@ class OPTISTATE_Performance_Manager
         );
         return preg_replace("/\n{3,}/", "\n\n", trim($content));
     }
-    public function _performance_rebuild_htaccess(): bool
+    public function rebuild_htaccess(): bool
     {
         $info = $this->get_htaccess_info(true, true, true);
         if (!$info["writable"]) {
@@ -2204,7 +2204,7 @@ class OPTISTATE_Performance_Manager
         $success = $this->_performance_save_settings($features);
         if ($success) {
             if ($htaccess_rebuild_needed) {
-                $this->_performance_rebuild_htaccess();
+                $this->rebuild_htaccess();
             }
             foreach ($changes_to_log as $key => $change) {
                 $operation = "";

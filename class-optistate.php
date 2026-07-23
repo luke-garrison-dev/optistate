@@ -1384,26 +1384,79 @@ add_action('optistate_run_pagespeed_worker', function ($task_id): void {
         );
     }
 
-    private function get_debug_log_path(): ?string
-    {
-        if (defined('WP_DEBUG_LOG') && is_string(WP_DEBUG_LOG) && WP_DEBUG_LOG !== '') {
-            return WP_DEBUG_LOG;
+private function get_debug_log_path(): ?string
+{
+    $candidates = [];
+
+    if (defined('WP_DEBUG_LOG') && is_string(WP_DEBUG_LOG) && WP_DEBUG_LOG !== '') {
+        $path = WP_DEBUG_LOG;
+        if (!preg_match('#^/|[a-zA-Z]:\\\\#', $path)) {
+            $path = ABSPATH . $path;
         }
-
-        if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG === true) {
-            return WP_CONTENT_DIR . '/debug.log';
-        }
-
-        $ini_log = ini_get('error_log');
-
-        if (is_string($ini_log) && $ini_log !== '' && $ini_log !== 'syslog' && strpos($ini_log, 'php://') !== 0) {
-            return $ini_log;
-        }
-
-        $default = WP_CONTENT_DIR . '/debug.log';
-
-        return file_exists($default) ? $default : null;
+        $candidates[] = $path;
     }
+
+    if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG === true) {
+        $candidates[] = WP_CONTENT_DIR . '/debug.log';
+    }
+
+    $ini_log = ini_get('error_log');
+    if (is_string($ini_log) && $ini_log !== '' && $ini_log !== 'syslog' && strpos($ini_log, 'php://') !== 0) {
+        $candidates[] = $ini_log;
+    }
+
+    $candidates[] = WP_CONTENT_DIR . '/debug.log';
+
+    foreach ($candidates as $file) {
+        $file = wp_normalize_path($file);
+
+        if (file_exists($file)) {
+            $real = realpath($file);
+            if ($real === false) {
+                continue;
+            }
+            $real = wp_normalize_path($real);
+            if (!$this->is_path_allowed($real)) {
+                continue;
+            }
+            return $real;
+        }
+
+        $dir = dirname($file);
+        if (!is_dir($dir)) {
+            continue;
+        }
+
+        $real_dir = realpath($dir);
+        if ($real_dir === false) {
+            continue;
+        }
+        $real_dir = wp_normalize_path($real_dir);
+
+        if ($this->is_path_allowed($real_dir)) {
+            return $file;
+        }
+    }
+
+    return null;
+}
+
+private function is_path_allowed(string $path): bool
+{
+    $allowed_roots = [
+        wp_normalize_path(ABSPATH),
+        wp_normalize_path(WP_CONTENT_DIR),
+    ];
+
+    $path = rtrim($path, '/\\');
+    foreach ($allowed_roots as $root) {
+        $root = rtrim($root, '/\\');
+        if (strpos($path, $root . '/') === 0 || $path === $root) {
+            return true;
+        }
+    }
+    return false;
+}
 
     private function get_error_logging_status(): string
     {
@@ -2294,7 +2347,7 @@ add_action('optistate_run_pagespeed_worker', function ($task_id): void {
                 return;
             }
 
-            $this->performance_manager->_performance_rebuild_htaccess();
+            $this->performance_manager->rebuild_htaccess();
             $this->reschedule_cron_from_settings();
 
             $caching = $this->get_service('server_caching');
@@ -2348,7 +2401,9 @@ add_action('optistate_run_pagespeed_worker', function ($task_id): void {
     public function ajax_download_htaccess(): void
     {
         check_ajax_referer(self::NONCE_ACTION, 'nonce');
-
+        if (!current_user_can("manage_options")) {
+            wp_die(esc_html__("Insufficient permissions.", "optistate"), 403);
+        }
         $this->settings_manager->check_user_access();
 
         if (!OPTISTATE_Utils::check_rate_limit('download_htaccess', 5)) {
@@ -2384,6 +2439,9 @@ add_action('optistate_run_pagespeed_worker', function ($task_id): void {
     public function ajax_download_error_log(): void
     {
         check_ajax_referer(self::NONCE_ACTION, 'nonce');
+                if (!current_user_can("manage_options")) {
+            wp_die(esc_html__("Insufficient permissions.", "optistate"), 403);
+        }
         $this->settings_manager->check_user_access();
 
         if (!OPTISTATE_Utils::check_rate_limit('error_log', 5)) {
@@ -2450,6 +2508,9 @@ add_action('optistate_run_pagespeed_worker', function ($task_id): void {
     public function ajax_download_activity_log(): void
     {
         check_ajax_referer(self::NONCE_ACTION, 'nonce');
+                if (!current_user_can("manage_options")) {
+            wp_die(esc_html__("Insufficient permissions.", "optistate"), 403);
+        }
         $this->settings_manager->check_user_access();
 
         if (!OPTISTATE_Utils::check_rate_limit('activity_log', 3)) {

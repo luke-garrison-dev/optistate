@@ -858,7 +858,7 @@ class OPTISTATE_Login_Protection
         delete_transient(self::CIDR_CACHE_KEY);
         delete_transient("optistate_admin_blocked_ip_list");
         if (isset($this->main_plugin->performance_manager)) {
-            $this->main_plugin->performance_manager->_performance_rebuild_htaccess();
+            $this->main_plugin->performance_manager->rebuild_htaccess();
         }
         $context = $list_modified
             ? __("entire website", "optistate")
@@ -1000,7 +1000,7 @@ class OPTISTATE_Login_Protection
             delete_transient(self::CIDR_CACHE_KEY);
             delete_transient("optistate_admin_blocked_ip_list");
             if (isset($this->main_plugin->performance_manager)) {
-                $this->main_plugin->performance_manager->_performance_rebuild_htaccess();
+                $this->main_plugin->performance_manager->rebuild_htaccess();
             }
             $old_ips = $wpdb->get_col(
                 "SELECT ip_address FROM $table_name WHERE attempts_count = -1"

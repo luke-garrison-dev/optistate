@@ -157,10 +157,6 @@ class OPTISTATE_Settings_Manager
     }
     private function validate_settings(array $settings): array
     {
-        return $this->_validate_settings_array($settings);
-    }
-    private function _validate_settings_array(array $settings): array
-    {
         static $all_cleanup_items = null;
         if ($all_cleanup_items === null) {
             $all_cleanup_items = OPTISTATE_Cleanup_Functions::get_all_cleanup_items();
@@ -842,18 +838,7 @@ class OPTISTATE_Settings_Manager
                 );
                 return;
             }
-            $validated_settings = $this->_validate_settings_array(
-                $new_settings
-            );
-            if ($validated_settings === false) {
-                OPTISTATE_Utils::send_json_error(
-                    __(
-                        "Settings validation failed. Import aborted.",
-                        "optistate"
-                    )
-                );
-                return;
-            }
+            $validated_settings = $this->validate_settings($new_settings);
             if (!empty($validated_settings["ip_block_list"])) {
                 $current_user_ip = OPTISTATE_Utils::get_client_ip(
                     !empty($validated_settings["cloudflare_enabled"]),
@@ -932,7 +917,7 @@ class OPTISTATE_Settings_Manager
                     $validated_settings["ip_block_list"]
                 );
             }
-            $this->main_plugin->performance_manager->_performance_rebuild_htaccess();
+            $this->main_plugin->performance_manager->rebuild_htaccess();
             $this->main_plugin->reschedule_cron_from_settings();
             $this->main_plugin->invalidate_plugin_caches();
             $this->main_plugin->log_entry(
@@ -1258,10 +1243,6 @@ class OPTISTATE_Settings_Manager
             $validated[$id] = $valid;
         }
         return $validated;
-    }
-    private function validate_imported_settings(array $settings)
-    {
-        return $this->_validate_settings_array($settings);
     }
     public function ajax_save_one_click_extra_items(): void
     {

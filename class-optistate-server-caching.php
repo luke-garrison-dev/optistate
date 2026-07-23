@@ -463,7 +463,7 @@ class OPTISTATE_Server_Caching
         }
         $stale_duration = max(3600, $lifetime * 3);
         header(
-            "Cache-Control: public, max-age=" .
+            "Cache-Control: private, max-age=" .
                 $lifetime .
                 ", stale-while-revalidate=" .
                 $stale_duration .
@@ -479,7 +479,7 @@ class OPTISTATE_Server_Caching
             $charset = "UTF-8";
         }
         header("Content-Type: text/html; charset=" . $charset);
-        header("Vary: Accept-Encoding");
+        header("Vary: Accept-Encoding, Cookie");
     }
     private function normalize_uri_for_key(string $raw_uri): string
     {
@@ -633,9 +633,12 @@ class OPTISTATE_Server_Caching
                     } else {
                         flock($handle, LOCK_UN);
                         fclose($handle);
-                        $this->main_plugin
-                            ->get_filesystem()
-                            ->delete($cache_file);
+                        try {
+                            $this->main_plugin
+                                ->get_filesystem()
+                                ->delete($cache_file);
+                        } catch (Throwable $e) {
+                        }
                         OPTISTATE_Utils::log_critical_error(
                             sprintf(
                                 "Cache file invalid (no <html>), deleted. File: %s",
@@ -645,7 +648,10 @@ class OPTISTATE_Server_Caching
                     }
                 }
             } else {
-                $this->main_plugin->get_filesystem()->delete($cache_file);
+                try {
+                    $this->main_plugin->get_filesystem()->delete($cache_file);
+                } catch (Throwable $e) {
+                }
             }
         }
         ob_start([$this, "capture_and_cache_output"]);
@@ -809,10 +815,18 @@ class OPTISTATE_Server_Caching
         string $full_content
     ): bool {
         $cache_dir = dirname($cache_file);
+        $is_shard = rtrim($cache_dir, "/") !== rtrim($this->cache_dir, "/");
+        if ($is_shard) {
+            $this->main_plugin->ensure_directory(
+                $this->cache_dir,
+                0755,
+                OPTISTATE::HTACCESS_RULES_CACHE
+            );
+        }
         $this->main_plugin->ensure_directory(
             $cache_dir,
             0755,
-            OPTISTATE::HTACCESS_RULES_CACHE
+            $is_shard ? null : OPTISTATE::HTACCESS_RULES_CACHE
         );
         try {
             $token = bin2hex(random_bytes(8));
@@ -939,6 +953,29 @@ class OPTISTATE_Server_Caching
         ksort($safe_params);
         return http_build_query($safe_params);
     }
+    private function flatten_cache_dirlist($entries): array
+    {
+        if (empty($entries) || !is_array($entries)) {
+            return [];
+        }
+        $files = [];
+        foreach ($entries as $entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+            if (($entry["type"] ?? "") === "d") {
+                if (!empty($entry["files"]) && is_array($entry["files"])) {
+                    $files = array_merge(
+                        $files,
+                        $this->flatten_cache_dirlist($entry["files"])
+                    );
+                }
+                continue;
+            }
+            $files[] = $entry;
+        }
+        return $files;
+    }
     private function get_cache_path(
         string $host,
         string $uri,
@@ -982,7 +1019,12 @@ class OPTISTATE_Server_Caching
         if ($is_mobile) {
             $cache_key .= "-mobile";
         }
-        $result = $this->cache_dir . $cache_key . ".html";
+        $result =
+            $this->cache_dir .
+            substr($cache_key, 0, 2) .
+            "/" .
+            $cache_key .
+            ".html";
         $this->cache_path_cache[$lookup_key] = $result;
         return $result;
     }
@@ -1080,7 +1122,9 @@ class OPTISTATE_Server_Caching
         $mobile_file_count = 0;
         $newest_file_time = null;
         $oldest_file_time = null;
-        $files = $filesystem->dirlist($this->cache_dir);
+        $files = $this->flatten_cache_dirlist(
+            $filesystem->dirlist($this->cache_dir, false, true)
+        );
         $MIN_VALID_TIMESTAMP = 978307200;
         if (!empty($files)) {
             foreach ($files as $file) {
@@ -1148,7 +1192,15 @@ class OPTISTATE_Server_Caching
         if ($url === "") {
             return;
         }
-        $filesystem = $this->main_plugin->get_filesystem();
+                try {
+            $filesystem = $this->main_plugin->get_filesystem();
+        } catch (Throwable $e) {
+            OPTISTATE_Utils::log_critical_error(
+                "purge_cache_for_url could not obtain a filesystem: " .
+                    $e->getMessage()
+            );
+            return;
+        }
         $parsed_url = wp_parse_url($url);
         if (
             !$parsed_url ||
@@ -1193,7 +1245,15 @@ class OPTISTATE_Server_Caching
         if (!$post) {
             return;
         }
-        $filesystem = $this->main_plugin->get_filesystem();
+       try {
+            $filesystem = $this->main_plugin->get_filesystem();
+        } catch (Throwable $e) {
+            OPTISTATE_Utils::log_critical_error(
+                "purge_post_and_related_urls could not obtain a filesystem: " .
+                    $e->getMessage()
+            );
+            return;
+        }
         if (!$filesystem->is_dir($this->cache_dir)) {
             return;
         }
@@ -1305,13 +1365,21 @@ class OPTISTATE_Server_Caching
         if (!$this->is_caching_enabled()) {
             return;
         }
-        $filesystem = $this->main_plugin->get_filesystem();
+                try {
+            $filesystem = $this->main_plugin->get_filesystem();
+        } catch (Throwable $e) {
+            OPTISTATE_Utils::log_critical_error(
+                "purge_entire_cache could not obtain a filesystem: " .
+                    $e->getMessage()
+            );
+            return;
+        }
         if ($filesystem->is_dir($this->cache_dir)) {
             $filesystem->delete($this->cache_dir, true);
         }
         wp_mkdir_p($this->cache_dir);
         $filesystem->chmod($this->cache_dir, 0755);
-        delete_transient("optistate_dir_exists_" . md5($this->cache_dir));
+        $this->main_plugin->clear_directory_existence_cache($this->cache_dir);
         $this->ensure_directory_and_secure();
         $this->reset_preload_state();
         $this->cache_path_cache = [];
@@ -2018,7 +2086,7 @@ class OPTISTATE_Server_Caching
         if ($html === "" || strlen($html) > 3 * 1024 * 1024) {
             return $html;
         }
-        $preserve_tags = ["pre", "script", "textarea", "style"];
+        $preserve_tags = ["pre", "code", "script", "textarea", "style"];
         $placeholders = [];
         $counter = 0;
         $original = $html;
@@ -2047,9 +2115,6 @@ class OPTISTATE_Server_Caching
                 return $original;
             }
         }
-        if (strpos($original, "___OPTSM_" . $marker_token . "_") !== false) {
-            return $original;
-        }
         $html = preg_replace("/<!--(?!\s*\[if\s).*?-->/s", "", $html);
         if ($html === null) {
             return $original;
@@ -2058,7 +2123,6 @@ class OPTISTATE_Server_Caching
         if ($html === null) {
             return $original;
         }
-        $html = str_replace("> <", "><", $html);
         if (!empty($placeholders)) {
             $html = strtr($html, $placeholders);
         }

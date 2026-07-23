@@ -37,11 +37,6 @@ class OPTISTATE_Activation
     public static function activate(): void
     {
         OPTISTATE_Utils::clear_table_existence_cache();
-        load_plugin_textdomain(
-            "optistate",
-            false,
-            dirname(plugin_basename(OPTISTATE_PLUGIN_FILE)) . "/languages"
-        );
         if (is_multisite()) {
             deactivate_plugins(plugin_basename(OPTISTATE_PLUGIN_FILE));
             wp_die(
@@ -86,7 +81,7 @@ class OPTISTATE_Activation
             $instance->settings_manager->save_persistent_settings($settings);
             $instance->clear_directory_existence_cache();
             $instance->performance_manager->apply_performance_optimizations();
-            $instance->performance_manager->_performance_rebuild_htaccess();
+            $instance->performance_manager->rebuild_htaccess();
             wp_cache_delete("optistate_dirs_checked", "optistate");
             delete_transient("optistate_dirs_checked");
             $instance->process_store->create_table();
@@ -188,11 +183,27 @@ class OPTISTATE_Activation
                     "trace" => $e->getTraceAsString(),
                 ]
             );
-            throw new Exception(
-                sprintf(
-                    __("Plugin activation failed: %s", "optistate"),
-                    $e->getMessage()
-                )
+            deactivate_plugins(plugin_basename(OPTISTATE_PLUGIN_FILE));
+            wp_die(
+                '<h1>' .
+                    esc_html__("Activation Failed", "optistate") .
+                    "</h1>" .
+                    "<p>" .
+                    esc_html(
+                        sprintf(
+                            __("WP Optimal State could not be activated: %s", "optistate"),
+                            $e->getMessage()
+                        )
+                    ) .
+                    "</p>" .
+                    "<p>" .
+                    esc_html__(
+                        "Please review your PHP error log for details, then try again.",
+                        "optistate"
+                    ) .
+                    "</p>",
+                esc_html__("Plugin Activation Failed", "optistate"),
+                ["response" => 500, "back_link" => true]
             );
         }
     }
@@ -353,8 +364,12 @@ class OPTISTATE_Activation
             do {
                 $options_batch = $wpdb->get_col(
                     $wpdb->prepare(
-                        "SELECT option_name FROM {$wpdb->options} WHERE option_name LIKE %s LIMIT %d",
+                        "SELECT option_name FROM {$wpdb->options}
+                         WHERE option_name LIKE %s
+                           AND option_name NOT IN (%s)
+                         LIMIT %d",
                         $wpdb->esc_like("optistate_") . "%",
+                        "optistate_fallback_encryption_key",
                         $batch_size
                     )
                 );
