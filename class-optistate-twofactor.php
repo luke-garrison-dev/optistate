@@ -896,7 +896,7 @@ if ($enabled) {
             if (!$user_id) {
                 wp_die(-1);
             }
-            if (!OPTISTATE_Utils::check_rate_limit("2fa_generate_secret", 10)) {
+            if (!OPTISTATE_Utils::check_rate_limit("2fa_generate_secret", 5)) {
                 OPTISTATE_Utils::send_json_error(
                     OPTISTATE_Utils::get_rate_limit_message(true),
                     429
@@ -967,7 +967,7 @@ if ($enabled) {
             if (!$user_id) {
                 wp_die(-1);
             }
-            if (!OPTISTATE_Utils::check_rate_limit("2fa_verify_code", 20)) {
+            if (!OPTISTATE_Utils::check_rate_limit("2fa_verify_code", 2)) {
                 OPTISTATE_Utils::send_json_error(
                     OPTISTATE_Utils::get_rate_limit_message(true),
                     429
@@ -1021,7 +1021,7 @@ if ($enabled) {
                 wp_die(-1);
             }
             if (
-                !OPTISTATE_Utils::check_rate_limit("2fa_regenerate_backup", 10)
+                !OPTISTATE_Utils::check_rate_limit("2fa_regenerate_backup", 5)
             ) {
                 OPTISTATE_Utils::send_json_error(
                     OPTISTATE_Utils::get_rate_limit_message(true),
