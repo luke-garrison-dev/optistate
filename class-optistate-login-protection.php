@@ -6,6 +6,7 @@ class OPTISTATE_Login_Protection
 {
     public const TABLE_NAME = "optistate_login_protect";
     private const CIDR_CACHE_KEY = "optistate_cidr_rules";
+    private const RULES_VERSION_OPTION = "optistate_ip_rules_version";
     private OPTISTATE $main_plugin;
     private ?string $current_request_ip = null;
     private ?string $current_request_ip_hash = null;
@@ -55,6 +56,7 @@ class OPTISTATE_Login_Protection
             $this->check_global_ip_block();
         }
     }
+
     public function create_table(): void
     {
         global $wpdb;
@@ -63,6 +65,21 @@ class OPTISTATE_Login_Protection
             "id bigint(20) NOT NULL AUTO_INCREMENT, ip_address varchar(45) NOT NULL, user_agent varchar(255) NOT NULL DEFAULT '', attempts_count int NOT NULL DEFAULT 0, blocked_until bigint NOT NULL DEFAULT 0, created_at bigint NOT NULL DEFAULT 0, updated_at bigint NOT NULL DEFAULT 0, PRIMARY KEY (id), UNIQUE KEY ip_address (ip_address), KEY blocked_until_idx (blocked_until, updated_at), KEY updated_at_idx (updated_at), KEY attempts_count_idx (attempts_count, ip_address)";
         OPTISTATE_Utils::create_table_if_not_exists($table_name, $sql, true);
     }
+
+    private function get_ip_rules_version(): int
+    {
+        return (int) get_option(self::RULES_VERSION_OPTION, 0);
+    }
+
+    private function bump_ip_rules_version(): void
+    {
+        update_option(
+            self::RULES_VERSION_OPTION,
+            $this->get_ip_rules_version() + 1,
+            false
+        );
+    }
+
     public function ajax_save_settings(): void
     {
         check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
@@ -209,11 +226,13 @@ class OPTISTATE_Login_Protection
             "reload_needed" => $reload_needed,
         ]);
     }
+
     private function get_captcha_transient_key(): string
     {
         return "optistate_captcha_" .
             md5($this->get_client_ip() . ($_SERVER["HTTP_USER_AGENT"] ?? ""));
     }
+
     private function generate_captcha(): array
     {
         $operations = ["add", "subtract", "multiply"];
@@ -246,6 +265,7 @@ class OPTISTATE_Login_Protection
         );
         return [$num1, $num2, $operation];
     }
+
     public function add_captcha_field(): void
     {
         list(
@@ -267,6 +287,7 @@ class OPTISTATE_Login_Protection
          break;
  } ?> </label> <input type="text" name="optistate_captcha" id="optistate_captcha" class="input" value="" size="3" maxlength="3" autocomplete="off" inputmode="numeric" pattern="[0-9]*" /> </p> <?php
     }
+
     public function validate_captcha($user, string $username, string $password)
     {
         if (empty($_POST["log"]) || empty($_POST["pwd"])) {
@@ -313,6 +334,7 @@ class OPTISTATE_Login_Protection
         }
         return $user;
     }
+
     public function check_login_block_ui(): void
     {
         $error = $this->is_access_blocked();
@@ -321,6 +343,7 @@ class OPTISTATE_Login_Protection
         }
         $this->render_blocked_response($error);
     }
+
     public function check_login_block_auth(
         $user,
         string $username,
@@ -333,6 +356,7 @@ class OPTISTATE_Login_Protection
         }
         return $user;
     }
+
     private function render_blocked_response(WP_Error $error): void
     {
         $msg = $error->get_error_message();
@@ -342,7 +366,7 @@ class OPTISTATE_Login_Protection
             nocache_headers();
             header("Content-Type: text/xml; charset=UTF-8");
             die(
-                '<?xml version="1.0" encoding="UTF-8"?><methodResponse><fault><value><struct><member><name>faultCode</name><value><int>403</int></value></member><member><name>faultString</name><value><string>' .
+                '<?xml version="1.0" encoding="UTF-8"?><methodResponse><fault><value><struct><member><n>faultCode</n><value><int>403</int></value></member><member><n>faultString</n><value><string>' .
                     esc_html($msg) .
                     "</string></value></member></struct></value></fault></methodResponse>"
             );
@@ -381,6 +405,7 @@ class OPTISTATE_Login_Protection
             "</div> </div> </body> </html>";
         die($html);
     }
+
     public function record_failed_login(
         string $username,
         WP_Error $error = null
@@ -390,6 +415,12 @@ class OPTISTATE_Login_Protection
             return;
         }
         $already_processed = true;
+        if (
+            (defined("WP_CLI") && WP_CLI) ||
+            (defined("DOING_CRON") && DOING_CRON)
+        ) {
+            return;
+        }
         if (
             $error !== null &&
             in_array(
@@ -406,7 +437,7 @@ class OPTISTATE_Login_Protection
             return;
         }
         if (
-            empty($_POST["log"]) ||
+            isset($_POST["log"]) &&
             sanitize_user(wp_unslash($_POST["log"])) !== $username
         ) {
             return;
@@ -455,6 +486,7 @@ class OPTISTATE_Login_Protection
             $wpdb->suppress_errors($suppress);
             return;
         }
+        $blocked_until = 0;
         if ($wpdb->query("START TRANSACTION") === false) {
             OPTISTATE_Utils::log_critical_error(
                 "Failed to start transaction for login protection",
@@ -486,7 +518,6 @@ class OPTISTATE_Login_Protection
                 return;
             }
             $new_attempts = (int) $record->attempts_count + 1;
-            $blocked_until = 0;
             if ($new_attempts >= $max_attempts) {
                 $blocked_until = $now + $block_hours * HOUR_IN_SECONDS;
             }
@@ -506,49 +537,45 @@ class OPTISTATE_Login_Protection
             if ($wpdb->query("COMMIT") === false) {
                 throw new Exception("COMMIT failed: " . $wpdb->last_error);
             }
-            if ($blocked_until > 0) {
-                set_transient(
-                    "optistate_block_" . $ip_hash,
-                    $blocked_until,
-                    max(1, $blocked_until - $now)
-                );
-                $total_key = "optistate_total_blocked_count";
-                $options_table = $wpdb->options;
-                $updated_rows = (int) $wpdb->query(
-                    $wpdb->prepare(
-                        "UPDATE $options_table SET option_value = CAST(option_value AS UNSIGNED) + 1 WHERE option_name = %s",
-                        $total_key
-                    )
-                );
-                if ($updated_rows === 0) {
-                    add_option($total_key, 1, "", "no");
-                }
-                wp_cache_delete($total_key, "options");
-                $current_total = (int) get_option($total_key, 0);
-                $baseline_key = "optistate_blocked_24h_baseline";
-                $baseline_ts_key = "optistate_blocked_24h_baseline_ts";
-                $baseline_ts = (int) get_option($baseline_ts_key, 0);
-                if (
-                    $baseline_ts === 0 ||
-                    $now - $baseline_ts >= DAY_IN_SECONDS
-                ) {
-                    update_option(
-                        $baseline_key,
-                        max(0, $current_total - 1),
-                        false
-                    );
-                    update_option($baseline_ts_key, $now, false);
-                }
-            }
         } catch (Throwable $e) {
             $wpdb->query("ROLLBACK");
             OPTISTATE_Utils::log_critical_error(
                 "Transaction failed during login protection",
                 ["ip" => $ip, "error" => $e->getMessage()]
             );
+            $wpdb->suppress_errors($suppress);
+            return;
+        }
+        if ($blocked_until > 0) {
+            set_transient(
+                "optistate_block_" . $ip_hash,
+                $blocked_until,
+                max(1, $blocked_until - $now)
+            );
+            $total_key = "optistate_total_blocked_count";
+            $options_table = $wpdb->options;
+            $updated_rows = (int) $wpdb->query(
+                $wpdb->prepare(
+                    "UPDATE $options_table SET option_value = CAST(option_value AS UNSIGNED) + 1 WHERE option_name = %s",
+                    $total_key
+                )
+            );
+            if ($updated_rows === 0) {
+                add_option($total_key, 1, "", "no");
+            }
+            wp_cache_delete($total_key, "options");
+            $current_total = (int) get_option($total_key, 0);
+            $baseline_key = "optistate_blocked_24h_baseline";
+            $baseline_ts_key = "optistate_blocked_24h_baseline_ts";
+            $baseline_ts = (int) get_option($baseline_ts_key, 0);
+            if ($baseline_ts === 0 || $now - $baseline_ts >= DAY_IN_SECONDS) {
+                update_option($baseline_key, max(0, $current_total - 1), false);
+                update_option($baseline_ts_key, $now, false);
+            }
         }
         $wpdb->suppress_errors($suppress);
     }
+
     public function clear_login_attempts(
         string $user_login,
         WP_User $user
@@ -583,13 +610,19 @@ class OPTISTATE_Login_Protection
         $cleared_ips[$ip_hash] = true;
         do_action("optistate_login_attempts_cleared", $ip, $user_login);
     }
+
     public function clear_on_successful_auth($user, $username, $password)
     {
-        if ($user instanceof WP_User) {
-            $this->clear_login_attempts($username, $user);
+        if (!($user instanceof WP_User)) {
+            return $user;
         }
+        if (apply_filters("optistate_defer_login_attempt_clear", false, $user)) {
+            return $user;
+        }
+        $this->clear_login_attempts((string) $username, $user);
         return $user;
     }
+
     public function cleanup_login_records(): int
     {
         global $wpdb;
@@ -657,6 +690,7 @@ class OPTISTATE_Login_Protection
         }
         return $deleted;
     }
+
     public function get_client_ip(): string
     {
         if ($this->current_request_ip !== null) {
@@ -671,6 +705,7 @@ class OPTISTATE_Login_Protection
         $this->current_request_ip = $ip;
         return $ip;
     }
+
     private function get_client_ip_hash(): string
     {
         if ($this->current_request_ip_hash !== null) {
@@ -680,6 +715,7 @@ class OPTISTATE_Login_Protection
         $this->current_request_ip_hash = md5($ip);
         return $this->current_request_ip_hash;
     }
+
     private function is_access_blocked()
     {
         $ip = $this->get_client_ip();
@@ -754,6 +790,7 @@ class OPTISTATE_Login_Protection
         $request_cache[$ip_hash] = false;
         return false;
     }
+
     private function clear_block(string $ip, string $ip_hash): void
     {
         delete_transient("optistate_block_" . $ip_hash);
@@ -777,6 +814,7 @@ class OPTISTATE_Login_Protection
             $wpdb->suppress_errors($suppress);
         }
     }
+
     private function get_block_error(int $blocked_until): WP_Error
     {
         $remaining_seconds = $blocked_until - time();
@@ -794,6 +832,7 @@ class OPTISTATE_Login_Protection
             )
         );
     }
+
     private function clear_ip_transients(
         string $ip_or_hash,
         bool $is_hash = false
@@ -802,6 +841,7 @@ class OPTISTATE_Login_Protection
         delete_transient("optistate_block_" . $ip_hash);
         delete_transient("optistate_clean_" . $ip_hash);
     }
+
     public function ajax_unblock_user(): void
     {
         check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
@@ -856,6 +896,7 @@ class OPTISTATE_Login_Protection
         delete_transient("optistate_global_block_" . $ip_hash);
         delete_transient("optistate_global_clean_" . $ip_hash);
         delete_transient(self::CIDR_CACHE_KEY);
+        $this->bump_ip_rules_version();
         delete_transient("optistate_admin_blocked_ip_list");
         if (isset($this->main_plugin->performance_manager)) {
             $this->main_plugin->performance_manager->rebuild_htaccess();
@@ -877,6 +918,7 @@ class OPTISTATE_Login_Protection
             ),
         ]);
     }
+
     private function is_ip_whitelisted(string $ip): bool
     {
         $settings = $this->main_plugin->settings_manager->get_persistent_settings();
@@ -897,6 +939,7 @@ class OPTISTATE_Login_Protection
         }
         return false;
     }
+
     public function ajax_save_ip_blocker(): void
     {
         check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
@@ -998,6 +1041,7 @@ class OPTISTATE_Login_Protection
                 $new_settings
             );
             delete_transient(self::CIDR_CACHE_KEY);
+            $this->bump_ip_rules_version();
             delete_transient("optistate_admin_blocked_ip_list");
             if (isset($this->main_plugin->performance_manager)) {
                 $this->main_plugin->performance_manager->rebuild_htaccess();
@@ -1070,6 +1114,7 @@ class OPTISTATE_Login_Protection
             "reload_needed" => $reload_needed,
         ]);
     }
+
     public function check_global_ip_block(): void
     {
         $ip = $this->get_client_ip();
@@ -1107,7 +1152,12 @@ class OPTISTATE_Login_Protection
             }
             delete_transient($block_key);
         }
-        if (get_transient($clean_key)) {
+        $cached_clean = get_transient($clean_key);
+        if (
+            is_array($cached_clean) &&
+            isset($cached_clean["v"]) &&
+            (int) $cached_clean["v"] === $this->get_ip_rules_version()
+        ) {
             return;
         }
         $exact_hit = $wpdb->get_var(
@@ -1137,8 +1187,13 @@ class OPTISTATE_Login_Protection
                 return;
             }
         }
-        set_transient($clean_key, true, 6 * HOUR_IN_SECONDS);
+        set_transient(
+            $clean_key,
+            ["v" => $this->get_ip_rules_version()],
+            6 * HOUR_IN_SECONDS
+        );
     }
+
     private function deny_global_access(): void
     {
         if (!headers_sent()) {
@@ -1162,6 +1217,7 @@ class OPTISTATE_Login_Protection
             "</div></div></body></html>";
         die($html);
     }
+
     public function restore_ip_block_list(array $ips): void
     {
         global $wpdb;
@@ -1214,8 +1270,10 @@ class OPTISTATE_Login_Protection
             }
         }
         delete_transient(self::CIDR_CACHE_KEY);
+        $this->bump_ip_rules_version();
         delete_transient("optistate_admin_blocked_ip_list");
     }
+
     private function ip_in_cidr(string $ip, string $cidr): bool
     {
         return OPTISTATE_Utils::ip_in_range($ip, $cidr);

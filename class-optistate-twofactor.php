@@ -1,4 +1,5 @@
-<?php if (!defined("ABSPATH")) {
+<?php declare(strict_types=1);
+if (!defined("ABSPATH")) {
     exit();
 }
 class OPTISTATE_TwoFactor
@@ -6,38 +7,52 @@ class OPTISTATE_TwoFactor
     private OPTISTATE $main_plugin;
     private const BACKUP_CODE_COUNT = 10;
     private const BACKUP_CODE_LENGTH = 8;
+    private const BACKUP_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
     private const MAX_2FA_ATTEMPTS = 6;
+    private const MAX_2FA_USER_FAILURES = 10;
+    private const USER_LOCKOUT_SECONDS = 900;
     private const TOKEN_PATTERN = '/^[A-Za-z0-9]{64}$/';
     private bool $globally_enabled;
     private bool $completing_2fa_login = false;
     private static array $secret_cache = [];
     private static array $secret_bytes_cache = [];
     private static array $last_slice_cache = [];
-public function __construct(OPTISTATE $main_plugin, bool $globally_enabled = false)
-{
-    $this->main_plugin = $main_plugin;
-    $this->globally_enabled = $globally_enabled;
-    $this->register_ajax_handlers();
-    if ($this->globally_enabled) {
-        $this->init_hooks();
-        add_action('admin_init', [$this, 'verify_user_2fa_status_integrity']);
+
+    public function __construct(
+        OPTISTATE $main_plugin,
+        bool $globally_enabled = false
+    ) {
+        $this->main_plugin = $main_plugin;
+        $this->globally_enabled = $globally_enabled;
+        $this->register_ajax_handlers();
+        if ($this->globally_enabled) {
+            $this->init_hooks();
+            add_action("admin_init", [
+                $this,
+                "verify_user_2fa_status_integrity",
+            ]);
+        }
     }
-}
-public function verify_user_2fa_status_integrity(): void
-{
-    if (!$this->globally_enabled) {
-        return;
-    }
+
+    public function verify_user_2fa_status_integrity(): void
+    {
+        if (!$this->globally_enabled) {
+            return;
+        }
         $user_id = get_current_user_id();
         if ($user_id && $this->is_user_enabled($user_id)) {
             try {
                 if (!$this->get_user_secret($user_id)) {
                     delete_user_meta($user_id, "optistate_2fa_enabled");
                     delete_user_meta($user_id, "optistate_2fa_verified");
+                    delete_user_meta($user_id, "optistate_2fa_last_slice");
+                    unset(self::$last_slice_cache[$user_id]);
                 }
             } catch (Throwable $e) {
                 delete_user_meta($user_id, "optistate_2fa_enabled");
                 delete_user_meta($user_id, "optistate_2fa_verified");
+                delete_user_meta($user_id, "optistate_2fa_last_slice");
+                unset(self::$last_slice_cache[$user_id]);
                 OPTISTATE_Utils::log_critical_error(
                     "2FA integrity check failed for user $user_id: " .
                         $e->getMessage(),
@@ -46,6 +61,7 @@ public function verify_user_2fa_status_integrity(): void
             }
         }
     }
+
     private function register_ajax_handlers(): void
     {
         add_action("wp_ajax_optistate_generate_2fa_secret", [
@@ -69,6 +85,7 @@ public function verify_user_2fa_status_integrity(): void
             "ajax_admin_reset_2fa",
         ]);
     }
+
     private function init_hooks(): void
     {
         add_action("show_user_profile", [$this, "user_profile_fields"]);
@@ -82,17 +99,26 @@ public function verify_user_2fa_status_integrity(): void
             "save_user_profile_fields",
         ]);
         add_filter("authenticate", [$this, "deny_xmlrpc_for_2fa_users"], 30, 3);
+        add_filter(
+            "optistate_defer_login_attempt_clear",
+            [$this, "defer_attempt_clear"],
+            10,
+            2
+        );
         add_action("wp_login", [$this, "intercept_login_for_2fa"], 1, 2);
         add_action("login_form_optistate_2fa", [$this, "handle_2fa_screen"]);
     }
+
     public function is_globally_enabled(): bool
     {
         return $this->globally_enabled;
     }
+
     public function is_user_enabled(int $user_id): bool
     {
         return (bool) get_user_meta($user_id, "optistate_2fa_enabled", true);
     }
+
     private function get_user_secret(int $user_id): ?string
     {
         if (array_key_exists($user_id, self::$secret_cache)) {
@@ -107,6 +133,7 @@ public function verify_user_2fa_status_integrity(): void
         self::$secret_cache[$user_id] = $secret;
         return $secret;
     }
+
     private function get_user_secret_bytes(int $user_id): ?string
     {
         if (array_key_exists($user_id, self::$secret_bytes_cache)) {
@@ -121,6 +148,7 @@ public function verify_user_2fa_status_integrity(): void
         self::$secret_bytes_cache[$user_id] = $bytes;
         return $bytes;
     }
+
     private function set_user_secret(int $user_id, string $secret): void
     {
         $encrypted = OPTISTATE_Utils::encrypt_data($secret);
@@ -131,11 +159,32 @@ public function verify_user_2fa_status_integrity(): void
         );
         self::$secret_cache[$user_id] = $secret;
     }
+
+    private function purge_user_2fa_data(
+        int $user_id,
+        bool $delete_enabled_flag = false
+    ): void {
+        delete_user_meta($user_id, "optistate_2fa_verified");
+        delete_user_meta($user_id, "optistate_2fa_secret");
+        delete_user_meta($user_id, "optistate_2fa_backup_codes");
+        delete_user_meta($user_id, "optistate_2fa_last_slice");
+        if ($delete_enabled_flag) {
+            delete_user_meta($user_id, "optistate_2fa_enabled");
+        }
+        unset(
+            self::$secret_cache[$user_id],
+            self::$secret_bytes_cache[$user_id],
+            self::$last_slice_cache[$user_id]
+        );
+        $this->clear_user_failures($user_id);
+    }
+
     private function generate_secret(): string
     {
         $bytes = random_bytes(16);
         return $this->base32_encode($bytes);
     }
+
     private function base32_encode(string $bytes): string
     {
         $alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
@@ -156,6 +205,7 @@ public function verify_user_2fa_status_integrity(): void
         }
         return $result;
     }
+
     private function base32_decode(string $data): string
     {
         $alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
@@ -179,6 +229,7 @@ public function verify_user_2fa_status_integrity(): void
         }
         return $result;
     }
+
     private function get_totp_code_from_bytes(
         string $secret_bytes,
         int $time_slice
@@ -198,6 +249,7 @@ public function verify_user_2fa_status_integrity(): void
         $otp = $binary % 1000000;
         return str_pad((string) $otp, 6, "0", STR_PAD_LEFT);
     }
+
     public function verify_totp(
         string $secret,
         string $code,
@@ -247,31 +299,36 @@ public function verify_user_2fa_status_integrity(): void
         }
         return false;
     }
+
     private function generate_backup_codes(): array
     {
+        $alphabet = self::BACKUP_CODE_ALPHABET;
+        $max_index = strlen($alphabet) - 1;
         $codes = [];
         for ($i = 0; $i < self::BACKUP_CODE_COUNT; $i++) {
             $code = "";
             for ($j = 0; $j < self::BACKUP_CODE_LENGTH; $j++) {
-                $code .= random_int(0, 9);
+                $code .= $alphabet[random_int(0, $max_index)];
             }
             $codes[] = $code;
         }
         return $codes;
     }
+
     private function hash_backup_codes(array $codes): array
     {
         return array_map(function ($code) {
             return wp_hash_password($code);
         }, $codes);
     }
+
     private function verify_backup_code(int $user_id, string $code): bool
     {
         $stored = get_user_meta($user_id, "optistate_2fa_backup_codes", true);
         if (!is_array($stored)) {
             return false;
         }
-        $code = trim($code);
+        $code = strtoupper(trim($code));
         foreach ($stored as $index => $hash) {
             if (wp_check_password($code, $hash, $user_id)) {
                 unset($stored[$index]);
@@ -285,13 +342,35 @@ public function verify_user_2fa_status_integrity(): void
         }
         return false;
     }
+
+    private function get_user_failure_key(int $user_id): string
+    {
+        return "optistate_2fa_fails_" . $user_id;
+    }
+
+    private function register_2fa_failure(int $user_id): int
+    {
+        $key = $this->get_user_failure_key($user_id);
+        $count = (int) get_transient($key) + 1;
+        set_transient($key, $count, self::USER_LOCKOUT_SECONDS);
+        return $count;
+    }
+
+    private function clear_user_failures(int $user_id): void
+    {
+        delete_transient($this->get_user_failure_key($user_id));
+    }
+
     private function read_challenge_token(string $token): ?array
     {
         $raw = get_transient("optistate_2fa_token_" . $token);
         if ($raw === false || $raw === null || $raw === "") {
             return null;
         }
-        if (is_array($raw) && isset($raw["user_id"])) {
+        if (is_array($raw)) {
+            if (!isset($raw["user_id"])) {
+                return null;
+            }
             $uid = (int) $raw["user_id"];
             if ($uid <= 0) {
                 return null;
@@ -303,9 +382,13 @@ public function verify_user_2fa_status_integrity(): void
                     : 0,
             ];
         }
+        if (!is_int($raw) && !(is_string($raw) && ctype_digit($raw))) {
+            return null;
+        }
         $uid = (int) $raw;
         return $uid > 0 ? ["user_id" => $uid, "attempts" => 0] : null;
     }
+
     private function write_challenge_token(
         string $token,
         int $user_id,
@@ -318,6 +401,7 @@ public function verify_user_2fa_status_integrity(): void
             $ttl
         );
     }
+
     public function intercept_login_for_2fa(
         string $user_login,
         WP_User $user
@@ -365,6 +449,7 @@ public function verify_user_2fa_status_integrity(): void
         wp_safe_redirect($two_factor_url);
         exit();
     }
+
     public function deny_xmlrpc_for_2fa_users(
         $user,
         string $username,
@@ -390,6 +475,31 @@ public function verify_user_2fa_status_integrity(): void
         }
         return $user;
     }
+
+    public function defer_attempt_clear($defer, WP_User $user): bool
+    {
+        if ($this->completing_2fa_login) {
+            return (bool) $defer;
+        }
+        if (!$this->is_globally_enabled()) {
+            return (bool) $defer;
+        }
+        if (
+            (defined("REST_REQUEST") && REST_REQUEST) ||
+            (defined("WP_CLI") && WP_CLI) ||
+            wp_doing_ajax()
+        ) {
+            return (bool) $defer;
+        }
+        if (
+            $this->is_user_enabled($user->ID) &&
+            get_user_meta($user->ID, "optistate_2fa_verified", true)
+        ) {
+            return true;
+        }
+        return (bool) $defer;
+    }
+
     public function handle_2fa_screen(): void
     {
         try {
@@ -413,18 +523,35 @@ public function verify_user_2fa_status_integrity(): void
                 wp_safe_redirect(wp_login_url());
                 exit();
             }
-            if ($_SERVER["REQUEST_METHOD"] === "POST") {
+            if (
+                (int) get_transient($this->get_user_failure_key($user_id)) >=
+                self::MAX_2FA_USER_FAILURES
+            ) {
+                delete_transient("optistate_2fa_token_" . $token);
+                wp_safe_redirect(wp_login_url());
+                exit();
+            }
+            if (($_SERVER["REQUEST_METHOD"] ?? "") === "POST") {
                 $code = isset($_POST["optistate_2fa_code"])
                     ? sanitize_text_field(
                         wp_unslash($_POST["optistate_2fa_code"])
                     )
                     : "";
+                $code = trim($code);
                 $secret = $this->get_user_secret($user_id);
-                if (
-                    ($secret && $this->verify_totp($secret, $code, $user_id)) ||
-                    $this->verify_backup_code($user_id, $code)
-                ) {
+                $is_totp_code = strlen($code) === 6 && ctype_digit($code);
+                $is_backup_code =
+                    strlen($code) === self::BACKUP_CODE_LENGTH &&
+                    ctype_alnum($code);
+                $authenticated =
+                    ($is_totp_code &&
+                        $secret &&
+                        $this->verify_totp($secret, $code, $user_id)) ||
+                    ($is_backup_code &&
+                        $this->verify_backup_code($user_id, $code));
+                if ($authenticated) {
                     delete_transient("optistate_2fa_token_" . $token);
+                    $this->clear_user_failures($user_id);
                     $remember =
                         isset($_POST["rememberme"]) &&
                         $_POST["rememberme"] === "1";
@@ -432,20 +559,22 @@ public function verify_user_2fa_status_integrity(): void
                     wp_set_auth_cookie($user_id, $remember);
                     do_action("wp_login", $user->user_login, $user);
                     $redirect_to = isset($_POST["redirect_to"])
-                        ? esc_url_raw(
-                            wp_unslash(urldecode($_POST["redirect_to"]))
-                        )
+                        ? esc_url_raw(wp_unslash($_POST["redirect_to"]))
                         : admin_url();
                     wp_safe_redirect($redirect_to);
                     exit();
                 } else {
                     $challenge["attempts"]++;
+                    $user_failures = $this->register_2fa_failure($user_id);
                     do_action(
                         "wp_login_failed",
                         $user->user_login,
                         new WP_Error("invalid_2fa", "Failed 2FA attempt.")
                     );
-                    if ($challenge["attempts"] >= self::MAX_2FA_ATTEMPTS) {
+                    if (
+                        $challenge["attempts"] >= self::MAX_2FA_ATTEMPTS ||
+                        $user_failures >= self::MAX_2FA_USER_FAILURES
+                    ) {
                         delete_transient("optistate_2fa_token_" . $token);
                         wp_safe_redirect(wp_login_url());
                         exit();
@@ -530,12 +659,14 @@ exit();
             exit();
         }
     }
+
     private function admin_reset_js(int $target_user_id): void
     {
         $nonce = wp_create_nonce(
             "optistate_2fa_admin_reset_" . $target_user_id
         ); ?> <script type="text/javascript"> jQuery(document).ready(function($) { $('#optistate-2fa-admin-reset').on('click', function() { if (!confirm('<?php echo esc_js(__("This will disable and reset Two-Factor Authentication for this user, allowing them to log in without a code. Continue?", "optistate")); ?>')) { return; } var $btn = $(this); var $status = $('#optistate-2fa-admin-reset-status'); $btn.prop('disabled', true); $.post(ajaxurl, { action: 'optistate_admin_reset_2fa', nonce: <?php echo wp_json_encode($nonce); ?>, user_id: <?php echo (int) $target_user_id; ?> }) .done(function(response) { if (response.success) { $status.css({color: 'green', 'font-weight': 'bold'}).text('✓ <?php echo esc_js(__("2FA has been reset for this user.", "optistate")); ?>'); location.reload(); } else { var msg = (response.data && response.data.message) ? response.data.message : '<?php echo esc_js(__("An error occurred.", "optistate")); ?>'; $status.css({color: 'red', 'font-weight': 'bold'}).text('✗ ' + msg); } }) .fail(function(xhr) { var msg = '<?php echo esc_js(__("Network error. Please refresh and try again.", "optistate")); ?>'; if (xhr.responseJSON && xhr.responseJSON.data && xhr.responseJSON.data.message) { msg = xhr.responseJSON.data.message; } else if (xhr.status === 403) { msg = '<?php echo esc_js(__("Access denied. Please refresh the page.", "optistate")); ?>'; } $status.css({color: 'red', 'font-weight': 'bold'}).text('✗ ' + msg); }) .always(function() { $btn.prop('disabled', false); }); }); }); </script> <?php
     }
+
     public function ajax_admin_reset_2fa(): void
     {
         try {
@@ -575,13 +706,7 @@ exit();
                 );
                 return;
             }
-            delete_user_meta($target_user_id, "optistate_2fa_verified");
-            delete_user_meta($target_user_id, "optistate_2fa_secret");
-            delete_user_meta($target_user_id, "optistate_2fa_backup_codes");
-            unset(
-                self::$secret_cache[$target_user_id],
-                self::$secret_bytes_cache[$target_user_id]
-            );
+            $this->purge_user_2fa_data($target_user_id);
             self::$secret_cache[$target_user_id] = null;
             update_user_meta($target_user_id, "optistate_2fa_enabled", 0);
             $this->main_plugin->log_entry(
@@ -613,6 +738,7 @@ exit();
             );
         }
     }
+
     public function user_profile_fields(WP_User $user): void
     {
         if (!$this->is_globally_enabled()) {
@@ -652,7 +778,7 @@ if ($enabled) {
     $status_text = __("⛔ Disabled", "optistate");
     $status_color = "#898989";
 }
-?> <span style="color:<?php echo esc_attr($status_color); ?>; font-weight:bold;"> <?php echo esc_html($status_text); ?> </span> </td> </tr> <?php if ($is_self && $enabled): ?> <tr> <th scope="row"><?php esc_html_e("Secret Key", "optistate"); ?></th> <td> <?php if ($has_secret): ?> <div id="optistate-2fa-secret-display"> <p><code class="os-2fa-secret-code"><?php echo esc_html($secret); ?></code></p> <p><button type="button" class="button os-mt-5" id="optistate-2fa-regenerate-secret"><?php esc_html_e("Regenerate Secret", "optistate"); ?></button></p><br> <p class="description"><?php esc_html_e("Copy the Secret Key into your authenticator app, or scan the QR code below.", "optistate"); ?></p> <div id="optistate-2fa-qr-container" class="os-mt-6"> <div id="optistate-2fa-qr-initial"></div> <script type="text/javascript"> (function() { var otpauthUri = <?php echo wp_json_encode($this->get_otpauth_uri($user->user_login, $secret)); ?>; var renderInitialQr = function() { var el = document.getElementById('optistate-2fa-qr-initial'); if (el && typeof QRCode !== 'undefined') { new QRCode(el, { text: otpauthUri, width: 200, height: 200 }); } }; if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', renderInitialQr); } else { renderInitialQr(); } })(); </script> </div> </div> <div id="optistate-2fa-verify-section"><br> <p><?php esc_html_e("To confirm setup, enter the current code from your authenticator app:", "optistate"); ?></p> <input type="text" id="optistate-2fa-verify-code" placeholder="6-digit code" maxlength="6" class="os-2fa-verify-input" /> <button type="button" class="button button-primary os-2fa-verify-btn" id="optistate-2fa-verify-btn"><?php esc_html_e("Verify", "optistate"); ?></button> <p class="os-mt-5"><span id="optistate-2fa-verify-status"></span></p> </div> <?php $backup_codes_raw = get_transient("optistate_2fa_backup_raw_" . $user->ID); ?> <?php if (!empty($backup_codes_raw) && is_array($backup_codes_raw)): ?> <div id="optistate-2fa-backup-codes" class="os-mt-30"> <h4><?php esc_html_e("BACKUP CODES (save these now)", "optistate"); ?></h4> <?php esc_html_e("Each code can only be used once. Store them in a safe place. You will need them to log in if you lose access to the Authenticator app.", "optistate"); ?> <div class="os-2fa-backup-codes-list"> <?php foreach ($backup_codes_raw as $code): ?> <code class="os-2fa-backup-code"><?php echo esc_html($code); ?></code> <?php endforeach; ?> </div> <p class="description"><?php esc_html_e("These codes will not be shown again. Please save them now.", "optistate"); ?></p> <button type="button" class="button os-mt-10" id="optistate-2fa-regenerate-backup"><?php esc_html_e("Regenerate Backup Codes", "optistate"); ?></button> </div> <?php endif; ?> <?php else: ?> <p><?php esc_html_e("No secret key set. Click the button below to generate one.", "optistate"); ?></p> <button type="button" class="button" id="optistate-2fa-generate-secret"><?php esc_html_e("Generate Secret", "optistate"); ?></button> <div id="optistate-2fa-secret-generated" class="os-display-none"></div> <?php endif; ?> </td> </tr> <?php endif; ?> </table> <?php if (
+?> <span style="color:<?php echo esc_attr($status_color); ?>; font-weight:bold;"> <?php echo esc_html($status_text); ?> </span> </td> </tr> <?php if ($is_self && $enabled): ?> <tr> <th scope="row"><?php esc_html_e("Secret Key", "optistate"); ?></th> <td> <?php if ($has_secret && !$verified): ?> <div id="optistate-2fa-secret-display"> <p><code class="os-2fa-secret-code"><?php echo esc_html($secret); ?></code></p> <p><button type="button" class="button os-mt-5" id="optistate-2fa-regenerate-secret"><?php esc_html_e("Regenerate Secret", "optistate"); ?></button></p><br> <p class="description"><?php esc_html_e("Copy the Secret Key into your authenticator app, or scan the QR code below.", "optistate"); ?></p> <div id="optistate-2fa-qr-container" class="os-mt-6"> <div id="optistate-2fa-qr-initial"></div> <script type="text/javascript"> (function() { var otpauthUri = <?php echo wp_json_encode($this->get_otpauth_uri($user->user_login, (string) $secret)); ?>; var renderInitialQr = function() { var el = document.getElementById('optistate-2fa-qr-initial'); if (el && typeof QRCode !== 'undefined') { new QRCode(el, { text: otpauthUri, width: 200, height: 200 }); } }; if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', renderInitialQr); } else { renderInitialQr(); } })(); </script> </div> </div> <div id="optistate-2fa-verify-section"><br> <p><?php esc_html_e("To confirm setup, enter the current code from your authenticator app:", "optistate"); ?></p> <input type="text" id="optistate-2fa-verify-code" placeholder="6-digit code" maxlength="6" class="os-2fa-verify-input" /> <button type="button" class="button button-primary os-2fa-verify-btn" id="optistate-2fa-verify-btn"><?php esc_html_e("Verify", "optistate"); ?></button> <p class="os-mt-5"><span id="optistate-2fa-verify-status"></span></p> </div> <?php $backup_codes_raw = get_transient("optistate_2fa_backup_raw_" . $user->ID); ?> <?php if (!empty($backup_codes_raw) && is_array($backup_codes_raw)): ?> <div id="optistate-2fa-backup-codes" class="os-mt-30"> <h4><?php esc_html_e("BACKUP CODES (save these now)", "optistate"); ?></h4> <?php esc_html_e("Each code can only be used once. Store them in a safe place. You will need them to log in if you lose access to the Authenticator app.", "optistate"); ?> <div class="os-2fa-backup-codes-list"> <?php foreach ($backup_codes_raw as $code): ?> <code class="os-2fa-backup-code"><?php echo esc_html($code); ?></code> <?php endforeach; ?> </div> <p class="description"><?php esc_html_e("These codes will not be shown again. Please save them now.", "optistate"); ?></p> <button type="button" class="button os-mt-10" id="optistate-2fa-regenerate-backup"><?php esc_html_e("Regenerate Backup Codes", "optistate"); ?></button> </div> <?php endif; ?> <?php elseif ($has_secret && $verified): ?> <p><?php esc_html_e("Your secret key is configured and hidden for security. Regenerate it only if you need to set up a new authenticator app.", "optistate"); ?></p> <p><button type="button" class="button os-mt-5" id="optistate-2fa-regenerate-secret"><?php esc_html_e("Regenerate Secret", "optistate"); ?></button></p> <?php $backup_codes_raw = get_transient("optistate_2fa_backup_raw_" . $user->ID); ?> <?php if (!empty($backup_codes_raw) && is_array($backup_codes_raw)): ?> <div id="optistate-2fa-backup-codes" class="os-mt-30"> <h4><?php esc_html_e("BACKUP CODES (save these now)", "optistate"); ?></h4> <?php esc_html_e("Each code can only be used once. Store them in a safe place. You will need them to log in if you lose access to the Authenticator app.", "optistate"); ?> <div class="os-2fa-backup-codes-list"> <?php foreach ($backup_codes_raw as $code): ?> <code class="os-2fa-backup-code"><?php echo esc_html($code); ?></code> <?php endforeach; ?> </div> <p class="description"><?php esc_html_e("These codes will not be shown again. Please save them now.", "optistate"); ?></p> </div> <?php endif; ?> <p><button type="button" class="button os-mt-10" id="optistate-2fa-regenerate-backup"><?php esc_html_e("Regenerate Backup Codes", "optistate"); ?></button></p> <?php else: ?> <p><?php esc_html_e("No secret key set. Click the button below to generate one.", "optistate"); ?></p> <button type="button" class="button" id="optistate-2fa-generate-secret"><?php esc_html_e("Generate Secret", "optistate"); ?></button> <div id="optistate-2fa-secret-generated" class="os-display-none"></div> <?php endif; ?> </td> </tr> <?php endif; ?> </table> <?php if (
      $is_self
  ) {
      wp_nonce_field("optistate_2fa_profile", "optistate_2fa_nonce");
@@ -661,6 +787,7 @@ if ($enabled) {
      $this->admin_reset_js((int) $user->ID);
  }
     }
+
     public function get_otpauth_uri(string $username, string $secret): string
     {
         $site = get_bloginfo("name");
@@ -670,6 +797,7 @@ if ($enabled) {
             rawurlencode($secret) .
             "&issuer={$issuer}";
     }
+
     private function profile_js(): void
     {
         $nonce = wp_create_nonce(
@@ -701,6 +829,7 @@ if ($enabled) {
     __("Network error. Please refresh and try again.", "optistate")
 ); ?>')); }) .always(function() { $btn.prop('disabled', false); }); }); function escapeHtml(text) { if (!text) return ''; var div = document.createElement('div'); div.textContent = text; return div.innerHTML; } }); </script> <?php
     }
+
     public function save_user_profile_fields(int $user_id): void
     {
         if (!$this->is_globally_enabled()) {
@@ -722,13 +851,7 @@ if ($enabled) {
             ? (int) $_POST["optistate_2fa_enabled"]
             : 0;
         if (!$enabled) {
-            delete_user_meta($user_id, "optistate_2fa_verified");
-            delete_user_meta($user_id, "optistate_2fa_secret");
-            delete_user_meta($user_id, "optistate_2fa_backup_codes");
-            unset(
-                self::$secret_cache[$user_id],
-                self::$secret_bytes_cache[$user_id]
-            );
+            $this->purge_user_2fa_data($user_id);
             self::$secret_cache[$user_id] = null;
         }
         update_user_meta($user_id, "optistate_2fa_enabled", $enabled);
@@ -749,14 +872,7 @@ if ($enabled) {
                     5 * MINUTE_IN_SECONDS
                 );
             } catch (Throwable $e) {
-                delete_user_meta($user_id, "optistate_2fa_enabled");
-                delete_user_meta($user_id, "optistate_2fa_secret");
-                delete_user_meta($user_id, "optistate_2fa_verified");
-                delete_user_meta($user_id, "optistate_2fa_backup_codes");
-                unset(
-                    self::$secret_cache[$user_id],
-                    self::$secret_bytes_cache[$user_id]
-                );
+                $this->purge_user_2fa_data($user_id, true);
                 self::$secret_cache[$user_id] = null;
                 OPTISTATE_Utils::log_critical_error(
                     "2FA setup failed for user $user_id: " . $e->getMessage(),
@@ -765,6 +881,7 @@ if ($enabled) {
             }
         }
     }
+
     public function ajax_generate_secret(): void
     {
         try {
@@ -779,11 +896,21 @@ if ($enabled) {
             if (!$user_id) {
                 wp_die(-1);
             }
+            if (!OPTISTATE_Utils::check_rate_limit("2fa_generate_secret", 10)) {
+                OPTISTATE_Utils::send_json_error(
+                    OPTISTATE_Utils::get_rate_limit_message(true),
+                    429
+                );
+                return;
+            }
             $secret = $this->generate_secret();
             $this->set_user_secret($user_id, $secret);
             self::$secret_cache[$user_id] = $secret;
             delete_user_meta($user_id, "optistate_2fa_backup_codes");
             delete_user_meta($user_id, "optistate_2fa_verified");
+            delete_user_meta($user_id, "optistate_2fa_last_slice");
+            unset(self::$last_slice_cache[$user_id]);
+            $this->clear_user_failures($user_id);
             $codes = $this->generate_backup_codes();
             $hashed = $this->hash_backup_codes($codes);
             update_user_meta($user_id, "optistate_2fa_backup_codes", $hashed);
@@ -825,6 +952,7 @@ if ($enabled) {
             );
         }
     }
+
     public function ajax_verify_code(): void
     {
         try {
@@ -838,6 +966,13 @@ if ($enabled) {
             $user_id = get_current_user_id();
             if (!$user_id) {
                 wp_die(-1);
+            }
+            if (!OPTISTATE_Utils::check_rate_limit("2fa_verify_code", 20)) {
+                OPTISTATE_Utils::send_json_error(
+                    OPTISTATE_Utils::get_rate_limit_message(true),
+                    429
+                );
+                return;
             }
             $code = isset($_POST["code"])
                 ? sanitize_text_field(wp_unslash($_POST["code"]))
@@ -870,6 +1005,7 @@ if ($enabled) {
             );
         }
     }
+
     public function ajax_regenerate_backup_codes(): void
     {
         try {
@@ -883,6 +1019,15 @@ if ($enabled) {
             $user_id = get_current_user_id();
             if (!$user_id) {
                 wp_die(-1);
+            }
+            if (
+                !OPTISTATE_Utils::check_rate_limit("2fa_regenerate_backup", 10)
+            ) {
+                OPTISTATE_Utils::send_json_error(
+                    OPTISTATE_Utils::get_rate_limit_message(true),
+                    429
+                );
+                return;
             }
             $codes = $this->generate_backup_codes();
             $hashed = $this->hash_backup_codes($codes);
@@ -911,6 +1056,7 @@ if ($enabled) {
             );
         }
     }
+
     public function ajax_save_global_setting(): void
     {
         try {
