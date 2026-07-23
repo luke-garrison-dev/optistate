@@ -180,7 +180,9 @@ final class OPTISTATE
 
             $this->boot_server_caching($settings);
             $this->boot_login_protection($settings);
-            $this->get_service('two_factor');
+            if (!empty($settings['enable_two_factor']) || $is_admin_context) {
+                $this->get_service('two_factor');
+            }
 
             if (is_admin()) {
                 $this->init_admin();
@@ -215,6 +217,7 @@ private function instantiate_admin_services(): void {
     $services = [
         'db_backup_manager',
         'advanced_tools',
+        'login_protection',
         'cleanup_functions',
         'legacy_scanner',
         'trash_manager',
@@ -443,29 +446,11 @@ add_action('optistate_run_pagespeed_worker', function ($task_id): void {
         add_action('wp_ajax_optistate_import_settings', [$this->settings_manager, 'ajax_import_settings']);
         add_action('wp_ajax_optistate_save_user_access', [$this->settings_manager, 'ajax_save_user_access']);
         add_action('wp_ajax_optistate_save_one_click_extra_items', [$this->settings_manager, 'ajax_save_one_click_extra_items']);
-
         add_action('wp_ajax_optistate_get_performance_features', [$this->performance_manager, 'ajax_get_performance_features']);
         add_action('wp_ajax_optistate_save_performance_features', [$this->performance_manager, 'ajax_save_performance_features']);
         add_action('wp_ajax_optistate_check_htaccess_status', [$this->performance_manager, 'ajax_check_htaccess_status']);
         add_action('wp_ajax_optistate_cron_manager_action', [$this->performance_manager, 'ajax_cron_manager_action']);
 
-    }
-    private function register_lazy_ajax_handler(string $action, string $service, string $method): void
-    {
-        add_action('wp_ajax_' . $action, function () use ($service, $method): void {
-            $instance = $this->get_service($service);
-
-            if (!$instance || !method_exists($instance, $method)) {
-                OPTISTATE_Utils::send_json_error(
-                    __('This feature is currently unavailable.', 'optistate'),
-                    500
-                );
-
-                return;
-            }
-
-            $instance->{$method}();
-        });
     }
 
     private function get_dynamic_cache_keys(): array
