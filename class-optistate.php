@@ -248,7 +248,14 @@ private function instantiate_admin_services(): void {
     {
         return $this->init_error;
     }
-
+    public function get_upload_basedir(): string
+    {
+        if (!is_array($this->upload_dir_info) || empty($this->upload_dir_info['basedir'])) {
+            return '';
+        }
+ 
+        return trailingslashit((string) $this->upload_dir_info['basedir']);
+    }
     private function resolve_directories(): void
     {
         $this->upload_dir_info = wp_upload_dir(null, false);
@@ -261,7 +268,7 @@ private function instantiate_admin_services(): void {
             throw new RuntimeException($reason);
         }
 
-        $base_dir = trailingslashit($this->upload_dir_info['basedir']);
+        $base_dir = $this->get_upload_basedir();
 
         $this->backup_dir = $base_dir . self::BACKUP_DIR_NAME . '/';
         $this->temp_dir   = $base_dir . self::TEMP_DIR_NAME . '/';
@@ -400,16 +407,22 @@ private function instantiate_admin_services(): void {
 
     public function __isset(string $name): bool
     {
-        return in_array($name, self::LAZY_SERVICES, true);
+        return in_array($name, self::LAZY_SERVICES, true)
+            && $this->get_service($name) !== null;
     }
-
+    
     private function register_core_hooks(): void
     {
         add_action('optistate_async_backup_complete', [$this, 'execute_post_backup_tasks']);
         add_action('optistate_scheduled_cleanup', [$this, 'run_scheduled_cleanup']);
 
-add_action('optistate_run_pagespeed_worker', function ($task_id): void {
+add_action('optistate_run_pagespeed_worker', function ($task_id = null): void {
+    if (!is_string($task_id) || $task_id === '') {
+        return;
+    }
+
     $service = $this->get_service('performance_audit');
+
     if ($service) {
         $service->run_pagespeed_worker($task_id);
     }
@@ -1312,38 +1325,37 @@ add_action('optistate_run_pagespeed_worker', function ($task_id): void {
 
     private function get_upload_folder_size(): string
     {
+        $upload_path = $this->get_upload_basedir();
+ 
         return OPTISTATE_Utils::get_or_set_transient(
             'optistate_upload_folder_size',
-            static function (): string {
-                $upload_dir  = wp_upload_dir(null, false);
-                $upload_path = $upload_dir['basedir'] ?? '';
-
+            static function () use ($upload_path): string {
                 if ($upload_path === '' || !is_dir($upload_path)) {
                     return __('N/A', 'optistate');
                 }
-
+ 
                 $size_bytes = 0;
-
+ 
                 if (OPTISTATE_Utils::is_function_available('exec') && PHP_OS_FAMILY !== 'Windows') {
                     $timeout = @is_executable('/usr/bin/timeout') ? '/usr/bin/timeout 3 ' : '';
-
+ 
                     $output     = [];
                     $return_var = 0;
-
+ 
                     exec($timeout . 'du -sb ' . escapeshellarg($upload_path) . ' 2>/dev/null', $output, $return_var);
-
+ 
                     if ($return_var === 0 && isset($output[0])) {
                         $parts = preg_split('/\s+/', trim($output[0]));
-
+ 
                         if (isset($parts[0]) && is_numeric($parts[0])) {
                             $size_bytes = (int) $parts[0];
                         }
                     }
                 }
-
+ 
                 if ($size_bytes === 0) {
                     $start_time = microtime(true);
-
+ 
                     $result = OPTISTATE_Utils::get_folder_size(
                         $upload_path,
                         50000,
@@ -1351,18 +1363,18 @@ add_action('optistate_run_pagespeed_worker', function ($task_id): void {
                         false,
                         static function () use ($start_time): bool {
                             static $iteration = 0;
-
+ 
                             if (++$iteration % 500 === 0) {
                                 return microtime(true) - $start_time > 2.0;
                             }
-
+ 
                             return false;
                         }
                     );
-
+ 
                     $size_bytes = (int) $result['size'];
                 }
-
+ 
                 return $size_bytes > 0 ? size_format($size_bytes, 2) : __('< 1 KB', 'optistate');
             },
             self::STATS_CACHE_DURATION
@@ -1375,7 +1387,7 @@ private function get_debug_log_path(): ?string
 
     if (defined('WP_DEBUG_LOG') && is_string(WP_DEBUG_LOG) && WP_DEBUG_LOG !== '') {
         $path = WP_DEBUG_LOG;
-        if (!preg_match('#^/|[a-zA-Z]:\\\\#', $path)) {
+        if (!preg_match('#^(/|[a-zA-Z]:\\\\)#', $path)) {
             $path = ABSPATH . $path;
         }
         $candidates[] = $path;
