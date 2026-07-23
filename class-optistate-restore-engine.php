@@ -1082,6 +1082,7 @@ class OPTISTATE_Restore_Engine
             $temp_tables_created = $state["temp_tables_created"];
             $state["deferred_indexes"] = $state["deferred_indexes"] ?? [];
             $is_internal_backup = $state["is_internal_backup"] ?? false;
+            $restore_key_for_deferred = $state["restore_key"] ?? "restore_deferred";
             try {
                 $db = $this->get_restore_db();
                 $db_wrapper = OPTISTATE_DB_Wrapper::get_instance();
@@ -1143,6 +1144,7 @@ class OPTISTATE_Restore_Engine
                         ];
                 }
                 $chunk_start_pointer = $state["file_pointer"];
+                $queries_at_chunk_start = $state["executed_queries"];
                 $last_stmt_type = $state["last_stmt_type"] ?? null;
                 $loop_counter = 0;
                 while (
@@ -1168,7 +1170,6 @@ class OPTISTATE_Restore_Engine
                             $state["file_pointer"] = $is_gzipped
                                 ? gztell($handle)
                                 : ftell($handle);
-                            $queries_at_chunk_start = $state["executed_queries"];
                             if (
                                 $state["file_pointer"] === $chunk_start_pointer &&
                                 $executed_queries === $queries_at_chunk_start
@@ -1350,12 +1351,48 @@ class OPTISTATE_Restore_Engine
                             if (empty($settings["skip_index_parsing"])) {
                                 $parsing_result = OPTISTATE_SQL_Parser::parse_create_table_for_indexes(
                                     $query_to_run,
-                                    $temp_table,
-                                    $state["restore_key"]
+                                    $temp_table
                                 );
                                 $query_to_run =
                                     $parsing_result["create_table_query"];
                                 if (!empty($parsing_result["alter_queries"])) {
+                                    $deferred_key =
+                                        $restore_key_for_deferred .
+                                        "_deferred_" .
+                                        md5($temp_table);
+                                    $this->process_store->set(
+                                        $deferred_key,
+                                        [
+                                            "table" => $temp_table,
+                                            "queries" =>
+                                                $parsing_result[
+                                                    "alter_queries"
+                                                ],
+                                            "created_at" => time(),
+                                        ],
+                                        DAY_IN_SECONDS
+                                    );
+                                    $tables_key =
+                                        $restore_key_for_deferred .
+                                        "_deferred_tables";
+                                    $tables_with_deferred =
+                                        $this->process_store->get(
+                                            $tables_key
+                                        ) ?: [];
+                                    if (
+                                        !in_array(
+                                            $temp_table,
+                                            $tables_with_deferred,
+                                            true
+                                        )
+                                    ) {
+                                        $tables_with_deferred[] = $temp_table;
+                                        $this->process_store->set(
+                                            $tables_key,
+                                            $tables_with_deferred,
+                                            DAY_IN_SECONDS
+                                        );
+                                    }
                                 }
                             }
                         }
@@ -1517,12 +1554,14 @@ class OPTISTATE_Restore_Engine
                     $db_wrapper->commit();
                 }
                 $deferred_indexes_map = $this->collect_deferred_indexes(
-                    $state["restore_key"] ?? "restore_deferred"
+                    $restore_key_for_deferred
                 );
+                $index_result = ["success" => true];
                 if (!empty($deferred_indexes_map)) {
-                    $this->apply_deferred_indexes(
+                    $index_result = $this->apply_deferred_indexes(
                         $db_connection,
-                        $deferred_indexes_map
+                        $deferred_indexes_map,
+                        $restore_key_for_deferred
                     );
                 }
                 if (!empty($temp_tables_created)) {
@@ -1582,6 +1621,15 @@ class OPTISTATE_Restore_Engine
                     number_format_i18n($total_time),
                     number_format_i18n(count($temp_tables_created))
                 );
+                if (!empty($index_result["warnings"])) {
+                    $message .= sprintf(
+                        __(
+                            "Warning: %s. See the error log for details.<br>",
+                            "optistate"
+                        ),
+                        $index_result["warnings"]
+                    );
+                }
                 update_option(
                     "optistate_restore_completed",
                     [
@@ -1702,9 +1750,10 @@ class OPTISTATE_Restore_Engine
         return $deferred_indexes;
     }
 
-    private function apply_deferred_indexes(
+private function apply_deferred_indexes(
         $db,
-        array $deferred_indexes
+        array $deferred_indexes,
+        string $restore_key
     ): array {
         if (empty($deferred_indexes)) {
             return ["success" => true];
@@ -1738,7 +1787,7 @@ class OPTISTATE_Restore_Engine
         }
         if (!empty($failed_indexes)) {
             $this->process_store->set(
-                "optistate_failed_indexes_" . time(),
+                $restore_key . "_failed_indexes",
                 $failed_indexes,
                 DAY_IN_SECONDS
             );

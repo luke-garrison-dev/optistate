@@ -25,13 +25,25 @@ class OPTISTATE_DB_Wrapper
     {
         register_shutdown_function([$this, "emergency_cleanup"]);
     }
-    public function set_session_state(string $query): bool
+public function set_session_state(string $query): bool
     {
         $result = $this->query($query);
-        if ($result !== false) {
+        if (
+            $result !== false &&
+            !in_array($query, $this->init_commands, true)
+        ) {
             $this->init_commands[] = $query;
         }
-        return $result;
+        return $result !== false;
+    }
+    private function replay_init_commands(): void
+    {
+        if ($this->connection === null || empty($this->init_commands)) {
+            return;
+        }
+        foreach ($this->init_commands as $cmd) {
+            @$this->connection->query($cmd);
+        }
     }
     public static function get_instance(): self
     {
@@ -98,11 +110,6 @@ class OPTISTATE_DB_Wrapper
         $this->close();
         $this->get_connection();
         if ($this->connection) {
-            if (!empty($this->init_commands)) {
-                foreach ($this->init_commands as $cmd) {
-                    @$this->connection->query($cmd);
-                }
-            }
             if (!empty($to_replay)) {
                 foreach ($to_replay as $lock_name => $timeout) {
                     $escaped = $this->connection->real_escape_string(
@@ -158,12 +165,8 @@ class OPTISTATE_DB_Wrapper
                 $this->connection_created_at = time();
                 $this->query_count = 0;
                 $this->last_ping = time();
-                if (!empty($this->init_commands)) {
-                    foreach ($this->init_commands as $cmd) {
-                        @$this->connection->query($cmd);
-                    }
-                }
                 $this->apply_default_session_settings();
+                $this->replay_init_commands();
                 return $this->connection;
             }
         }
@@ -245,6 +248,7 @@ class OPTISTATE_DB_Wrapper
                     $this->connection_created_at = time();
                     $this->query_count = 0;
                     $this->last_ping = time();
+                    $this->replay_init_commands();
                     return $this->connection;
                 } else {
                     $error_msg =
@@ -396,11 +400,6 @@ class OPTISTATE_DB_Wrapper
                 $this->connection = null;
                 $this->last_ping = null;
                 $connection = $this->get_connection();
-                if (!empty($this->init_commands)) {
-                    foreach ($this->init_commands as $cmd) {
-                        @$connection->query($cmd);
-                    }
-                }
                 $this->query_count++;
                 $this->total_queries_executed++;
                 $result = $connection->query($query);

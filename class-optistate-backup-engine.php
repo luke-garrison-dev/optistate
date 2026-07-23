@@ -16,6 +16,7 @@ class OPTISTATE_Backup_Engine
     private const CACHE_TTL = 600;
     private const MAX_ROW_LENGTH_CACHE_SIZE = 400;
     private static string $binary_pattern = "/\b(blob|binary|varbinary|tinyblob|mediumblob|longblob|bit|geometry|point|linestring|polygon|multipoint|multilinestring|multipolygon|geometrycollection)\b/i";
+    private static string $unsortable_pattern = "/\b(tinytext|text|mediumtext|longtext|json|tinyblob|blob|mediumblob|longblob|geometry|point|linestring|polygon|multipoint|multilinestring|multipolygon|geometrycollection)\b/i";
     public function __construct(
         OPTISTATE $main_plugin,
         string $backup_dir,
@@ -514,16 +515,16 @@ class OPTISTATE_Backup_Engine
 $unique_candidates = $wpdb->get_results(
     $wpdb->prepare(
         "SELECT s.INDEX_NAME AS Key_name, s.COLUMN_NAME AS Column_name,
-                c.IS_NULLABLE, c.DATA_TYPE
+                c.IS_NULLABLE AS Is_nullable, c.DATA_TYPE AS Data_type
          FROM information_schema.STATISTICS s
-         JOIN information_schema.COLUMNS c
+         LEFT JOIN information_schema.COLUMNS c
            ON c.TABLE_SCHEMA = s.TABLE_SCHEMA
           AND c.TABLE_NAME  = s.TABLE_NAME
           AND c.COLUMN_NAME = s.COLUMN_NAME
          WHERE s.TABLE_SCHEMA = DATABASE()
            AND s.TABLE_NAME = %s
            AND s.NON_UNIQUE = 0
-         ORDER BY s.INDEX_NAME, s.SEQ_IN_INDEX",
+         ORDER BY (s.INDEX_NAME = 'PRIMARY') DESC, s.INDEX_NAME, s.SEQ_IN_INDEX",
         $table_name
     )
 );
@@ -535,12 +536,15 @@ $unique_candidates = $wpdb->get_results(
         if (count($cols) !== 1) {
             continue;
         }
-        $col = $cols[0];
-        if (strtoupper($col->IS_NULLABLE) === "YES") {
+$col = $cols[0];
+        if ($col->Column_name === null || $col->Data_type === null) {
+            continue;
+        }
+        if (strtoupper((string) $col->Is_nullable) === "YES") {
             continue;
         }
         $col_name = $col->Column_name;
-        $col_type = strtolower($col->DATA_TYPE);
+        $col_type = strtolower((string) $col->Data_type);
         $can_use_keyset_pagination = true;
         $selected_primary_key = $col_name;
         $state["primary_key_type"] = in_array(
@@ -752,36 +756,61 @@ $unique_candidates = $wpdb->get_results(
             $exclude_trash_condition = " AND `option_name` NOT LIKE %s";
             $exclude_trash_value = $wpdb->esc_like("_optistate_trash_") . "%";
         }
-        $order_by_clause = "";
-        if ($primary_key) {
-            $safe_primary_key = "`" . str_replace("`", "``", $primary_key) . "`";
-            $order_by_clause = " ORDER BY {$safe_primary_key} ASC";
-        } else {
-            $pk_columns = [];
-            $pk_info = $wpdb->get_results("SHOW KEYS FROM {$safe_table} WHERE Key_name = 'PRIMARY'", ARRAY_A);
-            if ($pk_info) {
-                $pk_columns = array_column($pk_info, "Column_name");
-                if (!empty($pk_columns)) {
-                    $order_by_clause = " ORDER BY " . implode(", ", array_map(function($col) {
-                        return "`" . str_replace("`", "``", $col) . "`";
-                    }, $pk_columns)) . " ASC";
+$order_by_clause = "";
+        if (!$primary_key) {
+            $quote_col = function ($col) {
+                return "`" . str_replace("`", "``", $col) . "`";
+            };
+            $pk_columns = isset($state["primary_key_metadata"]["detected_keys"])
+                ? (array) $state["primary_key_metadata"]["detected_keys"]
+                : [];
+            if (empty($pk_columns)) {
+                $pk_info = $wpdb->get_results(
+                    "SHOW KEYS FROM {$safe_table} WHERE Key_name = 'PRIMARY'",
+                    ARRAY_A
+                );
+                if ($pk_info) {
+                    $pk_columns = array_column($pk_info, "Column_name");
                 }
             }
-            if (empty($order_by_clause)) {
-                $all_cols = array_keys($column_types);
-                if (!empty($all_cols)) {
-                    $order_by_clause = " ORDER BY " . implode(", ", array_map(function($col) {
-                        return "`" . str_replace("`", "``", $col) . "`";
-                    }, $all_cols)) . " ASC";
+            if (!empty($pk_columns)) {
+                $order_by_clause =
+                    " ORDER BY " .
+                    implode(", ", array_map($quote_col, $pk_columns));
+            } else {
+                $sortable_columns = [];
+                foreach ($column_types as $col_name => $col_type) {
+                    if (preg_match(self::$unsortable_pattern, $col_type)) {
+                        continue;
+                    }
+                    $sortable_columns[] = $col_name;
+                }
+                if (!empty($sortable_columns)) {
+                    $order_by_clause =
+                        " ORDER BY " .
+                        implode(", ", array_map($quote_col, $sortable_columns));
                 }
             }
         }
         $wrapper = OPTISTATE_DB_Wrapper::get_instance();
-        $wrapper->set_session_state("SET SESSION net_read_timeout = 120");
-        $wrapper->set_session_state("SET SESSION wait_timeout = 600");
-        $wrapper->set_session_state("SET SESSION SQL_BIG_SELECTS=1");
-        $wrapper->set_session_state("SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ");
-        $wrapper->begin_transaction();
+        static $backup_session_registered = false;
+        if (!$backup_session_registered) {
+            $wrapper->set_session_state("SET SESSION net_read_timeout = 120");
+            $wrapper->set_session_state("SET SESSION wait_timeout = 600");
+            $wrapper->set_session_state("SET SESSION SQL_BIG_SELECTS=1");
+            $wrapper->set_session_state(
+                "SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ"
+            );
+            $backup_session_registered = true;
+        }
+        if (!$wrapper->begin_transaction()) {
+            throw new Exception(
+                __(
+                    "Failed to start read transaction for backup.",
+                    "optistate"
+                )
+            );
+        }
 
         try {
             if ($primary_key) {
