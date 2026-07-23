@@ -408,7 +408,7 @@ class OPTISTATE_Process_Store
             $db_wrapper->query("SELECT RELEASE_LOCK('$escaped_lock_name')");
         }
     }
-    private function safe_db_retry(callable $operation): mixed
+    private function safe_db_retry(callable $operation)
     {
         global $wpdb;
         $suppress = $wpdb->suppress_errors(true);

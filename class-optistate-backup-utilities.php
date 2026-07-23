@@ -280,20 +280,19 @@ class OPTISTATE_Backup_Utilities
                 ];
             }
         }
-        if ($metadata && isset($metadata["database_name"])) {
-            $stored_db = $metadata["database_name"];
-            if (!hash_equals($stored_db, DB_NAME)) {
-                return [
-                    "valid" => false,
-                    "message" => __(
-                        "Validation failed: Database name mismatch.<br>The backup was created for database '{$stored_db}', but the current database is '" .
-                            DB_NAME .
-                            "'.",
-                        "optistate"
-                    ),
-                ];
-            }
-        }
+if ($metadata && isset($metadata["database_name"])) {
+    $stored_db = $metadata["database_name"];
+    if (!hash_equals($stored_db, DB_NAME)) {
+        return [
+            "valid" => false,
+            "message" => sprintf(
+                __("Validation failed: Database name mismatch.<br>The backup was created for database '%1\$s', but the current database is '%2\$s'.", "optistate"),
+                esc_html($stored_db),
+                esc_html(DB_NAME)
+            ),
+        ];
+    }
+}
         if (preg_match('/\.gz$/i', $filepath)) {
             if (!function_exists("gzopen")) {
                 return [

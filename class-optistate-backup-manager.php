@@ -1033,13 +1033,24 @@ class OPTISTATE_Backup_Manager
                 DAY_IN_SECONDS
             );
             $this->enforce_backup_limit();
-            $this->save_backup_metadata(
-                $updated_state["filepath"],
-                $updated_state["filename"],
-                $updated_state["start_time"],
-                $updated_state["tables_list"] ?? [],
-                $updated_state["uncompressed_size"] ?? 0
-            );
+            $filepath = $updated_state['filepath'] ?? '';
+if (empty($filepath)) {
+    OPTISTATE_Utils::log_critical_error(
+        'Backup filepath missing in state when saving metadata',
+        [
+            'state_keys' => array_keys($updated_state),
+            'backup_filename' => $updated_state['filename'] ?? 'unknown'
+        ]
+    );
+} else {
+    $this->save_backup_metadata(
+        $filepath,
+        $updated_state['filename'] ?? '',
+        $updated_state['start_time'] ?? time(),
+        $updated_state['all_tables'] ?? [],
+        $updated_state['uncompressed_size'] ?? 0
+    );
+}
             $operation_text = $is_scheduled
                 ? sprintf(
                     __("Scheduled Backup Created (%s)", "optistate"),
@@ -1246,13 +1257,25 @@ class OPTISTATE_Backup_Manager
                 }
                 $this->process_store->delete($safety_backup_key);
                 $this->enforce_backup_limit();
-                $this->save_backup_metadata(
-                    $result["state"]["filepath"],
-                    $result["state"]["filename"],
-                    $result["state"]["start_time"],
-                    $result["state"]["tables_list"] ?? [],
-                    $result["state"]["uncompressed_size"] ?? 0
-                );
+$safety_state = $result['state'];
+$filepath = $safety_state['filepath'] ?? '';
+if (empty($filepath)) {
+    OPTISTATE_Utils::log_critical_error(
+        'Safety backup filepath missing in state when saving metadata',
+        [
+            'state_keys' => array_keys($safety_state),
+            'backup_filename' => $safety_state['filename'] ?? 'unknown'
+        ]
+    );
+} else {
+    $this->save_backup_metadata(
+        $filepath,
+        $safety_state['filename'] ?? '',
+        $safety_state['start_time'] ?? time(),
+        $safety_state['all_tables'] ?? [],
+        $safety_state['uncompressed_size'] ?? 0
+    );
+}
                 $this->main_plugin->log_entry(
                     "💾 " .
                         sprintf(
