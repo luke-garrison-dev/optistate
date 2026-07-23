@@ -4304,19 +4304,20 @@ function displayStats(stats) {
                 resetBtn();
             });
         };
-        const loadCachedPageSpeed = () => {
-            if ($('#psi-score').length === 0) return;
-            $.post(optistate_Ajax.ajaxurl, {
-                action: 'optistate_run_pagespeed_audit',
-                nonce: optistate_Ajax.nonce,
-                cached_only: 'true',
-                force_refresh: 'false'
-            }).done(function(response) {
-                if (response.success && response.data && typeof response.data === 'object' && 'score' in response.data) {
-                    updatePageSpeedUI(response.data);
-                }
-            }).fail(function() {});
-        };
+const loadCachedPageSpeed = () => {
+    if ($('#psi-score').length === 0) return;
+    $.post(optistate_Ajax.ajaxurl, {
+        action: 'optistate_run_pagespeed_audit',
+        nonce: optistate_Ajax.nonce,
+        cached_only: 'true',
+        force_refresh: 'false',
+        strategy: $(SELECTORS.psiStrategy).val()
+    }).done(function(response) {
+        if (response.success && response.data && typeof response.data === 'object' && 'score' in response.data) {
+            updatePageSpeedUI(response.data);
+        }
+    }).fail(function() {});
+};
         $('#save-pagespeed-key-btn').on('click', function() {
             const key = $('#optistate_pagespeed_key').val().trim();
             const $btn = $(this);
@@ -4350,7 +4351,6 @@ function displayStats(stats) {
     }
     const updatePageSpeedUI = (data) => {
         if (!data) return;
-        if (data.strategy) $('#optistate-strategy').val(data.strategy.toLowerCase());
         const $testUrl = $('#optistate-test-url');
         const $customUrl = $('#optistate-custom-url');
         if (data.tested_url) {
