@@ -141,9 +141,12 @@ class OPTISTATE_Advanced_Tools
         $this->main_plugin->settings_manager->check_user_access();
 
         if (!OPTISTATE_Utils::check_rate_limit("table_analysis", 5)) {
-            OPTISTATE_Utils::send_json_error([
-                "message" => OPTISTATE_Utils::get_rate_limit_message(false),
-            ], 429);
+            OPTISTATE_Utils::send_json_error(
+                [
+                    "message" => OPTISTATE_Utils::get_rate_limit_message(false),
+                ],
+                429
+            );
             return;
         }
 
@@ -239,7 +242,10 @@ class OPTISTATE_Advanced_Tools
 
             if (empty($tables)) {
                 OPTISTATE_Utils::send_json_error([
-                    "message" => __("Failed to retrieve table information", "optistate"),
+                    "message" => __(
+                        "Failed to retrieve table information",
+                        "optistate"
+                    ),
                 ]);
                 return;
             }
@@ -462,9 +468,12 @@ class OPTISTATE_Advanced_Tools
         $this->main_plugin->settings_manager->check_user_access();
 
         if (!OPTISTATE_Utils::check_rate_limit("heavy_op", 20)) {
-            OPTISTATE_Utils::send_json_error([
-                "message" => OPTISTATE_Utils::get_rate_limit_message(false),
-            ], 429);
+            OPTISTATE_Utils::send_json_error(
+                [
+                    "message" => OPTISTATE_Utils::get_rate_limit_message(false),
+                ],
+                429
+            );
             return;
         }
 
@@ -558,10 +567,7 @@ class OPTISTATE_Advanced_Tools
             !empty($disable_functions) &&
             in_array(
                 "set_time_limit",
-                array_map(
-                    "trim",
-                    explode(",", strtolower($disable_functions))
-                ),
+                array_map("trim", explode(",", strtolower($disable_functions))),
                 true
             );
         if (!$is_disabled) {
@@ -1174,17 +1180,12 @@ class OPTISTATE_Advanced_Tools
                             );
                             $optimize_results_by_table = [];
                             foreach ($optimize_results as $optimize_row) {
-                                $table_name_with_db =
-                                    $optimize_row["Table"];
+                                $table_name_with_db = $optimize_row["Table"];
                                 $clean_table_name =
-                                    strpos($table_name_with_db, ".") !==
-                                    false
+                                    strpos($table_name_with_db, ".") !== false
                                         ? substr(
                                             $table_name_with_db,
-                                            strpos(
-                                                $table_name_with_db,
-                                                "."
-                                            ) + 1
+                                            strpos($table_name_with_db, ".") + 1
                                         )
                                         : $table_name_with_db;
                                 $clean_table_name = trim(
@@ -1220,9 +1221,7 @@ class OPTISTATE_Advanced_Tools
                                     )
                                 ) {
                                     foreach (
-                                        $optimize_results_by_table[
-                                            $table_name
-                                        ]
+                                        $optimize_results_by_table[$table_name]
                                         as $optimize_row
                                     ) {
                                         $msg_type = strtolower(
@@ -1262,10 +1261,7 @@ class OPTISTATE_Advanced_Tools
                                         }
                                     }
                                 }
-                                if (
-                                    $optimize_successful ||
-                                    !$optimize_error
-                                ) {
+                                if ($optimize_successful || !$optimize_error) {
                                     $optimized_count_in_batch++;
                                     if (
                                         isset(
@@ -1274,9 +1270,9 @@ class OPTISTATE_Advanced_Tools
                                             ]
                                         )
                                     ) {
-                                        $state["table_statuses"][
-                                            $table_name
-                                        ]["optimized"] = true;
+                                        $state["table_statuses"][$table_name][
+                                            "optimized"
+                                        ] = true;
                                     } else {
                                         $state["table_statuses"][
                                             $table_name
@@ -1296,9 +1292,9 @@ class OPTISTATE_Advanced_Tools
                                             ]
                                         )
                                     ) {
-                                        $state["table_statuses"][
-                                            $table_name
-                                        ]["optimized"] = false;
+                                        $state["table_statuses"][$table_name][
+                                            "optimized"
+                                        ] = false;
                                         if ($optimize_error) {
                                             $state["table_statuses"][
                                                 $table_name
@@ -1441,7 +1437,8 @@ class OPTISTATE_Advanced_Tools
                 );
             } catch (\Throwable $e) {
                 OPTISTATE_Utils::log_critical_error(
-                    "Failed to release lock '{$lock_name}' on shutdown: " . $e->getMessage()
+                    "Failed to release lock '{$lock_name}' on shutdown: " .
+                        $e->getMessage()
                 );
             }
         });
@@ -1624,9 +1621,12 @@ class OPTISTATE_Advanced_Tools
         $this->main_plugin->settings_manager->check_user_access();
 
         if (!OPTISTATE_Utils::check_rate_limit("preview_autoload", 10)) {
-            OPTISTATE_Utils::send_json_error([
-                "message" => OPTISTATE_Utils::get_rate_limit_message(false),
-            ], 429);
+            OPTISTATE_Utils::send_json_error(
+                [
+                    "message" => OPTISTATE_Utils::get_rate_limit_message(false),
+                ],
+                429
+            );
             return;
         }
 
@@ -1664,9 +1664,12 @@ class OPTISTATE_Advanced_Tools
         $this->main_plugin->settings_manager->check_user_access();
 
         if (!OPTISTATE_Utils::check_rate_limit("restore_autoload_backup", 10)) {
-            OPTISTATE_Utils::send_json_error([
-                "message" => OPTISTATE_Utils::get_rate_limit_message(false),
-            ], 429);
+            OPTISTATE_Utils::send_json_error(
+                [
+                    "message" => OPTISTATE_Utils::get_rate_limit_message(false),
+                ],
+                429
+            );
             return;
         }
 
@@ -1674,7 +1677,10 @@ class OPTISTATE_Advanced_Tools
             $backup = $this->get_autoload_backup();
             if (!$backup || !is_array($backup)) {
                 OPTISTATE_Utils::send_json_error([
-                    "message" => __("No autoload backup found to restore.", "optistate"),
+                    "message" => __(
+                        "No autoload backup found to restore.",
+                        "optistate"
+                    ),
                 ]);
                 return;
             }
@@ -1682,7 +1688,10 @@ class OPTISTATE_Advanced_Tools
             $count = $this->restore_autoload_backup($backup);
             if ($count === false) {
                 OPTISTATE_Utils::send_json_error([
-                    "message" => __("Failed to restore autoload backup.", "optistate"),
+                    "message" => __(
+                        "Failed to restore autoload backup.",
+                        "optistate"
+                    ),
                 ]);
                 return;
             }
@@ -1753,15 +1762,14 @@ class OPTISTATE_Advanced_Tools
         $batch_count = 0;
         static $use_row_alias = null;
         if ($use_row_alias === null) {
-            $use_row_alias = version_compare(
-                OPTISTATE_Utils::get_mysql_version(),
-                '8.0.19',
-                '>='
-            );
+            $version = OPTISTATE_Utils::get_mysql_version();
+            $is_mariadb = stripos($version, "MariaDB") !== false;
+            $use_row_alias =
+                !$is_mariadb && version_compare($version, "8.0.19", ">=");
         }
         $on_dup = $use_row_alias
-            ? ' AS _r ON DUPLICATE KEY UPDATE option_value = _r.option_value, autoload = _r.autoload'
-            : ' ON DUPLICATE KEY UPDATE option_value = VALUES(option_value), autoload = VALUES(autoload)';
+            ? " AS _r ON DUPLICATE KEY UPDATE option_value = _r.option_value, autoload = _r.autoload"
+            : " ON DUPLICATE KEY UPDATE option_value = VALUES(option_value), autoload = VALUES(autoload)";
 
         foreach ($backup as $option_name => $data) {
             if (!isset($data["value"], $data["autoload"])) {
@@ -1832,9 +1840,12 @@ class OPTISTATE_Advanced_Tools
         $this->main_plugin->settings_manager->check_user_access();
 
         if (!OPTISTATE_Utils::check_rate_limit("heavy_op", 20)) {
-            OPTISTATE_Utils::send_json_error([
-                "message" => OPTISTATE_Utils::get_rate_limit_message(false),
-            ], 429);
+            OPTISTATE_Utils::send_json_error(
+                [
+                    "message" => OPTISTATE_Utils::get_rate_limit_message(false),
+                ],
+                429
+            );
             return;
         }
 
@@ -2055,9 +2066,13 @@ class OPTISTATE_Advanced_Tools
                 ["file" => $e->getFile(), "line" => $e->getLine()]
             );
 
-            OPTISTATE_Utils::send_json_error([
-                "message" => $error_message,
-            ], 500, $results);
+            OPTISTATE_Utils::send_json_error(
+                [
+                    "message" => $error_message,
+                ],
+                500,
+                $results
+            );
         }
     }
 
@@ -2121,9 +2136,12 @@ class OPTISTATE_Advanced_Tools
         $this->main_plugin->settings_manager->check_user_access();
 
         if (!OPTISTATE_Utils::check_rate_limit("analyze_indexes", 10)) {
-            OPTISTATE_Utils::send_json_error([
-                "message" => OPTISTATE_Utils::get_rate_limit_message(false),
-            ], 429);
+            OPTISTATE_Utils::send_json_error(
+                [
+                    "message" => OPTISTATE_Utils::get_rate_limit_message(false),
+                ],
+                429
+            );
             return;
         }
 
@@ -2198,9 +2216,15 @@ class OPTISTATE_Advanced_Tools
                             }
 
                             $db_tables_map = array_flip($db_tables);
-                            $hint = '';
-                            if (version_compare(OPTISTATE_Utils::get_mysql_version(), '8.0.11', '>=')) {
-                                $hint = '/*+ MAX_EXECUTION_TIME(30000) */ ';
+                            $hint = "";
+                            if (
+                                version_compare(
+                                    OPTISTATE_Utils::get_mysql_version(),
+                                    "8.0.11",
+                                    ">="
+                                )
+                            ) {
+                                $hint = "/*+ MAX_EXECUTION_TIME(30000) */ ";
                             }
 
                             $query = $wpdb->prepare(
@@ -2359,7 +2383,10 @@ class OPTISTATE_Advanced_Tools
                                 if (isset($targets[$lower_table])) {
                                     $suggested_indexes = $targets[$lower_table];
                                     $table_columns = $wpdb->get_col(
-                                        "SHOW COLUMNS FROM " . OPTISTATE_Utils::escape_identifier($table)
+                                        "SHOW COLUMNS FROM " .
+                                            OPTISTATE_Utils::escape_identifier(
+                                                $table
+                                            )
                                     );
                                     $table_columns_map = array_flip(
                                         $table_columns
@@ -2906,7 +2933,7 @@ class OPTISTATE_Advanced_Tools
                 $index_name
             )
         );
-        return $type === 'add' ? !empty($check) : empty($check);
+        return $type === "add" ? !empty($check) : empty($check);
     }
 
     public function ajax_check_index_status(): void
@@ -2959,9 +2986,12 @@ class OPTISTATE_Advanced_Tools
         $this->main_plugin->settings_manager->check_user_access();
 
         if (!OPTISTATE_Utils::check_rate_limit("scan_integrity", 10)) {
-            OPTISTATE_Utils::send_json_error([
-                "message" => OPTISTATE_Utils::get_rate_limit_message(false),
-            ], 429);
+            OPTISTATE_Utils::send_json_error(
+                [
+                    "message" => OPTISTATE_Utils::get_rate_limit_message(false),
+                ],
+                429
+            );
             return;
         }
 
@@ -2998,9 +3028,15 @@ class OPTISTATE_Advanced_Tools
                 return;
             }
 
-            $hint = '';
-            if (version_compare(OPTISTATE_Utils::get_mysql_version(), '8.0.11', '>=')) {
-                $hint = '/*+ MAX_EXECUTION_TIME(30000) */ ';
+            $hint = "";
+            if (
+                version_compare(
+                    OPTISTATE_Utils::get_mysql_version(),
+                    "8.0.11",
+                    ">="
+                )
+            ) {
+                $hint = "/*+ MAX_EXECUTION_TIME(30000) */ ";
             }
 
             $union_sql =
@@ -3242,7 +3278,8 @@ class OPTISTATE_Advanced_Tools
                         $wpdb->query("ROLLBACK");
                     } catch (Throwable $rollback_err) {
                         OPTISTATE_Utils::log_critical_error(
-                            "Integrity fix rollback failed: " . $rollback_err->getMessage(),
+                            "Integrity fix rollback failed: " .
+                                $rollback_err->getMessage(),
                             ["original_error" => $e->getMessage()]
                         );
                     }
@@ -3258,7 +3295,10 @@ class OPTISTATE_Advanced_Tools
                 );
 
                 OPTISTATE_Utils::send_json_error([
-                    "message" => __("Database error during fix. Transaction rolled back.", "optistate"),
+                    "message" => __(
+                        "Database error during fix. Transaction rolled back.",
+                        "optistate"
+                    ),
                 ]);
                 return;
             }
@@ -3344,11 +3384,15 @@ class OPTISTATE_Advanced_Tools
         if (!isset($column_cache[$cache_key])) {
             $raw = $wpdb->get_col("SHOW COLUMNS FROM $escaped_table");
             $column_cache[$cache_key] = $raw
-                ? array_map('strtolower', $raw)
+                ? array_map("strtolower", $raw)
                 : [];
         }
 
-        return in_array(strtolower($clean_column), $column_cache[$cache_key], true);
+        return in_array(
+            strtolower($clean_column),
+            $column_cache[$cache_key],
+            true
+        );
     }
 
     private function check_disk_space_for_index(string $table_name): array
@@ -3473,11 +3517,11 @@ class OPTISTATE_Advanced_Tools
     private static function is_valid_integrity_rule(array $rule): bool
     {
         $id_re = '/^[a-zA-Z0-9_]+$/';
-        return preg_match($id_re, $rule['child_table'] ?? '') === 1
-            && preg_match($id_re, $rule['parent_table'] ?? '') === 1
-            && preg_match($id_re, $rule['child_key'] ?? '') === 1
-            && preg_match($id_re, $rule['parent_key'] ?? '') === 1
-            && preg_match($id_re, $rule['context_col'] ?? '') === 1;
+        return preg_match($id_re, $rule["child_table"] ?? "") === 1 &&
+            preg_match($id_re, $rule["parent_table"] ?? "") === 1 &&
+            preg_match($id_re, $rule["child_key"] ?? "") === 1 &&
+            preg_match($id_re, $rule["parent_key"] ?? "") === 1 &&
+            preg_match($id_re, $rule["context_col"] ?? "") === 1;
     }
 
     private static function get_integrity_rules(): array
@@ -3541,7 +3585,10 @@ class OPTISTATE_Advanced_Tools
                 "pk" => false,
             ],
             "child_posts" => [
-                "label" => __("Orphaned Post Children & Revisions (No Parent)", "optistate"),
+                "label" => __(
+                    "Orphaned Post Children & Revisions (No Parent)",
+                    "optistate"
+                ),
                 "child_table" => "posts",
                 "child_key" => "post_parent",
                 "parent_table" => "posts",
@@ -3577,9 +3624,12 @@ class OPTISTATE_Advanced_Tools
     public function ajax_delete_table(): void
     {
         if ($_SERVER["REQUEST_METHOD"] !== "POST") {
-            OPTISTATE_Utils::send_json_error([
-                "message" => __("Invalid request method.", "optistate"),
-            ], 400);
+            OPTISTATE_Utils::send_json_error(
+                [
+                    "message" => __("Invalid request method.", "optistate"),
+                ],
+                400
+            );
             return;
         }
 
@@ -3587,9 +3637,12 @@ class OPTISTATE_Advanced_Tools
         $this->main_plugin->settings_manager->check_user_access();
 
         if (!OPTISTATE_Utils::check_rate_limit("delete_table", 5)) {
-            OPTISTATE_Utils::send_json_error([
-                "message" => OPTISTATE_Utils::get_rate_limit_message(false),
-            ], 429);
+            OPTISTATE_Utils::send_json_error(
+                [
+                    "message" => OPTISTATE_Utils::get_rate_limit_message(false),
+                ],
+                429
+            );
             return;
         }
 
@@ -3609,12 +3662,15 @@ class OPTISTATE_Advanced_Tools
                 $table_name
             );
             if ($escaped_table_name === false) {
-                OPTISTATE_Utils::send_json_error([
-                    "message" => __(
-                        "Security check failed: Invalid or non-existent table name.",
-                        "optistate"
-                    ),
-                ], 400);
+                OPTISTATE_Utils::send_json_error(
+                    [
+                        "message" => __(
+                            "Security check failed: Invalid or non-existent table name.",
+                            "optistate"
+                        ),
+                    ],
+                    400
+                );
                 return;
             }
 
@@ -3837,9 +3893,12 @@ class OPTISTATE_Advanced_Tools
             !$is_continuation &&
             !OPTISTATE_Utils::check_rate_limit("heavy_op", 20)
         ) {
-            OPTISTATE_Utils::send_json_error([
-                "message" => OPTISTATE_Utils::get_rate_limit_message(false),
-            ], 429);
+            OPTISTATE_Utils::send_json_error(
+                [
+                    "message" => OPTISTATE_Utils::get_rate_limit_message(false),
+                ],
+                429
+            );
             return;
         }
 
@@ -3918,7 +3977,8 @@ class OPTISTATE_Advanced_Tools
                         $table_data[] = [
                             "TABLE_NAME" => $table_name,
                             "ENGINE" => $status["ENGINE"] ?? "",
-                            "TABLE_TYPE" => $status["TABLE_TYPE"] ?? "BASE TABLE",
+                            "TABLE_TYPE" =>
+                                $status["TABLE_TYPE"] ?? "BASE TABLE",
                             "TABLE_ROWS" => $status["TABLE_ROWS"] ?? 0,
                             "DATA_LENGTH" => $status["DATA_LENGTH"] ?? 0,
                             "INDEX_LENGTH" => $status["INDEX_LENGTH"] ?? 0,
@@ -4023,7 +4083,10 @@ class OPTISTATE_Advanced_Tools
                 $remaining = $total_count - $processed;
                 if ($processed > 0) {
                     $est_remaining = ($elapsed / $processed) * $remaining;
-                    $expiry = max(HOUR_IN_SECONDS, (int) ($est_remaining + 300));
+                    $expiry = max(
+                        HOUR_IN_SECONDS,
+                        (int) ($est_remaining + 300)
+                    );
                 } else {
                     $expiry = HOUR_IN_SECONDS;
                 }
