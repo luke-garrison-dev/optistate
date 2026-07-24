@@ -18,6 +18,7 @@ class OPTISTATE_Search_Replace
     private const MAX_SEARCH_LEN = 600;
     private const MAX_REPLACE_LEN = 4096;
     private const PATTERN_CACHE_LIMIT = 32;
+    private const MAX_RECURSION_DEPTH = 100;
     private const TRANSACTIONAL_ENGINES = [
         "INNODB",
         "XTRADB",
@@ -37,14 +38,6 @@ class OPTISTATE_Search_Replace
             "ajax_execute",
         ]);
     }
-
-    private static function quote_ident(string $name): string
-    {
-        if (!preg_match('/^[A-Za-z0-9_]{1,64}$/', $name)) {
-            throw new \InvalidArgumentException("Invalid SQL identifier");
-        }
-        return "`" . $name . "`";
-    }
     private function build_boundary_pattern(
         string $search,
         bool $case_sensitive,
@@ -56,19 +49,26 @@ class OPTISTATE_Search_Replace
             ($partial_match ? "p" : "w") .
             "|" .
             $search;
+        
         if (isset($this->pattern_cache[$key])) {
-            return $this->pattern_cache[$key];
+            $value = $this->pattern_cache[$key];
+            unset($this->pattern_cache[$key]);
+            $this->pattern_cache[$key] = $value;
+            return $value;
         }
+        
         $escaped = preg_quote($search, "/");
         $flags = $case_sensitive ? "u" : "iu";
         $pattern = $partial_match
             ? "/" . $escaped . "/" . $flags
             : sprintf(self::REGEX_BOUNDARY_FMT, $escaped, $flags);
         if (count($this->pattern_cache) >= self::PATTERN_CACHE_LIMIT) {
-            reset($this->pattern_cache);
-            $oldest_key = key($this->pattern_cache);
-            unset($this->pattern_cache[$oldest_key]);
+            $first_key = key($this->pattern_cache);
+            if ($first_key !== null) {
+                unset($this->pattern_cache[$first_key]);
+            }
         }
+        
         $this->pattern_cache[$key] = $pattern;
         return $pattern;
     }
@@ -88,7 +88,6 @@ class OPTISTATE_Search_Replace
             "(?![A-Za-z0-9_\\-'])/" .
             $flags;
     }
-
     private function acquire_or_verify_lock(
         string $lock_key,
         bool $reset,
@@ -110,18 +109,20 @@ class OPTISTATE_Search_Replace
             set_transient($lock_key, $token, self::LOCK_TTL);
             return $token;
         }
-        $token = isset($_POST["lock_token"])
-            ? sanitize_text_field(wp_unslash($_POST["lock_token"]))
+        $token = isset($_POST["lock_token"]) 
+            ? (string)wp_unslash($_POST["lock_token"])
             : "";
-        $stored_token = get_transient($lock_key);
-        if (
-            $token === "" ||
-            $stored_token === false ||
-            !hash_equals($stored_token, $token)
-        ) {
+        if (!preg_match('/^[a-f0-9]{32}$/', $token)) {
             OPTISTATE_Utils::send_json_error($conflict_msg, 409);
             return null;
         }
+        
+        $stored_token = get_transient($lock_key);
+        if ($stored_token === false || !hash_equals($stored_token, $token)) {
+            OPTISTATE_Utils::send_json_error($conflict_msg, 409);
+            return null;
+        }
+        
         return $token;
     }
 
@@ -134,7 +135,6 @@ class OPTISTATE_Search_Replace
         set_transient($transient_key, $state, self::LOCK_TTL);
         set_transient($lock_key, $token, self::LOCK_TTL);
     }
-
     private function count_text_occurrences(
         string $text,
         string $search,
@@ -144,52 +144,53 @@ class OPTISTATE_Search_Replace
         if ($text === "" || $search === "") {
             return 0;
         }
+        
         if ($partial_match) {
             if ($case_sensitive) {
                 return substr_count($text, $search);
             }
-            $pattern = "/" . preg_quote($search, "/") . "/iu";
-            $count = @preg_match_all($pattern, $text);
-            if ($count === false || $count === null) {
-                $count = @preg_match_all(
-                    "/" . preg_quote($search, "/") . "/i",
-                    $text
-                );
+            $escaped = preg_quote($search, "/");
+            $count = @preg_match_all("/$escaped/iu", $text);
+            if ($count !== false && $count !== null) {
+                return (int) $count;
             }
-            if ($count === false || $count === null) {
-                $count = substr_count(strtolower($text), strtolower($search));
+            $count = @preg_match_all("/$escaped/i", $text);
+            if ($count !== false && $count !== null) {
+                return (int) $count;
             }
-            return (int) $count;
+            return substr_count(strtolower($text), strtolower($search));
         }
+        
         $pattern = $this->build_boundary_pattern(
             $search,
             $case_sensitive,
             false
         );
         $matches = @preg_match_all($pattern, $text);
-        if ($matches === false || $matches === null) {
-            $matches = @preg_match_all(
-                $this->build_byte_pattern($search, $case_sensitive, false),
-                $text
-            );
-            if ($matches === false || $matches === null) {
-                OPTISTATE_Utils::log_critical_error(
-                    "preg_match_all failed in count_text_occurrences",
-                    [
-                        "text_length" => strlen($text),
-                        "search_length" => strlen($search),
-                    ]
-                );
-                return 0;
-            }
+        if ($matches !== false && $matches !== null) {
+            return (int) $matches;
         }
-        return (int) $matches;
+        $pattern = $this->build_byte_pattern($search, $case_sensitive, false);
+        $matches = @preg_match_all($pattern, $text);
+        if ($matches !== false && $matches !== null) {
+            return (int) $matches;
+        }
+        
+        $this->log_regex_failure(
+            "count_text_occurrences",
+            "preg_match_all",
+            strlen($text),
+            strlen($search),
+            preg_last_error()
+        );
+        return 0;
     }
 
     public function get_last_replace_count(): int
     {
         return $this->last_replace_count;
     }
+
     private function resolve_tables(array $tables_input): array
     {
         $valid_db_tables = OPTISTATE_Utils::get_all_tables();
@@ -232,6 +233,7 @@ class OPTISTATE_Search_Replace
         $this->deferred_options_cache = ["siteurl", "home"];
         return $this->deferred_options_cache;
     }
+
     private function build_options_exclude(): array
     {
         global $wpdb;
@@ -258,6 +260,7 @@ class OPTISTATE_Search_Replace
     {
         return apply_filters("optistate_protected_tables", []);
     }
+
     private static function is_transactional_engine(string $table): bool
     {
         global $wpdb;
@@ -297,6 +300,7 @@ class OPTISTATE_Search_Replace
         $request_cache[$table] = $ok;
         return $ok;
     }
+
     private function get_table_columns_info(string $table): array
     {
         $cache_key = "cols_" . $table;
@@ -306,7 +310,7 @@ class OPTISTATE_Search_Replace
         }
         global $wpdb;
         $columns = $wpdb->get_results(
-            "SHOW COLUMNS FROM " . self::quote_ident($table),
+            "SHOW COLUMNS FROM " . OPTISTATE_Utils::escape_identifier($table),
             ARRAY_A
         );
         $pk_columns = [];
@@ -505,6 +509,7 @@ class OPTISTATE_Search_Replace
             "data" => $response_data,
         ]);
     }
+
     private function scan_table_dry_run(
         string $table,
         string $primary_key,
@@ -516,13 +521,13 @@ class OPTISTATE_Search_Replace
         array &$state
     ): array {
         global $wpdb;
-        $primary_key_q = self::quote_ident($primary_key);
-        $table_q = self::quote_ident($table);
+        $primary_key_q = OPTISTATE_Utils::escape_identifier($primary_key);
+        $table_q = OPTISTATE_Utils::escape_identifier($table);
         $like_value = "%" . $wpdb->esc_like($search) . "%";
         $where_parts = [];
         $where_values = [];
         foreach ($text_cols as $col) {
-            $col_q = self::quote_ident($col);
+            $col_q = OPTISTATE_Utils::escape_identifier($col);
             if ($case_sensitive) {
                 $where_parts[] = "CAST($col_q AS BINARY) LIKE CAST(%s AS BINARY)";
             } else {
@@ -541,7 +546,7 @@ class OPTISTATE_Search_Replace
         $select_cols = array_unique(array_merge([$primary_key], $text_cols));
         $select_list = implode(
             ", ",
-            array_map(static fn($c) => self::quote_ident($c), $select_cols)
+            array_map(static fn($c) => OPTISTATE_Utils::escape_identifier($c), $select_cols)
         );
         $sql = $wpdb->prepare(
             "SELECT $select_list FROM $table_q WHERE ($where_fmt)" .
@@ -1001,6 +1006,7 @@ class OPTISTATE_Search_Replace
         }
         OPTISTATE_Utils::send_json_success($response);
     }
+
     private function replace_table_execute(
         string $table,
         string $primary_key,
@@ -1018,13 +1024,13 @@ class OPTISTATE_Search_Replace
         string $lock_key
     ): string {
         global $wpdb;
-        $primary_key_q = self::quote_ident($primary_key);
-        $table_q = self::quote_ident($table);
+        $primary_key_q = OPTISTATE_Utils::escape_identifier($primary_key);
+        $table_q = OPTISTATE_Utils::escape_identifier($table);
         $like_value = "%" . $wpdb->esc_like($search) . "%";
         $where_parts = [];
         $where_values = [];
         foreach ($text_cols as $col) {
-            $col_q = self::quote_ident($col);
+            $col_q = OPTISTATE_Utils::escape_identifier($col);
             if ($case_sensitive) {
                 $where_parts[] = "CAST($col_q AS BINARY) LIKE CAST(%s AS BINARY)";
             } else {
@@ -1044,7 +1050,7 @@ class OPTISTATE_Search_Replace
         $select_cols = array_unique(array_merge([$primary_key], $text_cols));
         $select_list = implode(
             ", ",
-            array_map(static fn($c) => self::quote_ident($c), $select_cols)
+            array_map(static fn($c) => OPTISTATE_Utils::escape_identifier($c), $select_cols)
         );
         while (true) {
             if (microtime(true) - $start_time > $max_exec_time) {
@@ -1232,6 +1238,7 @@ class OPTISTATE_Search_Replace
         }
         return false;
     }
+
     public function replace_data(
         string $from,
         string $to,
@@ -1276,12 +1283,13 @@ class OPTISTATE_Search_Replace
             $preview_text
         );
         if ($highlighted_text === null) {
-            $err = function_exists("preg_last_error_msg")
-                ? preg_last_error_msg()
-                : "preg error code " . preg_last_error();
-            OPTISTATE_Utils::log_critical_error(
-                "preg_replace failed in get_highlighted_snippet",
-                ["error" => $err, "pattern" => $highlight_pattern]
+            $this->log_regex_failure(
+                "get_highlighted_snippet",
+                "preg_replace",
+                strlen($preview_text),
+                0,
+                preg_last_error(),
+                $highlight_pattern
             );
             return $preview_text;
         }
@@ -1322,7 +1330,7 @@ class OPTISTATE_Search_Replace
         int $depth = 0,
         bool $partial_match = false
     ) {
-        if ($depth > 100) {
+        if ($depth > self::MAX_RECURSION_DEPTH) {
             return $data;
         }
         try {
@@ -1479,6 +1487,7 @@ class OPTISTATE_Search_Replace
         }
         return $data;
     }
+
     private function replace_in_serialized_string(
         string $from,
         string $to,
@@ -1592,7 +1601,24 @@ class OPTISTATE_Search_Replace
                     $result .= substr($data, $i);
                     break;
                 }
-                $str_len = (int) substr($data, $i + 2, $colon_pos - ($i + 2));
+                $len_str = substr($data, $i + 2, $colon_pos - ($i + 2));
+                if (!preg_match('/^\d+$/', $len_str)) {
+                    OPTISTATE_Utils::log_critical_error(
+                        "replace_in_serialized_string: invalid string length header",
+                        ["len_str" => $len_str, "position" => $i]
+                    );
+                    return $data;
+                }
+                
+                $str_len = (int)$len_str;
+                if ($str_len < 0 || $str_len > 16777215) {
+                    OPTISTATE_Utils::log_critical_error(
+                        "replace_in_serialized_string: string length out of bounds",
+                        ["str_len" => $str_len, "position" => $i]
+                    );
+                    return $data;
+                }
+                
                 if (
                     !isset($data[$colon_pos + 1]) ||
                     $data[$colon_pos + 1] !== '"'
@@ -1601,17 +1627,25 @@ class OPTISTATE_Search_Replace
                     $i++;
                     continue;
                 }
+                
                 $str_start = $colon_pos + 2;
                 $str_end = $str_start + $str_len;
-                if (
-                    $str_end + 1 >= $len ||
-                    $data[$str_end] !== '"' ||
-                    $data[$str_end + 1] !== ";"
-                ) {
-                    $result .= $data[$i];
-                    $i++;
-                    continue;
+                if ($str_end >= $len || 
+                    !isset($data[$str_end]) ||
+                    !isset($data[$str_end + 1]) ||
+                    $data[$str_end] !== '"' || 
+                    $data[$str_end + 1] !== ";") {
+                    OPTISTATE_Utils::log_critical_error(
+                        "replace_in_serialized_string: malformed string terminator",
+                        [
+                            "expected_end" => $str_end,
+                            "actual_len" => $len,
+                            "char_at_end" => $data[$str_end] ?? 'N/A'
+                        ]
+                    );
+                    return $data;
                 }
+                
                 $str_content = substr($data, $str_start, $str_len);
                 $is_key =
                     !empty($stack) && $stack[count($stack) - 1]["expect_key"];
@@ -1629,7 +1663,6 @@ class OPTISTATE_Search_Replace
                             $count
                         );
                         if ($new_content === null) {
-                            $err = preg_last_error();
                             $fallback_count = 0;
                             $new_content = @preg_replace(
                                 $byte_pattern,
@@ -1640,14 +1673,12 @@ class OPTISTATE_Search_Replace
                             );
                             if ($new_content === null) {
                                 $new_content = $str_content;
-                                OPTISTATE_Utils::log_critical_error(
-                                    "preg_replace failed in serialized string replacement",
-                                    [
-                                        "preg_error" => $err,
-                                        "subject_length" => strlen(
-                                            $str_content
-                                        ),
-                                    ]
+                                $this->log_regex_failure(
+                                    "replace_in_serialized_string (boundary/byte fallback)",
+                                    "preg_replace",
+                                    strlen($str_content),
+                                    strlen($from),
+                                    preg_last_error()
                                 );
                             } else {
                                 $this->last_replace_count += $fallback_count;
@@ -1757,7 +1788,6 @@ class OPTISTATE_Search_Replace
             $count = 0;
             $result = @preg_replace($pattern, $to_escaped, $data, -1, $count);
             if ($result === null) {
-                $err = preg_last_error();
                 $fallback_count = 0;
                 $result = @preg_replace(
                     $this->build_byte_pattern($from, $case_sensitive, false),
@@ -1767,9 +1797,12 @@ class OPTISTATE_Search_Replace
                     $fallback_count
                 );
                 if ($result === null) {
-                    OPTISTATE_Utils::log_critical_error(
-                        "preg_replace failed in perform_string_replace",
-                        ["preg_error" => $err, "data_length" => strlen($data)]
+                    $this->log_regex_failure(
+                        "perform_string_replace (boundary/byte fallback)",
+                        "preg_replace",
+                        strlen($data),
+                        strlen($from),
+                        preg_last_error()
                     );
                     return $data;
                 }
@@ -1780,7 +1813,8 @@ class OPTISTATE_Search_Replace
             return $result;
         }
         if (!$case_sensitive) {
-            $pattern = "/" . preg_quote($from, "/") . "/iu";
+            $escaped = preg_quote($from, "/");
+            $pattern = "/$escaped/iu";
             $count = 0;
             $result = @preg_replace($pattern, $to_escaped, $data, -1, $count);
             if ($result !== null) {
@@ -1898,5 +1932,29 @@ class OPTISTATE_Search_Replace
         }
         $fetch_len = max(1, $fetch_len);
         return $prefix . mb_substr($text, $start, $fetch_len) . $suffix;
+    }
+    private function log_regex_failure(
+        string $context,
+        string $function,
+        int $subject_length,
+        int $pattern_length,
+        int $error_code,
+        ?string $pattern = null
+    ): void {
+        $error_msg = function_exists("preg_last_error_msg")
+            ? preg_last_error_msg()
+            : "preg error code " . $error_code;
+        
+        OPTISTATE_Utils::log_critical_error(
+            "Regex failure in $context: $error_msg",
+            [
+                "function" => $function,
+                "subject_length" => $subject_length,
+                "pattern_length" => $pattern_length,
+                "error_code" => $error_code,
+                "error_message" => $error_msg,
+                "pattern_snippet" => $pattern ? substr($pattern, 0, 100) : null,
+            ]
+        );
     }
 }

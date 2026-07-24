@@ -145,7 +145,7 @@ class OPTISTATE_Utils
         self::$cached_options = [];
     }
 
-    private static function get_mysql_version(): string
+    public static function get_mysql_version(): string
     {
         if (self::$mysql_version_cache === null) {
             global $wpdb;
