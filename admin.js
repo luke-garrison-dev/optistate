@@ -2935,6 +2935,29 @@ function displayStats(stats) {
         });
     }
 
+    function runLegacyScan() {
+        const $btn = $('#optistate-scan-legacy-btn');
+        const $results = $('#optistate-legacy-results');
+        if ($btn.prop('disabled') || isProcessing) return;
+        $btn.prop('disabled', true).html('<span class="spinner is-active os-spinner-inline-margin"></span> ' + __('Scanning Database...', 'optistate'));
+        $results.slideUp(200).empty();
+        $.post(optistate_Ajax.ajaxurl, {
+            action: 'optistate_scan_legacy_data',
+            nonce: optistate_Ajax.nonce
+        }).done(function(response) {
+            if (response.success) {
+                renderLegacyResults(response.data);
+            } else {
+                showToast(response.data.message || __('Scan failed to retrieve data.', 'optistate'), 'error');
+                $results.html(`<div class="notice notice-error inline"><p>${response.data.message || __('Error occurred.', 'optistate')}</p></div>`).slideDown();
+            }
+        }).fail(function(xhr) {
+            handleAjaxError(xhr);
+        }).always(function() {
+            $btn.prop('disabled', false).html('🔎 ' + __('Scan for Ghost Data', 'optistate'));
+        });
+    }
+
     function initLegacyScannerEvents() {
         $('#optistate-scan-legacy-btn').on('click', function() {
             const $btn = $(this);
@@ -2944,23 +2967,12 @@ function displayStats(stats) {
                 $results.slideUp(200);
                 return;
             }
-            $btn.prop('disabled', true).html('<span class="spinner is-active os-spinner-inline-margin"></span> ' + __('Scanning Database...', 'optistate'));
-            $results.slideUp(200).empty();
-            $.post(optistate_Ajax.ajaxurl, {
-                action: 'optistate_scan_legacy_data',
-                nonce: optistate_Ajax.nonce
-            }).done(function(response) {
-                if (response.success) {
-                    renderLegacyResults(response.data);
-                } else {
-                    showToast(response.data.message || __('Scan failed to retrieve data.', 'optistate'), 'error');
-                    $results.html(`<div class="notice notice-error inline"><p>${response.data.message || __('Error occurred.', 'optistate')}</p></div>`).slideDown();
-                }
-            }).fail(function(xhr) {
-                handleAjaxError(xhr);
-            }).always(function() {
-                $btn.prop('disabled', false).html('🔎 ' + __('Scan for Ghost Data', 'optistate'));
-            });
+            runLegacyScan();
+        });
+        $(document).on('click', '.optistate-continue-scan-btn', function(e) {
+            e.preventDefault();
+            $(this).prop('disabled', true).html('<span class="spinner is-active os-spinner-inline"></span> ' + __('Scanning...', 'optistate'));
+            runLegacyScan();
         });
         $(document).on('click', '#optistate-delete-all-trash-btn', function(e) {
             e.preventDefault();
@@ -2988,9 +3000,6 @@ function displayStats(stats) {
                                 if (!isCompleted && remaining > 0) {
                                     $newBtn.html(sprintf(__('🗑 Continue deleting (%s remain)', 'optistate'), remaining.toLocaleString()));
                                     $newBtn.data('count', remaining);
-                                } else {
-                                    $newBtn.html(__('🗑 Delete All', 'optistate'));
-                                    $newBtn.data('count', 0);
                                 }
                             }
                         }).always(function() {
@@ -3053,13 +3062,37 @@ function displayStats(stats) {
         });
     }
 
-    function renderLegacyResults(items) {
+    function buildLegacyScanNotices(data, isComplete, isTruncated) {
+        let notices = '';
+        if (!isComplete) {
+            const folders = data.folders || {};
+            const scanned = parseInt(folders.scanned, 10) || 0;
+            const total = parseInt(folders.total, 10) || 0;
+            const progress = (total > 0 && scanned < total) ? ' ' + sprintf(__('Folders checked so far: %s of %s.', 'optistate'), scanned.toLocaleString(), total.toLocaleString()) : '';
+            notices += ` <div class="notice notice-warning inline os-mb-15"> <p><strong>⏳ ${__('Scan paused before it finished', 'optistate')}</strong></p> <p>${__('The scan stopped early to stay inside the server time limit, so this list is not complete yet.', 'optistate')}${progress}</p> <p><button type="button" class="button button-primary optistate-continue-scan-btn">${__('▶ Continue scan', 'optistate')}</button></p> </div> `;
+        }
+        if (isTruncated) {
+            notices += ` <div class="notice notice-info inline os-mb-15"> <p>${__('The result limit was reached, so only the first batch of matches is shown. Deal with these, then scan again to see the rest.', 'optistate')}</p> </div> `;
+        }
+        return notices;
+    }
+
+    function renderLegacyResults(payload) {
         const $container = $('#optistate-legacy-results');
-        if (!Array.isArray(items) || items.length === 0) {
-            $container.html(` <div class="notice notice-success inline os-p-10-border-success"> <p><strong>✅ ${__('No Ghost Data Detected', 'optistate')}</strong></p> <p>${__('Your database appears free of common leftover data from old plugins.', 'optistate')}</p> </div> `).slideDown(300);
+        const data = (payload && !Array.isArray(payload) && typeof payload === 'object') ? payload : {};
+        const items = Array.isArray(payload) ? payload : (Array.isArray(data.items) ? data.items : []);
+        const isComplete = data.complete !== false;
+        const isTruncated = data.truncated === true;
+        const notices = buildLegacyScanNotices(data, isComplete, isTruncated);
+        if (items.length === 0) {
+            if (isComplete) {
+                $container.html(` <div class="notice notice-success inline os-p-10-border-success"> <p><strong>✅ ${__('No Ghost Data Detected', 'optistate')}</strong></p> <p>${__('Your database appears free of common leftover data from old plugins.', 'optistate')}</p> </div> `).slideDown(300);
+            } else {
+                $container.html(notices).slideDown(300);
+            }
             return;
         }
-        let html = ` <div class="notice notice-warning inline os-mb-15"> <p><strong>☰ ${sprintf(__('Found %s items requiring review', 'optistate'), items.length)}</strong></p> <p>${__('🗑 These items match patterns of uninstalled plugins and themes.<br>⚠︎ Verify they actually belong to removed plugins/themes before deleting them!', 'optistate')}</p> </div> <table class="widefat striped os-border-table-full" id="optistate-legacy-table"> <thead> <tr> <th>${__('Data Source', 'optistate')}</th> <th>${__('Type', 'optistate')}</th> <th>${__('Size / Count', 'optistate')}</th> <th>${__('Risk Level', 'optistate')}</th> <th class="os-text-right-bold">${__('Action', 'optistate')}</th> </thead> <tbody>`;
+        let html = notices + ` <div class="notice notice-warning inline os-mb-15"> <p><strong>☰ ${sprintf(__('Found %s items requiring review', 'optistate'), items.length)}</strong></p> <p>${__('🗑 These items match patterns of uninstalled plugins and themes.<br>⚠︎ Verify they actually belong to removed plugins/themes before deleting them!', 'optistate')}</p> </div> <table class="widefat striped os-border-table-full" id="optistate-legacy-table"> <thead> <tr> <th>${__('Data Source', 'optistate')}</th> <th>${__('Type', 'optistate')}</th> <th>${__('Size / Count', 'optistate')}</th> <th>${__('Risk Level', 'optistate')}</th> <th class="os-text-right-bold">${__('Action', 'optistate')}</th> </thead> <tbody>`;
         items.forEach(item => {
             const riskClass = item.risk === 'high' ? 'impact-high' : (item.risk === 'medium' ? 'impact-medium' : 'impact-low');
             const riskLabel = item.risk === 'high' ? __('High', 'optistate') : (item.risk === 'medium' ? __('Medium', 'optistate') : __('Low', 'optistate'));
@@ -4608,7 +4641,10 @@ const loadCachedPageSpeed = () => {
         });
     }
 
-    function renderTrashItems(items) {
+    function renderTrashItems(payload) {
+        const data = (payload && !Array.isArray(payload) && typeof payload === 'object') ? payload : {};
+        const items = Array.isArray(payload) ? payload : (Array.isArray(data.items) ? data.items : []);
+        const total = Number.isFinite(data.total) ? data.total : items.length;
         const $list = $('#optistate-trash-list');
         let $actions = $('#optistate-trash-actions');
         if (!$actions.length) {
@@ -4616,7 +4652,7 @@ const loadCachedPageSpeed = () => {
             $list.after($actions);
             $actions.html('<button id="optistate-delete-all-trash-btn" class="button button-small">' + __('🗑 Delete All', 'optistate') + '</button>');
         }
-        if (!items || items.length === 0) {
+        if (items.length === 0) {
             $list.html('<p class="description">' + __('Trash is empty.', 'optistate') + '</p>');
             $actions.hide();
             return;
@@ -4642,11 +4678,14 @@ const loadCachedPageSpeed = () => {
             html += '<tr data-key="' + esc_attr(item.trash_key) + '">' + '<td>' + esc_html(typeLabel) + '</td>' + '<td><code>' + esc_html(displayPath) + '</code></td>' + '<td>' + (item.size ? formatBytes(item.size) : '0 B') + '</td>' + '<td>' + esc_html(dateStr) + '</td>' + '<td>' + '<button class="button button-small optistate-restore-trash-btn" style="margin-right: 5px" data-key="' + esc_attr(item.trash_key) + '" data-type="' + esc_attr(item.type) + '">' + __('Restore', 'optistate') + '</button> ' + '<button class="button button-small optistate-permanent-delete-trash-btn" data-key="' + esc_attr(item.trash_key) + '" data-type="' + esc_attr(item.type) + '">' + __('Delete Permanently', 'optistate') + '</button>' + '</td>' + '</tr>';
         });
         html += '</tbody></table>';
+        if (total > items.length) {
+            html += '<p class="description">' + sprintf(__('Showing the %s most recent of %s items.', 'optistate'), items.length.toLocaleString(), total.toLocaleString()) + '</p>';
+        }
         $list.html(html);
         $actions.show();
         const $btn = $actions.find('#optistate-delete-all-trash-btn');
-        $btn.text(sprintf(__('🗑 Delete All (%s items)', 'optistate'), items.length));
-        $btn.data('count', items.length);
+        $btn.text(sprintf(__('🗑 Delete All (%s items)', 'optistate'), total.toLocaleString()));
+        $btn.data('count', total);
     }
 
     function restoreTrashItem(key) {
