@@ -1463,13 +1463,23 @@ class OPTISTATE_Legacy_Scanner
                 );
             }
 
-            if ($this->scan_is_complete($state)) {
+            $complete = $this->scan_is_complete($state);
+
+            if ($complete) {
                 $this->clear_scan_state();
             } else {
                 $this->write_scan_state($state);
             }
 
-            OPTISTATE_Utils::send_json_success($state["results"]);
+            OPTISTATE_Utils::send_json_success([
+                "items" => array_values($state["results"]),
+                "complete" => $complete,
+                "truncated" => $this->results_saturated($state),
+                "folders" => [
+                    "scanned" => (int) $state["folders"]["index"],
+                    "total" => (int) $state["folders"]["count"],
+                ],
+            ]);
         } catch (Throwable $e) {
             OPTISTATE_Utils::log_critical_error(
                 "Legacy scanner: unhandled exception",

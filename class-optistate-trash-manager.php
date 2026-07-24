@@ -2105,13 +2105,9 @@ class OPTISTATE_Trash_Manager
                 return !@file_exists($target);
         }
     }
-    public function list_trash_items(array $filters = []): array
+    private function build_list_conditions(array $filters): array
     {
         global $wpdb;
-
-        if (!$this->table_ready()) {
-            return [];
-        }
 
         $where = ["1=1"];
         $params = [];
@@ -2129,6 +2125,39 @@ class OPTISTATE_Trash_Manager
             $params[] = "%" . $wpdb->esc_like($filters["search"]) . "%";
         }
 
+        return ["sql" => implode(" AND ", $where), "params" => $params];
+    }
+    public function count_trash_items(array $filters = []): int
+    {
+        global $wpdb;
+
+        if (!$this->table_ready()) {
+            return 0;
+        }
+
+        $conditions = $this->build_list_conditions($filters);
+
+        $sql =
+            "SELECT COUNT(*) FROM {$this->trash_table_sql()} WHERE " .
+            $conditions["sql"];
+
+        if (!empty($conditions["params"])) {
+            $sql = $wpdb->prepare($sql, $conditions["params"]);
+        }
+
+        return (int) $wpdb->get_var($sql);
+    }
+    public function list_trash_items(array $filters = []): array
+    {
+        global $wpdb;
+
+        if (!$this->table_ready()) {
+            return [];
+        }
+
+        $conditions = $this->build_list_conditions($filters);
+        $params = $conditions["params"];
+
         $limit = absint($filters["limit"] ?? 200);
         $limit = $limit > 0 ? min($limit, 500) : 200;
         $offset = absint($filters["offset"] ?? 0);
@@ -2142,7 +2171,7 @@ class OPTISTATE_Trash_Manager
                         deleted_at, expires_at
                  FROM {$this->trash_table_sql()}
                  WHERE " .
-                    implode(" AND ", $where) .
+                    $conditions["sql"] .
                     "
                  ORDER BY deleted_at DESC, id DESC
                  LIMIT %d OFFSET %d",
@@ -2392,7 +2421,13 @@ class OPTISTATE_Trash_Manager
         check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
         $this->main_plugin->settings_manager->check_user_access();
 
-        OPTISTATE_Utils::send_json_success($this->list_trash_items());
+        $items = $this->list_trash_items();
+
+        OPTISTATE_Utils::send_json_success([
+            "items" => $items,
+            "shown" => count($items),
+            "total" => $this->count_trash_items(),
+        ]);
     }
     public function ajax_restore_trash_item(): void
     {
