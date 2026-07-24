@@ -95,6 +95,9 @@ class OPTISTATE_Legacy_Scanner
         "cache",
         "database",
         "sqlite",
+        "sites",
+        "fonts",
+        "wp-personal-data-exports",
     ];
     private const SYSTEM_DIRECTORIES = [
         "upgrade",
@@ -108,6 +111,9 @@ class OPTISTATE_Legacy_Scanner
         "uploads",
         "database",
         "sqlite",
+        "sites",
+        "fonts",
+        "wp-personal-data-exports",
     ];
     private const META_TYPES = [
         "postmeta",
@@ -116,23 +122,30 @@ class OPTISTATE_Legacy_Scanner
         "termmeta",
     ];
 
-    private const STATE_VERSION = 3;
-    private const STATE_KEY_PREFIX = "optistate_ls_state_v3";
+    private const STATE_VERSION = 4;
+    private const STATE_KEY_PREFIX = "optistate_ls_state_v4";
     private const STATE_TTL = 30 * MINUTE_IN_SECONDS;
-    private const DIR_INDEX_KEY_PREFIX = "optistate_ls_dirs_v3";
+    private const DIR_INDEX_KEY_PREFIX = "optistate_ls_dirs_v4";
     private const DIR_INDEX_TTL = HOUR_IN_SECONDS;
     private const SCAN_VERSION_OPTION = "optistate_legacy_scan_version";
 
     private const DB_BATCH_SIZE = 1000;
-    private const FOLDER_BATCH_SIZE = 50;
     private const MAX_KEY_LENGTH = 191;
+    private const MAX_OPTION_NAME_LENGTH = 191;
+    private const MAX_META_KEY_LENGTH = 255;
+    private const MAX_TABLE_NAME_LENGTH = 64;
+    private const MAX_PATH_LENGTH = 4096;
     private const MIN_TIME_BUDGET = 5;
     private const MAX_TIME_BUDGET = 25;
+    private const MIN_FOLDER_SLUG_LENGTH = 4;
+    private const MAX_FOLDER_TOKENS = 24;
     private const DEFAULT_MAX_RESULTS = 500;
     private const DEFAULT_MAX_FOLDERS = 200;
     private const DEFAULT_MAX_FOLDERS_SCANNED = 3000;
     private const LARGE_OPTION_BYTES = 50000;
     private const LARGE_UPLOAD_FOLDER_BYTES = 100000000;
+    private const FOLDER_STAT_MAX_FILES = 50000;
+    private const FOLDER_STAT_MAX_DEPTH = 5;
 
     public function __construct(OPTISTATE $main_plugin)
     {
@@ -145,18 +158,6 @@ class OPTISTATE_Legacy_Scanner
         add_action("wp_ajax_optistate_delete_legacy_data", [
             $this,
             "ajax_delete_legacy_data",
-        ]);
-        add_action("wp_ajax_optistate_list_trash_items", [
-            $this,
-            "ajax_list_trash_items",
-        ]);
-        add_action("wp_ajax_optistate_restore_trash_item", [
-            $this,
-            "ajax_restore_trash_item",
-        ]);
-        add_action("wp_ajax_optistate_permanently_delete_trash_item", [
-            $this,
-            "ajax_permanently_delete_trash_item",
         ]);
 
         add_action("activated_plugin", [$this, "invalidate_folder_cache"]);
@@ -270,7 +271,14 @@ class OPTISTATE_Legacy_Scanner
     }
     public function invalidate_folder_cache(): void
     {
+        $this->clear_scan_state();
         $this->bump_scan_version();
+        $this->reset_lookup_caches();
+        $this->clear_status_caches();
+    }
+    private function reset_scan_progress(): void
+    {
+        $this->clear_scan_state();
         $this->reset_lookup_caches();
         $this->clear_status_caches();
     }
@@ -371,6 +379,26 @@ class OPTISTATE_Legacy_Scanner
         }
 
         return !empty($state["folders"]["done"]);
+    }
+    private function results_saturated(array $state): bool
+    {
+        return count($state["results"]) >= (int) $state["max_results"];
+    }
+    private function folders_saturated(array $state): bool
+    {
+        return $this->results_saturated($state) ||
+            (int) $state["folder_count"] >= (int) $state["max_folders"];
+    }
+    private function mark_scan_complete(array &$state): void
+    {
+        $state["db"]["options_done"] = true;
+        $state["db"]["tables_done"] = true;
+
+        foreach (self::META_TYPES as $meta_type) {
+            $state["db"]["meta"][$meta_type]["done"] = true;
+        }
+
+        $state["folders"]["done"] = true;
     }
     private function add_result(array &$state, array $item): bool
     {
@@ -550,20 +578,54 @@ class OPTISTATE_Legacy_Scanner
             return null;
         }
 
-        $length = min(strlen($item_lower), self::$prefix_max_length);
+        $item_length = strlen($item_lower);
+        $length = min($item_length, self::$prefix_max_length);
 
         for (; $length >= 2; $length--) {
             $candidate = substr($item_lower, 0, $length);
 
-            if (isset(self::$prefix_to_info_map[$candidate])) {
-                return [
-                    "prefix" => $candidate,
-                    "info" => self::$prefix_to_info_map[$candidate],
-                ];
+            if (!isset(self::$prefix_to_info_map[$candidate])) {
+                continue;
             }
+
+            if (
+                !$this->prefix_ends_on_boundary(
+                    $item_lower,
+                    $candidate,
+                    $item_length,
+                    $length
+                )
+            ) {
+                continue;
+            }
+
+            return [
+                "prefix" => $candidate,
+                "info" => self::$prefix_to_info_map[$candidate],
+            ];
         }
 
         return null;
+    }
+    private function prefix_ends_on_boundary(
+        string $item_lower,
+        string $prefix,
+        int $item_length,
+        int $prefix_length
+    ): bool {
+        $last = $prefix[$prefix_length - 1];
+
+        if ($last === "_" || $last === "-") {
+            return true;
+        }
+
+        if ($prefix_length === $item_length) {
+            return true;
+        }
+
+        $next = $item_lower[$prefix_length];
+
+        return $next === "_" || $next === "-";
     }
     private function get_active_status_cache(): array
     {
@@ -611,6 +673,18 @@ class OPTISTATE_Legacy_Scanner
         foreach ($this->get_mu_plugin_slugs() as $mu_slug) {
             $active["plugins"][] = $mu_slug;
             $active["all"][] = $mu_slug;
+        }
+
+        foreach ($this->get_mu_plugin_directories() as $mu_dir) {
+            $active["plugins"][] = $mu_dir;
+            $active["all"][] = $mu_dir;
+
+            $mu_dir_slug = strtolower(sanitize_key($mu_dir));
+
+            if ($mu_dir_slug !== "") {
+                $active["plugins"][] = $mu_dir_slug;
+                $active["all"][] = $mu_dir_slug;
+            }
         }
 
         $theme = wp_get_theme();
@@ -693,6 +767,18 @@ class OPTISTATE_Legacy_Scanner
             $installed["all_slugs"][] = $mu_slug;
         }
 
+        foreach ($this->get_mu_plugin_directories() as $mu_dir) {
+            $installed["plugins"][] = $mu_dir;
+            $installed["all_dirs"][] = $mu_dir;
+            $installed["all_slugs"][] = $mu_dir;
+
+            $mu_dir_slug = strtolower(sanitize_key($mu_dir));
+
+            if ($mu_dir_slug !== "") {
+                $installed["all_slugs"][] = $mu_dir_slug;
+            }
+        }
+
         $installed["plugins"] = array_values(
             array_unique($installed["plugins"])
         );
@@ -710,6 +796,20 @@ class OPTISTATE_Legacy_Scanner
         $installed["all_dirs_map"] = array_fill_keys(
             $installed["all_dirs"],
             true
+        );
+
+        $canonical = [];
+
+        foreach ($installed["all_slugs"] as $slug) {
+            $canonical[] = self::canonical_separators($slug);
+        }
+
+        foreach ($installed["all_dirs"] as $dir) {
+            $canonical[] = self::canonical_separators($dir);
+        }
+
+        $installed["all_canonical"] = array_values(
+            array_filter(array_unique($canonical))
         );
 
         self::$installed_status_cache = $installed;
@@ -748,6 +848,50 @@ class OPTISTATE_Legacy_Scanner
         $slugs = array_values(array_unique($slugs));
 
         return $slugs;
+    }
+    private static function canonical_separators(string $value): string
+    {
+        return trim(str_replace("_", "-", strtolower($value)), "-");
+    }
+    private function get_mu_plugin_directories(): array
+    {
+        static $directories = null;
+
+        if ($directories !== null) {
+            return $directories;
+        }
+
+        $directories = [];
+
+        if (!defined("WPMU_PLUGIN_DIR") || !@is_dir(WPMU_PLUGIN_DIR)) {
+            return $directories;
+        }
+
+        $handle = @opendir(WPMU_PLUGIN_DIR);
+
+        if (!$handle) {
+            return $directories;
+        }
+
+        $base = trailingslashit(WPMU_PLUGIN_DIR);
+
+        while (($item = readdir($handle)) !== false) {
+            if ($item === "." || $item === "..") {
+                continue;
+            }
+
+            if (!@is_dir($base . $item)) {
+                continue;
+            }
+
+            $directories[] = strtolower($item);
+        }
+
+        closedir($handle);
+
+        $directories = array_values(array_unique($directories));
+
+        return $directories;
     }
     private function build_slug_cache_key(?string $slug, array $slugs): string
     {
@@ -834,23 +978,55 @@ class OPTISTATE_Legacy_Scanner
                 continue;
             }
 
-            $pattern =
-                "/^" .
-                str_replace(
-                    "\\*",
-                    ".*",
-                    preg_quote($check_slug_sanitized, "/")
-                ) .
-                '$/i';
+            $pattern = $this->build_wildcard_pattern($check_slug);
+
+            if ($pattern === "") {
+                continue;
+            }
 
             foreach ($haystack_list as $candidate) {
-                if (preg_match($pattern, $candidate) === 1) {
+                if (preg_match($pattern, (string) $candidate) === 1) {
                     return true;
                 }
             }
         }
 
         return false;
+    }
+    private function build_wildcard_pattern(string $slug): string
+    {
+        static $cache = [];
+
+        if (isset($cache[$slug])) {
+            return $cache[$slug];
+        }
+
+        $normalized = preg_replace(
+            '/[^a-z0-9_\-*]/',
+            "",
+            strtolower($slug)
+        );
+
+        if (!is_string($normalized) || strpos($normalized, "*") === false) {
+            $cache[$slug] = "";
+
+            return "";
+        }
+
+        $literal = str_replace("*", "", $normalized);
+
+        if (strlen($literal) < 3) {
+            $cache[$slug] = "";
+
+            return "";
+        }
+
+        $cache[$slug] =
+            "/^" .
+            str_replace("\\*", ".*", preg_quote($normalized, "/")) .
+            '$/';
+
+        return $cache[$slug];
     }
     public function is_item_active_or_installed(array $item): bool
     {
@@ -992,8 +1168,7 @@ class OPTISTATE_Legacy_Scanner
         $installed_slugs = $installed_cache["all_slugs"];
         $installed_map = $installed_cache["all_slugs_map"];
 
-        $is_folder =
-            $item_type === "folder" || $item_type === "upload_folder";
+        $is_folder = $item_type === "folder";
 
         if ($item_slug !== "" && isset(self::$slug_lookup_cache[$item_slug])) {
             foreach (self::$slug_lookup_cache[$item_slug] as $match) {
@@ -1038,42 +1213,46 @@ class OPTISTATE_Legacy_Scanner
         }
 
         if ($is_folder) {
-            if (strlen($item_lower) < 3) {
+            if (strlen($item_lower) < self::MIN_FOLDER_SLUG_LENGTH) {
                 return null;
             }
 
-            foreach (self::$slug_lookup_cache as $slug => $matches) {
-                if (strlen($slug) < 3) {
+            $best = null;
+
+            foreach ($this->folder_slug_candidates($item_lower) as $candidate) {
+                if (
+                    strlen($candidate) < self::MIN_FOLDER_SLUG_LENGTH ||
+                    !isset(self::$slug_lookup_cache[$candidate])
+                ) {
                     continue;
                 }
 
-                if (strpos($item_lower, $slug) !== false) {
-                    $match_type = "folder_contains_slug";
-                } elseif (strpos($slug, $item_lower) !== false) {
-                    $match_type = "slug_contains_folder";
-                } else {
-                    continue;
-                }
-
-                foreach ($matches as $match) {
+                foreach (self::$slug_lookup_cache[$candidate] as $match) {
                     if (
-                        !$this->is_plugin_installed(
+                        $this->is_plugin_installed(
                             $item_slug,
                             $match["data"]["slugs"],
                             $installed_slugs,
                             $installed_map
                         )
                     ) {
-                        return [
+                        return null;
+                    }
+
+                    if ($best === null) {
+                        $best = [
                             "prefix" => $match["prefix"],
                             "data" => $match["data"],
-                            "match_type" => $match_type,
+                            "match_type" =>
+                                $candidate === $item_lower
+                                    ? "folder_exact_slug"
+                                    : "folder_contains_slug",
                         ];
                     }
                 }
             }
 
-            return null;
+            return $best;
         }
 
         $prefix_match = $this->match_prefix($item_lower);
@@ -1098,9 +1277,18 @@ class OPTISTATE_Legacy_Scanner
             return null;
         }
 
-        foreach ($installed_slugs as $installed_slug) {
-            if (strpos($installed_slug, $matched_prefix) === 0) {
-                return null;
+        $prefix_canonical = self::canonical_separators($matched_prefix);
+
+        if ($prefix_canonical !== "") {
+            $prefix_boundary = $prefix_canonical . "-";
+
+            foreach ($installed_cache["all_canonical"] ?? [] as $installed_slug) {
+                if (
+                    $installed_slug === $prefix_canonical ||
+                    strpos($installed_slug, $prefix_boundary) === 0
+                ) {
+                    return null;
+                }
             }
         }
 
@@ -1109,6 +1297,45 @@ class OPTISTATE_Legacy_Scanner
             "data" => $info["data"],
             "match_type" => "prefix",
         ];
+    }
+    private function folder_slug_candidates(string $item_lower): array
+    {
+        $parts = preg_split(
+            '/([-_.])/',
+            $item_lower,
+            -1,
+            PREG_SPLIT_DELIM_CAPTURE
+        );
+
+        if (!is_array($parts) || empty($parts)) {
+            return [];
+        }
+
+        $count = min(count($parts), self::MAX_FOLDER_TOKENS * 2 - 1);
+        $candidates = [];
+
+        for ($start = 0; $start < $count; $start += 2) {
+            $buffer = $parts[$start];
+
+            if ($buffer !== "") {
+                $candidates[$buffer] = true;
+            }
+
+            for ($end = $start + 2; $end < $count; $end += 2) {
+                $buffer .= $parts[$end - 1] . $parts[$end];
+                $candidates[$buffer] = true;
+            }
+        }
+
+        $list = array_keys($candidates);
+
+        usort($list, static function ($a, $b): int {
+            $diff = strlen((string) $b) <=> strlen((string) $a);
+
+            return $diff !== 0 ? $diff : strcmp((string) $a, (string) $b);
+        });
+
+        return $list;
     }
     public function ajax_scan_legacy_data(): void
     {
@@ -1143,16 +1370,21 @@ class OPTISTATE_Legacy_Scanner
         try {
             $force_new =
                 isset($_POST["new_scan"]) &&
-                sanitize_text_field(wp_unslash($_POST["new_scan"])) === "1";
+                is_scalar($_POST["new_scan"]) &&
+                (string) wp_unslash($_POST["new_scan"]) === "1";
 
-            $state = $force_new ? null : $this->read_scan_state();
+            if ($force_new) {
+                $this->invalidate_folder_cache();
+
+                $state = null;
+            } else {
+                $state = $this->read_scan_state();
+            }
 
             if ($state === null) {
-                $this->invalidate_folder_cache();
+                $this->reset_scan_progress();
+
                 $state = $this->create_scan_state();
-            } else {
-                $this->reset_lookup_caches();
-                $this->clear_status_caches();
             }
 
             $trash_manager = $this->get_trash_manager();
@@ -1161,24 +1393,30 @@ class OPTISTATE_Legacy_Scanner
                 $trash_manager->ensure_table_exists();
             }
 
-            $this->build_plugin_lookup_tables();
-
-            $installed_cache = $this->get_installed_status_cache();
-            $conditions = $this->build_pattern_conditions();
-
-            if (!empty($conditions["sql"])) {
-                $this->scan_options($state, $conditions);
-                $this->scan_meta_tables($state, $conditions);
+            if ($this->results_saturated($state)) {
+                $this->mark_scan_complete($state);
             } else {
-                $state["db"]["options_done"] = true;
+                $this->build_plugin_lookup_tables();
 
-                foreach (self::META_TYPES as $meta_type) {
-                    $state["db"]["meta"][$meta_type]["done"] = true;
+                $conditions = $this->build_pattern_conditions();
+
+                if (!empty($conditions["sql"])) {
+                    $this->scan_options($state, $conditions);
+                    $this->scan_meta_tables($state, $conditions);
+                } else {
+                    $state["db"]["options_done"] = true;
+
+                    foreach (self::META_TYPES as $meta_type) {
+                        $state["db"]["meta"][$meta_type]["done"] = true;
+                    }
                 }
-            }
 
-            $this->scan_tables($state);
-            $this->scan_folders($state, $installed_cache);
+                $this->scan_tables($state);
+                $this->scan_folders(
+                    $state,
+                    $this->get_installed_status_cache()
+                );
+            }
 
             if ($this->scan_is_complete($state)) {
                 $this->clear_scan_state();
@@ -1321,6 +1559,12 @@ class OPTISTATE_Legacy_Scanner
             return;
         }
 
+        if ($this->results_saturated($state)) {
+            $state["db"]["options_done"] = true;
+
+            return;
+        }
+
         global $wpdb;
 
         $where = $this->render_conditions($conditions, "option_name");
@@ -1418,6 +1662,10 @@ class OPTISTATE_Legacy_Scanner
 
             unset($rows);
             $wpdb->flush();
+
+            if ($this->results_saturated($state)) {
+                break;
+            }
         } while ($row_count === self::DB_BATCH_SIZE);
 
         $state["db"]["options_done"] = true;
@@ -1438,6 +1686,12 @@ class OPTISTATE_Legacy_Scanner
             }
 
             if (!empty($state["db"]["meta"][$meta_type]["done"])) {
+                continue;
+            }
+
+            if ($this->results_saturated($state)) {
+                $state["db"]["meta"][$meta_type]["done"] = true;
+
                 continue;
             }
 
@@ -1533,6 +1787,10 @@ class OPTISTATE_Legacy_Scanner
                 }
 
                 $wpdb->flush();
+
+                if ($this->results_saturated($state)) {
+                    break;
+                }
             } while ($row_count === self::DB_BATCH_SIZE);
 
             if ($completed) {
@@ -1596,6 +1854,12 @@ class OPTISTATE_Legacy_Scanner
     private function scan_tables(array &$state): void
     {
         if (!empty($state["db"]["tables_done"])) {
+            return;
+        }
+
+        if ($this->results_saturated($state)) {
+            $state["db"]["tables_done"] = true;
+
             return;
         }
 
@@ -1691,6 +1955,10 @@ class OPTISTATE_Legacy_Scanner
                     ? date_i18n("j M Y", $timestamp)
                     : "",
             ]);
+
+            if ($this->results_saturated($state)) {
+                break;
+            }
         }
 
         $state["db"]["tables_done"] = true;
@@ -1758,12 +2026,22 @@ class OPTISTATE_Legacy_Scanner
             }
         }
 
-        $roots = array_filter([
-            $wp_plugin_dir,
-            $wp_theme_dir,
-            $wp_mu_plugin_dir,
-            $base_upload_path,
-        ]);
+        $roots = [];
+
+        foreach (
+            [
+                $wp_plugin_dir,
+                $wp_theme_dir,
+                $wp_mu_plugin_dir,
+                $base_upload_path,
+                $wp_content_dir,
+            ]
+            as $root
+        ) {
+            if (is_string($root) && $root !== "") {
+                $roots[untrailingslashit(wp_normalize_path($root))] = true;
+            }
+        }
 
         $max_folders = (int) apply_filters(
             "optistate_max_folders_scan",
@@ -1791,11 +2069,14 @@ class OPTISTATE_Legacy_Scanner
                     break;
                 }
 
-                if (in_array($item, self::SKIP_FOLDERS, true)) {
-                    continue;
-                }
+                $item_lower = strtolower($item);
 
-                if (in_array($item, self::SYSTEM_DIRECTORIES, true)) {
+                if (
+                    ctype_digit($item) ||
+                    in_array($item_lower, self::SKIP_FOLDERS, true) ||
+                    in_array($item_lower, self::SYSTEM_DIRECTORIES, true) ||
+                    isset($installed_cache["all_dirs_map"][$item_lower])
+                ) {
                     continue;
                 }
 
@@ -1805,11 +2086,7 @@ class OPTISTATE_Legacy_Scanner
                     continue;
                 }
 
-                if (in_array($full_path, $roots, true)) {
-                    continue;
-                }
-
-                if (isset($installed_cache["all_dirs_map"][strtolower($item)])) {
+                if (isset($roots[untrailingslashit(wp_normalize_path($full_path))])) {
                     continue;
                 }
 
@@ -1817,11 +2094,6 @@ class OPTISTATE_Legacy_Scanner
                     "name" => $item,
                     "path" => $full_path,
                     "location" => $location_name,
-                    "relative_path" => $this->make_path_identifier($full_path),
-                    "is_plugin_dir" =>
-                        $location_name === "plugins" ||
-                        $location_name === "mu-plugins",
-                    "is_theme_dir" => $location_name === "themes",
                 ];
             }
 
@@ -1879,6 +2151,12 @@ class OPTISTATE_Legacy_Scanner
             return;
         }
 
+        if ($this->folders_saturated($state)) {
+            $state["folders"]["done"] = true;
+
+            return;
+        }
+
         $directories = $this->get_candidate_directories(
             $state,
             $installed_cache
@@ -1893,26 +2171,26 @@ class OPTISTATE_Legacy_Scanner
         }
 
         $index = (int) $state["folders"]["index"];
-        $processed = 0;
 
         for (; $index < $total; $index++) {
-            if (
-                $this->should_stop_scan() ||
-                $processed >= self::FOLDER_BATCH_SIZE
-            ) {
+            if ($this->should_stop_scan()) {
                 break;
             }
-
-            $processed++;
 
             $this->inspect_directory(
                 $state,
                 $directories[$index],
                 $installed_cache
             );
+
+            if ($this->folders_saturated($state)) {
+                $index = $total;
+
+                break;
+            }
         }
 
-        $state["folders"]["index"] = $index;
+        $state["folders"]["index"] = min($index, $total);
 
         if ($index >= $total) {
             $state["folders"]["done"] = true;
@@ -1924,17 +2202,22 @@ class OPTISTATE_Legacy_Scanner
         array $dir_info,
         array $installed_cache
     ): void {
+        $folder_path = (string) $dir_info["path"];
+
+        if (!@is_dir($folder_path)) {
+            return;
+        }
+
         $folder_name = (string) $dir_info["name"];
         $folder_lower = strtolower($folder_name);
         $location_name = (string) $dir_info["location"];
         $is_upload = $location_name === "uploads";
+        $is_theme_dir = $location_name === "themes";
+        $is_mu_plugin_dir = $location_name === "mu-plugins";
+        $is_plugin_dir = $location_name === "plugins" || $is_mu_plugin_dir;
 
         if (isset($installed_cache["all_dirs_map"][$folder_lower])) {
-            if (
-                $dir_info["is_plugin_dir"] ||
-                $dir_info["is_theme_dir"] ||
-                !$is_upload
-            ) {
+            if ($is_plugin_dir || $is_theme_dir || !$is_upload) {
                 return;
             }
         }
@@ -1953,13 +2236,7 @@ class OPTISTATE_Legacy_Scanner
                 return;
             }
 
-            $stats = OPTISTATE_Utils::get_folder_size(
-                $dir_info["path"],
-                50000,
-                5,
-                true,
-                [$this, "should_stop_scan"]
-            );
+            $stats = $this->folder_stats($dir_info["path"]);
 
             $size = (int) ($stats["size"] ?? 0);
             $risk = (string) $source["data"]["risk"];
@@ -1968,14 +2245,14 @@ class OPTISTATE_Legacy_Scanner
                 __("Orphaned folder", "optistate")
             );
 
-            if ($dir_info["is_plugin_dir"]) {
+            if ($is_plugin_dir) {
                 $risk = "high";
                 $note .= " " .
                     __(
                         "(leftover in plugins directory - security risk)",
                         "optistate"
                     );
-            } elseif ($dir_info["is_theme_dir"]) {
+            } elseif ($is_theme_dir) {
                 $risk = "high";
                 $note .= " " . __("(leftover in themes directory)", "optistate");
             } elseif ($is_upload && $size > self::LARGE_UPLOAD_FOLDER_BYTES) {
@@ -2001,11 +2278,18 @@ class OPTISTATE_Legacy_Scanner
             return;
         }
 
-        if (
-            ($dir_info["is_plugin_dir"] || $dir_info["is_theme_dir"]) &&
-            !isset($installed_cache["all_dirs_map"][$folder_lower])
-        ) {
-            $stats = OPTISTATE_Utils::get_folder_size($dir_info["path"]);
+        if ($location_name === "plugins" || $is_theme_dir) {
+            $stats = $this->folder_stats($dir_info["path"]);
+            $risk = "high";
+            $note = sprintf(
+                __("Orphaned folder in %s directory", "optistate"),
+                $location_name
+            );
+
+            if (!empty($stats["sensitive"])) {
+                $risk = "critical";
+                $note .= " " . __("- contains sensitive files", "optistate");
+            }
 
             $this->add_folder_result(
                 $state,
@@ -2016,11 +2300,8 @@ class OPTISTATE_Legacy_Scanner
                         "Legacy: Unknown Plugin/Theme",
                         "optistate"
                     ),
-                    "risk" => "high",
-                    "risk_note" => sprintf(
-                        __("Orphaned folder in %s directory", "optistate"),
-                        $location_name
-                    ),
+                    "risk" => $risk,
+                    "risk_note" => $note,
                 ]
             );
 
@@ -2032,21 +2313,27 @@ class OPTISTATE_Legacy_Scanner
         }
 
         $known_upload_folders = [
-            "avatars" => [],
+            "avatars" => [
+                "buddypress",
+                "simple-local-avatars",
+                "wp-user-avatar",
+                "one-user-avatar",
+                "basic-user-avatars",
+            ],
             "wpforms" => ["wpforms", "wpforms-lite"],
-            "elementor" => ["elementor"],
+            "elementor" => ["elementor", "elementor-pro"],
             "woocommerce" => ["woocommerce"],
+            "woocommerce_uploads" => ["woocommerce"],
             "wpcf7_uploads" => ["contact-form-7"],
         ];
 
-        if (!array_key_exists($folder_name, $known_upload_folders)) {
+        if (!isset($known_upload_folders[$folder_lower])) {
             return;
         }
 
-        $plugin_slugs = $known_upload_folders[$folder_name];
+        $plugin_slugs = $known_upload_folders[$folder_lower];
 
         if (
-            !empty($plugin_slugs) &&
             $this->is_plugin_installed(
                 (string) reset($plugin_slugs),
                 $plugin_slugs,
@@ -2057,7 +2344,17 @@ class OPTISTATE_Legacy_Scanner
             return;
         }
 
-        $stats = OPTISTATE_Utils::get_folder_size($dir_info["path"]);
+        $stats = $this->folder_stats($dir_info["path"]);
+        $risk = "medium";
+        $note = __(
+            "Orphaned upload folder from uninstalled plugin",
+            "optistate"
+        );
+
+        if (!empty($stats["sensitive"])) {
+            $risk = "critical";
+            $note .= " " . __("- contains sensitive files", "optistate");
+        }
 
         $this->add_folder_result(
             $state,
@@ -2066,15 +2363,26 @@ class OPTISTATE_Legacy_Scanner
             [
                 "label" => sprintf(
                     __("Legacy: %s", "optistate"),
-                    ucfirst(str_replace("_", " ", $folder_name))
+                    ucfirst(str_replace("_", " ", $folder_lower))
                 ),
-                "risk" => "medium",
-                "risk_note" => __(
-                    "Orphaned upload folder from uninstalled plugin",
-                    "optistate"
-                ),
+                "risk" => $risk,
+                "risk_note" => $note,
             ]
         );
+    }
+    private function folder_stats(string $path): array
+    {
+        $stats = OPTISTATE_Utils::get_folder_size(
+            $path,
+            self::FOLDER_STAT_MAX_FILES,
+            self::FOLDER_STAT_MAX_DEPTH,
+            true,
+            [$this, "should_stop_scan"]
+        );
+
+        return is_array($stats)
+            ? $stats
+            : ["size" => 0, "sensitive" => false, "file_count" => 0];
     }
 
     private function add_folder_result(
@@ -2084,12 +2392,13 @@ class OPTISTATE_Legacy_Scanner
         array $descriptor
     ): void {
         $last_modified = @filemtime($dir_info["path"]);
+        $identifier = $this->make_path_identifier((string) $dir_info["path"]);
 
         $this->add_result($state, [
             "type" => "folder",
-            "name" => $dir_info["relative_path"],
+            "name" => $identifier,
             "path" => $dir_info["path"],
-            "relative_path" => $dir_info["relative_path"],
+            "relative_path" => $identifier,
             "location" => $dir_info["location"],
             "count" => $size > 0 ? size_format($size, 1) : "0 B",
             "display_type" => "folder",
@@ -2165,159 +2474,64 @@ class OPTISTATE_Legacy_Scanner
         );
     }
 
-    private function read_post_string(string $field): string
-    {
+    private function read_post_identifier(
+        string $field,
+        int $max_length
+    ): string {
         if (!isset($_POST[$field]) || !is_scalar($_POST[$field])) {
             return "";
         }
 
-        return sanitize_text_field(wp_unslash((string) $_POST[$field]));
+        $value = wp_check_invalid_utf8((string) wp_unslash($_POST[$field]));
+
+        if ($value === "") {
+            return "";
+        }
+
+        $value = (string) preg_replace('/[\x00-\x1F\x7F]/', "", $value);
+
+        if ($value === "" || strlen($value) > $max_length) {
+            return "";
+        }
+
+        return $value;
     }
-
-    public function ajax_list_trash_items(): void
+    private function forget_result(string $type, string $name): void
     {
-        check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
-        $this->main_plugin->settings_manager->check_user_access();
+        $state = $this->read_scan_state();
 
-        $trash_manager = $this->get_trash_manager();
-
-        if ($trash_manager === null) {
-            $this->trash_unavailable_error();
-
+        if ($state === null) {
             return;
         }
 
-        OPTISTATE_Utils::send_json_success($trash_manager->list_trash_items());
-    }
+        $changed = false;
 
-    public function ajax_restore_trash_item(): void
-    {
-        if (
-            !isset($_SERVER["REQUEST_METHOD"]) ||
-            $_SERVER["REQUEST_METHOD"] !== "POST"
-        ) {
-            OPTISTATE_Utils::send_json_error(
-                __("Invalid request method.", "optistate"),
-                405
-            );
-
-            return;
-        }
-
-        check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
-        $this->main_plugin->settings_manager->check_user_access();
-
-        $trash_manager = $this->get_trash_manager();
-
-        if ($trash_manager === null) {
-            $this->trash_unavailable_error();
-
-            return;
-        }
-
-        $key = $this->read_post_string("key");
-
-        if ($key === "") {
-            OPTISTATE_Utils::send_json_error(
-                __("Invalid trash item key.", "optistate")
-            );
-
-            return;
-        }
-
-        try {
-            if ($trash_manager->restore_from_trash($key)) {
-                OPTISTATE_Utils::send_json_success([
-                    "message" => __("Item restored successfully.", "optistate"),
-                ]);
-
-                return;
+        foreach ($state["results"] as $index => $result) {
+            if (
+                ($result["type"] ?? "") !== $type ||
+                ($result["name"] ?? "") !== $name
+            ) {
+                continue;
             }
 
-            OPTISTATE_Utils::send_json_error(
-                __("Failed to restore item.", "optistate")
-            );
-        } catch (Throwable $e) {
-            OPTISTATE_Utils::log_critical_error("Restore from trash failed", [
-                "error" => $e->getMessage(),
-                "file" => $e->getFile(),
-                "line" => $e->getLine(),
-            ]);
-
-            OPTISTATE_Utils::send_json_error(
-                __(
-                    "An unexpected error occurred while restoring the item.",
-                    "optistate"
-                )
-            );
-        }
-    }
-
-    public function ajax_permanently_delete_trash_item(): void
-    {
-        if (
-            !isset($_SERVER["REQUEST_METHOD"]) ||
-            $_SERVER["REQUEST_METHOD"] !== "POST"
-        ) {
-            OPTISTATE_Utils::send_json_error(
-                __("Invalid request method.", "optistate"),
-                405
-            );
-
-            return;
-        }
-
-        check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
-        $this->main_plugin->settings_manager->check_user_access();
-
-        $trash_manager = $this->get_trash_manager();
-
-        if ($trash_manager === null) {
-            $this->trash_unavailable_error();
-
-            return;
-        }
-
-        $key = $this->read_post_string("key");
-
-        if ($key === "") {
-            OPTISTATE_Utils::send_json_error(
-                __("Invalid trash item key.", "optistate")
-            );
-
-            return;
-        }
-
-        try {
-            if ($trash_manager->permanently_delete($key)) {
-                OPTISTATE_Utils::send_json_success([
-                    "message" => __("Item permanently deleted.", "optistate"),
-                ]);
-
-                return;
+            if ($type === "folder" && (int) $state["folder_count"] > 0) {
+                $state["folder_count"]--;
             }
 
-            OPTISTATE_Utils::send_json_error(
-                __("Failed to delete item permanently.", "optistate")
-            );
-        } catch (Throwable $e) {
-            OPTISTATE_Utils::log_critical_error(
-                "Permanent delete from trash failed",
-                [
-                    "error" => $e->getMessage(),
-                    "file" => $e->getFile(),
-                    "line" => $e->getLine(),
-                ]
-            );
+            unset($state["results"][$index]);
 
-            OPTISTATE_Utils::send_json_error(
-                __(
-                    "An unexpected error occurred while deleting the item.",
-                    "optistate"
-                )
-            );
+            $changed = true;
         }
+
+        if (!$changed) {
+            return;
+        }
+
+        $state["results"] = array_values($state["results"]);
+
+        $this->write_scan_state($state);
     }
+
     public function ajax_delete_legacy_data(): void
     {
         if (
@@ -2378,7 +2592,18 @@ class OPTISTATE_Legacy_Scanner
         }
 
         $trash_type = $type_map[$type];
-        $name = $this->read_post_string("name");
+
+        if ($trash_type === "folder") {
+            $max_length = self::MAX_PATH_LENGTH;
+        } elseif ($trash_type === "table") {
+            $max_length = self::MAX_TABLE_NAME_LENGTH;
+        } elseif ($trash_type === "option") {
+            $max_length = self::MAX_OPTION_NAME_LENGTH;
+        } else {
+            $max_length = self::MAX_META_KEY_LENGTH;
+        }
+
+        $name = $this->read_post_identifier("name", $max_length);
 
         if ($name === "") {
             OPTISTATE_Utils::send_json_error(
@@ -2442,6 +2667,12 @@ class OPTISTATE_Legacy_Scanner
             );
 
             return;
+        }
+
+        $this->forget_result($type, $name);
+
+        if ($trash_type !== $type) {
+            $this->forget_result($trash_type, $name);
         }
 
         OPTISTATE_Utils::send_json_success([
@@ -2607,6 +2838,14 @@ class OPTISTATE_Legacy_Scanner
             );
 
             return;
+        }
+
+        $this->forget_result("folder", $name);
+
+        $identifier = $this->make_path_identifier($real_target);
+
+        if ($identifier !== $name) {
+            $this->forget_result("folder", $identifier);
         }
 
         OPTISTATE_Utils::send_json_success([

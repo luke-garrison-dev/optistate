@@ -8,9 +8,9 @@ class OPTISTATE_Trash_Manager
     private ?object $wp_filesystem = null;
     private bool $filesystem_failed = false;
 
-    private string $trash_table;
-    private string $trash_table_sql;
-    private string $trash_dir;
+    private ?string $trash_table_cache = null;
+    private ?string $trash_table_sql_cache = null;
+    private ?string $trash_dir_cache = null;
 
     private static ?bool $table_exists_cache = null;
     private static bool $table_verified = false;
@@ -24,6 +24,9 @@ class OPTISTATE_Trash_Manager
     private const META_TRASH_MAX_FILE_SIZE = 50 * 1024 * 1024;
     private const META_EXPORT_CHUNK = 1000;
     private const META_RESTORE_BATCH = 100;
+
+    private const DELETE_ALL_RATE_LIMIT = 2;
+    private const META_CACHE_ID_LIMIT = 200000;
 
     private const PURGE_BATCH = 50;
     private const CLEANUP_BATCH = 100;
@@ -39,10 +42,30 @@ class OPTISTATE_Trash_Manager
         "termmeta",
     ];
     private const META_TABLE_MAP = [
-        "postmeta" => ["property" => "postmeta", "id_col" => "meta_id"],
-        "commentmeta" => ["property" => "commentmeta", "id_col" => "meta_id"],
-        "usermeta" => ["property" => "usermeta", "id_col" => "umeta_id"],
-        "termmeta" => ["property" => "termmeta", "id_col" => "meta_id"],
+        "postmeta" => [
+            "property" => "postmeta",
+            "id_col" => "meta_id",
+            "object_col" => "post_id",
+            "cache_group" => "post_meta",
+        ],
+        "commentmeta" => [
+            "property" => "commentmeta",
+            "id_col" => "meta_id",
+            "object_col" => "comment_id",
+            "cache_group" => "comment_meta",
+        ],
+        "usermeta" => [
+            "property" => "usermeta",
+            "id_col" => "umeta_id",
+            "object_col" => "user_id",
+            "cache_group" => "user_meta",
+        ],
+        "termmeta" => [
+            "property" => "termmeta",
+            "id_col" => "meta_id",
+            "object_col" => "term_id",
+            "cache_group" => "term_meta",
+        ],
     ];
     private const META_COLUMN_MAP = [
         "postmeta" => ["post_id", "meta_key", "meta_value"],
@@ -53,25 +76,77 @@ class OPTISTATE_Trash_Manager
 
     public function __construct(OPTISTATE $main_plugin)
     {
-        global $wpdb;
-
         $this->main_plugin = $main_plugin;
 
-        $upload_dir = wp_get_upload_dir();
-
-        $this->trash_dir =
-            trailingslashit($upload_dir["basedir"] ?? WP_CONTENT_DIR) .
-            "optistate/trash/";
-
-        $this->trash_table = $wpdb->prefix . "optistate_trash";
-        $this->trash_table_sql = OPTISTATE_Utils::escape_identifier(
-            $this->trash_table
-        );
-
+        add_action("wp_ajax_optistate_list_trash_items", [
+            $this,
+            "ajax_list_trash_items",
+        ]);
+        add_action("wp_ajax_optistate_restore_trash_item", [
+            $this,
+            "ajax_restore_trash_item",
+        ]);
+        add_action("wp_ajax_optistate_permanently_delete_trash_item", [
+            $this,
+            "ajax_permanently_delete_trash_item",
+        ]);
         add_action("wp_ajax_optistate_delete_all_trash", [
             $this,
             "ajax_delete_all_trash",
         ]);
+    }
+    private function trash_table(): string
+    {
+        if ($this->trash_table_cache === null) {
+            global $wpdb;
+
+            $this->trash_table_cache = $wpdb->prefix . "optistate_trash";
+        }
+
+        return $this->trash_table_cache;
+    }
+    private function trash_table_sql(): string
+    {
+        if ($this->trash_table_sql_cache === null) {
+            $this->trash_table_sql_cache = OPTISTATE_Utils::escape_identifier(
+                $this->trash_table()
+            );
+        }
+
+        return $this->trash_table_sql_cache;
+    }
+    private function trash_dir(): string
+    {
+        if ($this->trash_dir_cache === null) {
+            $upload_dir = wp_get_upload_dir();
+
+            $base =
+                isset($upload_dir["basedir"]) &&
+                is_string($upload_dir["basedir"]) &&
+                $upload_dir["basedir"] !== ""
+                    ? $upload_dir["basedir"]
+                    : WP_CONTENT_DIR;
+
+            $this->trash_dir_cache =
+                trailingslashit(wp_normalize_path($base)) . "optistate/trash/";
+        }
+
+        return $this->trash_dir_cache;
+    }
+    private function is_post_request(): bool
+    {
+        return isset($_SERVER["REQUEST_METHOD"]) &&
+            $_SERVER["REQUEST_METHOD"] === "POST";
+    }
+    private function read_trash_key(): string
+    {
+        if (!isset($_POST["key"]) || !is_scalar($_POST["key"])) {
+            return "";
+        }
+
+        $key = strtolower(trim((string) wp_unslash($_POST["key"])));
+
+        return preg_match('/^[a-z]+_[a-f0-9]{32}$/', $key) === 1 ? $key : "";
     }
     private function fs(): ?object
     {
@@ -118,10 +193,10 @@ class OPTISTATE_Trash_Manager
             return true;
         }
 
-        if (!OPTISTATE_Utils::table_exists($this->trash_table)) {
+        if (!OPTISTATE_Utils::table_exists($this->trash_table())) {
             $this->create_table();
 
-            if (!OPTISTATE_Utils::table_exists($this->trash_table)) {
+            if (!OPTISTATE_Utils::table_exists($this->trash_table())) {
                 return false;
             }
         }
@@ -135,14 +210,14 @@ class OPTISTATE_Trash_Manager
     {
         global $wpdb;
 
-        OPTISTATE_Utils::clear_table_existence_cache($this->trash_table);
+        OPTISTATE_Utils::clear_table_existence_cache($this->trash_table());
 
         if (!function_exists("dbDelta")) {
             require_once ABSPATH . "wp-admin/includes/upgrade.php";
         }
 
         $charset_collate = $wpdb->get_charset_collate();
-        $sql = "CREATE TABLE {$this->trash_table} (
+        $sql = "CREATE TABLE {$this->trash_table()} (
  id bigint(20) NOT NULL AUTO_INCREMENT,
  trash_key varchar(191) NOT NULL,
  type varchar(20) NOT NULL,
@@ -162,9 +237,9 @@ class OPTISTATE_Trash_Manager
         try {
             dbDelta($sql);
 
-            OPTISTATE_Utils::clear_table_existence_cache($this->trash_table);
+            OPTISTATE_Utils::clear_table_existence_cache($this->trash_table());
 
-            if (OPTISTATE_Utils::table_exists($this->trash_table)) {
+            if (OPTISTATE_Utils::table_exists($this->trash_table())) {
                 self::$table_exists_cache = true;
 
                 set_transient(
@@ -175,7 +250,7 @@ class OPTISTATE_Trash_Manager
             } else {
                 OPTISTATE_Utils::log_critical_error(
                     "Trash table could not be created",
-                    ["table" => $this->trash_table, "error" => $wpdb->last_error]
+                    ["table" => $this->trash_table(), "error" => $wpdb->last_error]
                 );
             }
         } catch (Throwable $e) {
@@ -193,7 +268,7 @@ class OPTISTATE_Trash_Manager
         }
 
         $created = $this->main_plugin->ensure_directory(
-            $this->trash_dir,
+            $this->trash_dir(),
             0755,
             OPTISTATE::HTACCESS_RULES_TRASH
         );
@@ -216,13 +291,13 @@ class OPTISTATE_Trash_Manager
             return false;
         }
 
-        if (!$fs->is_dir($this->trash_dir)) {
+        if (!$fs->is_dir($this->trash_dir())) {
             $this->ensure_trash_directory(true);
         } else {
             $this->ensure_trash_directory();
         }
 
-        return $fs->is_dir($this->trash_dir);
+        return $fs->is_dir($this->trash_dir());
     }
     private function random_hex(int $bytes): string
     {
@@ -327,6 +402,55 @@ class OPTISTATE_Trash_Manager
         return array_values(array_unique($resolved));
     }
 
+    private function is_inside_trash_dir(string $path): bool
+    {
+        if ($path === "") {
+            return false;
+        }
+
+        $base = trailingslashit(wp_normalize_path($this->trash_dir()));
+        $target = trailingslashit(wp_normalize_path($path));
+
+        return $target !== $base && strpos($target, $base) === 0;
+    }
+    private function log_foreign_artifact(string $path, string $context): void
+    {
+        OPTISTATE_Utils::log_critical_error(
+            "Trash artefact path outside the trash directory was ignored",
+            ["context" => $context, "path" => $path]
+        );
+    }
+    private function purge_meta_object_cache(
+        string $cache_group,
+        array $object_ids
+    ): void {
+        if ($cache_group === "") {
+            return;
+        }
+
+        if ($this->can_flush_cache_group()) {
+            wp_cache_flush_group($cache_group);
+
+            return;
+        }
+
+        foreach ($object_ids as $object_id => $ignored) {
+            wp_cache_delete((int) $object_id, $cache_group);
+        }
+    }
+    private function can_flush_cache_group(): bool
+    {
+        static $supported = null;
+
+        if ($supported === null) {
+            $supported =
+                function_exists("wp_cache_flush_group") &&
+                function_exists("wp_cache_supports") &&
+                wp_cache_supports("flush_group");
+        }
+
+        return $supported;
+    }
     private function is_inside_allowed_base(string $path): bool
     {
         $target = trailingslashit(wp_normalize_path($path));
@@ -432,14 +556,25 @@ class OPTISTATE_Trash_Manager
     ): bool {
         global $wpdb;
 
+        $encoded_meta = wp_json_encode($meta);
+
+        if (!is_string($encoded_meta)) {
+            OPTISTATE_Utils::log_critical_error(
+                "Refusing to create a trash record with unencodable metadata",
+                ["type" => $type, "name" => $original_name]
+            );
+
+            return false;
+        }
+
         $inserted = $wpdb->insert(
-            $this->trash_table,
+            $this->trash_table(),
             [
                 "trash_key" => $trash_key,
                 "type" => $type,
                 "original_name" => $original_name,
                 "trash_path_or_name" => $target,
-                "meta" => wp_json_encode($meta),
+                "meta" => $encoded_meta,
                 "size" => $size,
                 "deleted_at" => $deleted_at,
                 "expires_at" => $expires_at,
@@ -468,7 +603,7 @@ class OPTISTATE_Trash_Manager
         global $wpdb;
 
         $result = $wpdb->delete(
-            $this->trash_table,
+            $this->trash_table(),
             ["trash_key" => $trash_key],
             ["%s"]
         );
@@ -523,7 +658,7 @@ class OPTISTATE_Trash_Manager
         $basename = basename($source_path);
         $trash_name =
             $basename . "-" . time() . "-" . $this->random_hex(6);
-        $trash_path = $this->trash_dir . $trash_name;
+        $trash_path = $this->trash_dir() . $trash_name;
 
         $extra["original_path"] = $source_path;
         $extra["relative_path"] = $this->get_relative_path($source_path);
@@ -769,6 +904,7 @@ class OPTISTATE_Trash_Manager
 
         OPTISTATE_Utils::clear_table_existence_cache($table_name);
         OPTISTATE_Utils::clear_table_existence_cache($trash_table_name);
+        OPTISTATE_Utils::invalidate_table_cache();
 
         $this->main_plugin->log_entry(
             sprintf(
@@ -909,6 +1045,8 @@ class OPTISTATE_Trash_Manager
         }
 
         $id_column = $info["id_col"];
+        $object_column = $info["object_col"];
+        $cache_group = $info["cache_group"];
         $safe_table = OPTISTATE_Utils::escape_identifier($table);
         $safe_id_column = OPTISTATE_Utils::escape_identifier($id_column);
 
@@ -946,7 +1084,7 @@ class OPTISTATE_Trash_Manager
         if (!$this->require_trash_directory()) {
             return false;
         }
-        $file_path = $this->trash_dir . $trash_key . ".ndjson";
+        $file_path = $this->trash_dir() . $trash_key . ".ndjson";
         $handle = @fopen($file_path, "wb");
 
         if (!$handle) {
@@ -985,6 +1123,8 @@ class OPTISTATE_Trash_Manager
         $last_id = 0;
         $written = 0;
         $write_failed = false;
+        $collect_ids = !$this->can_flush_cache_group();
+        $object_ids = [];
 
         while (true) {
             $rows = $wpdb->get_results(
@@ -1008,6 +1148,14 @@ class OPTISTATE_Trash_Manager
 
             foreach ($rows as $row) {
                 $last_id = (int) $row[$id_column];
+
+                if (
+                    $collect_ids &&
+                    isset($row[$object_column]) &&
+                    count($object_ids) < self::META_CACHE_ID_LIMIT
+                ) {
+                    $object_ids[(int) $row[$object_column]] = true;
+                }
 
                 unset($row[$id_column]);
                 $encoded = json_encode($row);
@@ -1121,6 +1269,10 @@ class OPTISTATE_Trash_Manager
             return false;
         }
 
+        $this->purge_meta_object_cache($cache_group, $object_ids);
+
+        unset($object_ids);
+
         $this->main_plugin->log_entry(
             sprintf(
                 __("🗑 Moved legacy %1\$s to trash: %2\$s by {username}", "optistate"),
@@ -1143,7 +1295,7 @@ class OPTISTATE_Trash_Manager
 
         $item = $wpdb->get_row(
             $wpdb->prepare(
-                "SELECT * FROM {$this->trash_table_sql} WHERE trash_key = %s",
+                "SELECT * FROM {$this->trash_table_sql()} WHERE trash_key = %s",
                 $trash_key
             )
         );
@@ -1218,11 +1370,13 @@ class OPTISTATE_Trash_Manager
         $trash_path = (string) $item->trash_path_or_name;
         $original_path = (string) ($meta["original_path"] ?? "");
 
-        if (
-            $trash_path === "" ||
-            !$fs->exists($trash_path) ||
-            !$fs->is_dir($trash_path)
-        ) {
+        if (!$this->is_inside_trash_dir($trash_path)) {
+            $this->log_foreign_artifact($trash_path, "restore_folder");
+
+            return false;
+        }
+
+        if (!$fs->exists($trash_path) || !$fs->is_dir($trash_path)) {
             return false;
         }
 
@@ -1322,6 +1476,7 @@ class OPTISTATE_Trash_Manager
 
         OPTISTATE_Utils::clear_table_existence_cache($trash_table);
         OPTISTATE_Utils::clear_table_existence_cache($original_table);
+        OPTISTATE_Utils::invalidate_table_cache();
 
         return true;
     }
@@ -1397,7 +1552,7 @@ class OPTISTATE_Trash_Manager
         }
 
         $removed = $wpdb->delete(
-            $this->trash_table,
+            $this->trash_table(),
             ["trash_key" => $trash_key],
             ["%s"]
         );
@@ -1430,7 +1585,13 @@ class OPTISTATE_Trash_Manager
 
         $file_path = (string) $item->trash_path_or_name;
 
-        if ($file_path === "" || !@is_file($file_path)) {
+        if (!$this->is_inside_trash_dir($file_path)) {
+            $this->log_foreign_artifact($file_path, "restore_meta");
+
+            return false;
+        }
+
+        if (!@is_file($file_path)) {
             return false;
         }
 
@@ -1440,6 +1601,9 @@ class OPTISTATE_Trash_Manager
         if (empty($table)) {
             return false;
         }
+
+        $object_column = $info["object_col"];
+        $cache_group = $info["cache_group"];
 
         wp_raise_memory_limit("admin");
         OPTISTATE_Utils::safe_set_time_limit(300);
@@ -1487,11 +1651,21 @@ class OPTISTATE_Trash_Manager
 
         $batch = [];
         $failed = false;
+        $collect_ids = !$this->can_flush_cache_group();
+        $object_ids = [];
 
         foreach ($entries as $entry) {
             if ($entry === false) {
                 $failed = true;
                 break;
+            }
+
+            if (
+                $collect_ids &&
+                isset($entry[$object_column]) &&
+                count($object_ids) < self::META_CACHE_ID_LIMIT
+            ) {
+                $object_ids[(int) $entry[$object_column]] = true;
             }
 
             $batch[] = $entry;
@@ -1526,6 +1700,10 @@ class OPTISTATE_Trash_Manager
 
             return false;
         }
+
+        $this->purge_meta_object_cache($cache_group, $object_ids);
+
+        unset($object_ids);
 
         @unlink($file_path);
 
@@ -1766,7 +1944,7 @@ class OPTISTATE_Trash_Manager
 
         $item = $wpdb->get_row(
             $wpdb->prepare(
-                "SELECT * FROM {$this->trash_table_sql} WHERE trash_key = %s",
+                "SELECT * FROM {$this->trash_table_sql()} WHERE trash_key = %s",
                 $trash_key
             )
         );
@@ -1827,6 +2005,12 @@ class OPTISTATE_Trash_Manager
 
         switch ($type) {
             case "folder":
+                if (!$this->is_inside_trash_dir($target)) {
+                    $this->log_foreign_artifact($target, "permanently_delete");
+
+                    return true;
+                }
+
                 $fs = $this->fs();
 
                 if ($fs === null) {
@@ -1861,6 +2045,7 @@ class OPTISTATE_Trash_Manager
                 });
 
                 OPTISTATE_Utils::clear_table_existence_cache($target);
+                OPTISTATE_Utils::invalidate_table_cache();
 
                 return !OPTISTATE_Utils::table_exists($target);
 
@@ -1880,6 +2065,12 @@ class OPTISTATE_Trash_Manager
                 return true;
 
             default:
+                if (!$this->is_inside_trash_dir($target)) {
+                    $this->log_foreign_artifact($target, "permanently_delete");
+
+                    return true;
+                }
+
                 if (!@file_exists($target)) {
                     return true;
                 }
@@ -1921,9 +2112,11 @@ class OPTISTATE_Trash_Manager
         $params[] = $limit;
         $params[] = $offset;
 
-        $items = $wpdb->get_results(
+        $rows = $wpdb->get_results(
             $wpdb->prepare(
-                "SELECT * FROM {$this->trash_table_sql}
+                "SELECT trash_key, type, original_name, meta, size,
+                        deleted_at, expires_at
+                 FROM {$this->trash_table_sql()}
                  WHERE " .
                     implode(" AND ", $where) .
                     "
@@ -1934,39 +2127,49 @@ class OPTISTATE_Trash_Manager
             ARRAY_A
         );
 
-        if (!is_array($items)) {
+        if (!is_array($rows)) {
             return [];
         }
 
         $now = time();
+        $items = [];
 
-        foreach ($items as &$item) {
-            $meta = $this->decode_meta($item["meta"] ?? null);
+        foreach ($rows as $row) {
+            $meta = $this->decode_meta($row["meta"] ?? null);
+            $type = (string) $row["type"];
+            $original_name = (string) $row["original_name"];
+            $size = (int) $row["size"];
+            $deleted_at = (int) $row["deleted_at"];
 
-            $item["display_name"] = $item["original_name"];
-            $item["human_time"] = sprintf(
-                __("%s ago", "optistate"),
-                human_time_diff((int) $item["deleted_at"], $now)
-            );
-            $item["size_human"] = $item["size"]
-                ? size_format((int) $item["size"], 2)
-                : "0 B";
-
-            if ($item["type"] === "folder") {
-                $item["display_path"] =
-                    $meta["relative_path"] ?? $item["original_name"];
-            } elseif ($item["type"] === "table") {
-                $item["display_path"] =
-                    $meta["original_table"] ?? $item["original_name"];
-            } elseif ($item["type"] === "option") {
-                $item["display_path"] =
-                    $meta["original_option"] ?? $item["original_name"];
+            if ($type === "folder") {
+                $display_path = (string) ($meta["relative_path"] ??
+                    $original_name);
+            } elseif ($type === "table") {
+                $display_path = (string) ($meta["original_table"] ??
+                    $original_name);
+            } elseif ($type === "option") {
+                $display_path = (string) ($meta["original_option"] ??
+                    $original_name);
             } else {
-                $item["display_path"] = $item["original_name"];
+                $display_path = $original_name;
             }
-        }
 
-        unset($item);
+            $items[] = [
+                "trash_key" => (string) $row["trash_key"],
+                "type" => $type,
+                "original_name" => $original_name,
+                "display_name" => $original_name,
+                "display_path" => $display_path,
+                "size" => $size,
+                "size_human" => $size > 0 ? size_format($size, 2) : "0 B",
+                "deleted_at" => $deleted_at,
+                "expires_at" => (int) $row["expires_at"],
+                "human_time" => sprintf(
+                    __("%s ago", "optistate"),
+                    human_time_diff($deleted_at, $now)
+                ),
+            ];
+        }
 
         return $items;
     }
@@ -1974,7 +2177,7 @@ class OPTISTATE_Trash_Manager
     {
         global $wpdb;
 
-        if (!OPTISTATE_Utils::table_exists($this->trash_table)) {
+        if (!OPTISTATE_Utils::table_exists($this->trash_table())) {
             return 0;
         }
 
@@ -1987,7 +2190,7 @@ class OPTISTATE_Trash_Manager
         do {
             $rows = $wpdb->get_results(
                 $wpdb->prepare(
-                    "SELECT id, trash_key FROM {$this->trash_table_sql}
+                    "SELECT id, trash_key FROM {$this->trash_table_sql()}
                      WHERE id > %d AND expires_at > 0 AND expires_at < %d
                      ORDER BY id ASC
                      LIMIT %d",
@@ -2046,19 +2249,26 @@ class OPTISTATE_Trash_Manager
     {
         global $wpdb;
 
+        $empty = [
+            "deleted" => 0,
+            "failed" => 0,
+            "remaining" => 0,
+            "completed" => true,
+        ];
+
         if (!$this->table_ready()) {
-            return ["deleted" => 0, "remaining" => 0, "completed" => true];
+            return $empty;
         }
 
         wp_raise_memory_limit("admin");
         OPTISTATE_Utils::safe_set_time_limit(180);
 
         $total = (int) $wpdb->get_var(
-            "SELECT COUNT(*) FROM {$this->trash_table_sql}"
+            "SELECT COUNT(*) FROM {$this->trash_table_sql()}"
         );
 
         if ($total === 0) {
-            return ["deleted" => 0, "remaining" => 0, "completed" => true];
+            return $empty;
         }
 
         $max_execution = (int) ini_get("max_execution_time");
@@ -2073,11 +2283,12 @@ class OPTISTATE_Trash_Manager
         $last_id = 0;
         $deleted = 0;
         $failed = 0;
+        $stopped_early = false;
 
         do {
             $rows = $wpdb->get_results(
                 $wpdb->prepare(
-                    "SELECT id, trash_key FROM {$this->trash_table_sql}
+                    "SELECT id, trash_key FROM {$this->trash_table_sql()}
                      WHERE id > %d
                      ORDER BY id ASC
                      LIMIT %d",
@@ -2107,6 +2318,8 @@ class OPTISTATE_Trash_Manager
                 }
 
                 if (microtime(true) - $start_time >= $time_limit) {
+                    $stopped_early = true;
+
                     break 2;
                 }
             }
@@ -2114,7 +2327,7 @@ class OPTISTATE_Trash_Manager
             $batch_size = count($rows);
         } while ($batch_size === self::PURGE_BATCH);
         $remaining = (int) $wpdb->get_var(
-            "SELECT COUNT(*) FROM {$this->trash_table_sql}"
+            "SELECT COUNT(*) FROM {$this->trash_table_sql()}"
         );
 
         $log_message = sprintf(
@@ -2122,7 +2335,7 @@ class OPTISTATE_Trash_Manager
             number_format_i18n($deleted)
         );
 
-        if ($remaining > 0) {
+        if ($stopped_early && $remaining > 0) {
             $log_message .= sprintf(
                 __(" (partial - %s items remain)", "optistate"),
                 number_format_i18n($remaining)
@@ -2140,17 +2353,22 @@ class OPTISTATE_Trash_Manager
 
         return [
             "deleted" => $deleted,
+            "failed" => $failed,
             "remaining" => $remaining,
-            "completed" => $remaining === 0,
+            "completed" => !$stopped_early,
         ];
     }
 
-    public function ajax_delete_all_trash(): void
+    public function ajax_list_trash_items(): void
     {
-        if (
-            !isset($_SERVER["REQUEST_METHOD"]) ||
-            $_SERVER["REQUEST_METHOD"] !== "POST"
-        ) {
+        check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
+        $this->main_plugin->settings_manager->check_user_access();
+
+        OPTISTATE_Utils::send_json_success($this->list_trash_items());
+    }
+    public function ajax_restore_trash_item(): void
+    {
+        if (!$this->is_post_request()) {
             OPTISTATE_Utils::send_json_error(
                 __("Invalid request method.", "optistate"),
                 405
@@ -2162,7 +2380,117 @@ class OPTISTATE_Trash_Manager
         check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
         $this->main_plugin->settings_manager->check_user_access();
 
-        if (!OPTISTATE_Utils::check_rate_limit("delete_all_trash", 30)) {
+        $key = $this->read_trash_key();
+
+        if ($key === "") {
+            OPTISTATE_Utils::send_json_error(
+                __("Invalid trash item key.", "optistate")
+            );
+
+            return;
+        }
+
+        try {
+            if ($this->restore_from_trash($key)) {
+                OPTISTATE_Utils::send_json_success([
+                    "message" => __("Item restored successfully.", "optistate"),
+                ]);
+
+                return;
+            }
+
+            OPTISTATE_Utils::send_json_error(
+                __("Failed to restore item.", "optistate")
+            );
+        } catch (Throwable $e) {
+            OPTISTATE_Utils::log_critical_error("Restore from trash failed", [
+                "error" => $e->getMessage(),
+                "file" => $e->getFile(),
+                "line" => $e->getLine(),
+            ]);
+
+            OPTISTATE_Utils::send_json_error(
+                __(
+                    "An unexpected error occurred while restoring the item.",
+                    "optistate"
+                )
+            );
+        }
+    }
+    public function ajax_permanently_delete_trash_item(): void
+    {
+        if (!$this->is_post_request()) {
+            OPTISTATE_Utils::send_json_error(
+                __("Invalid request method.", "optistate"),
+                405
+            );
+
+            return;
+        }
+
+        check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
+        $this->main_plugin->settings_manager->check_user_access();
+
+        $key = $this->read_trash_key();
+
+        if ($key === "") {
+            OPTISTATE_Utils::send_json_error(
+                __("Invalid trash item key.", "optistate")
+            );
+
+            return;
+        }
+
+        try {
+            if ($this->permanently_delete($key)) {
+                OPTISTATE_Utils::send_json_success([
+                    "message" => __("Item permanently deleted.", "optistate"),
+                ]);
+
+                return;
+            }
+
+            OPTISTATE_Utils::send_json_error(
+                __("Failed to delete item permanently.", "optistate")
+            );
+        } catch (Throwable $e) {
+            OPTISTATE_Utils::log_critical_error(
+                "Permanent delete from trash failed",
+                [
+                    "error" => $e->getMessage(),
+                    "file" => $e->getFile(),
+                    "line" => $e->getLine(),
+                ]
+            );
+
+            OPTISTATE_Utils::send_json_error(
+                __(
+                    "An unexpected error occurred while deleting the item.",
+                    "optistate"
+                )
+            );
+        }
+    }
+    public function ajax_delete_all_trash(): void
+    {
+        if (!$this->is_post_request()) {
+            OPTISTATE_Utils::send_json_error(
+                __("Invalid request method.", "optistate"),
+                405
+            );
+
+            return;
+        }
+
+        check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
+        $this->main_plugin->settings_manager->check_user_access();
+
+        if (
+            !OPTISTATE_Utils::check_rate_limit(
+                "delete_all_trash",
+                self::DELETE_ALL_RATE_LIMIT
+            )
+        ) {
             OPTISTATE_Utils::send_json_error(
                 OPTISTATE_Utils::get_rate_limit_message(false),
                 429
@@ -2176,12 +2504,8 @@ class OPTISTATE_Trash_Manager
 
             $this->main_plugin->clear_stats_cache();
 
-            $message = $result["completed"]
-                ? sprintf(
-                    __("Deleted %s items from trash.", "optistate"),
-                    number_format_i18n($result["deleted"])
-                )
-                : sprintf(
+            if (!$result["completed"]) {
+                $message = sprintf(
                     __(
                         "Deleted %1\$s items (timeout protection - %2\$s items remain).<br>Run again to continue.",
                         "optistate"
@@ -2189,10 +2513,26 @@ class OPTISTATE_Trash_Manager
                     number_format_i18n($result["deleted"]),
                     number_format_i18n($result["remaining"])
                 );
+            } elseif ($result["failed"] > 0) {
+                $message = sprintf(
+                    __(
+                        "Deleted %1\$s items from trash. %2\$s items could not be removed and were left in place.",
+                        "optistate"
+                    ),
+                    number_format_i18n($result["deleted"]),
+                    number_format_i18n($result["failed"])
+                );
+            } else {
+                $message = sprintf(
+                    __("Deleted %s items from trash.", "optistate"),
+                    number_format_i18n($result["deleted"])
+                );
+            }
 
             OPTISTATE_Utils::send_json_success([
                 "message" => $message,
                 "deleted" => $result["deleted"],
+                "failed" => $result["failed"],
                 "remaining" => $result["remaining"],
                 "completed" => $result["completed"],
             ]);
