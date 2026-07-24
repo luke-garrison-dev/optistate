@@ -842,7 +842,7 @@ class OPTISTATE_Performance_Manager
     }
     public function register_custom_cron_schedules(array $schedules): array
     {
-        $slowed = get_transient("optistate_cron_slowed_schedules");
+       $slowed = get_transient("optistate_cron_slowed_schedules");
         if (!is_array($slowed)) {
             $slowed = [];
             $state = $this->_cron_manager_get_state();
@@ -1455,7 +1455,7 @@ class OPTISTATE_Performance_Manager
                 !(defined("DOING_AJAX") && DOING_AJAX) &&
                 !(defined("WP_CLI") && WP_CLI)
             ) {
-                $this->_performance_block_bad_bots_php();
+              $this->_performance_block_bad_bots_php();
             }
         }
     }
@@ -1952,7 +1952,7 @@ class OPTISTATE_Performance_Manager
         $ip_blocker_enabled = !empty($global_settings["ip_blocker_enabled"]);
         $whitelist = $global_settings["ip_whitelist"] ?? [];
         if ($ip_blocker_enabled && !empty($whitelist)) {
-            $client_ip = OPTISTATE_Utils::get_client_ip(
+                $client_ip = OPTISTATE_Utils::get_client_ip(
                 !empty($global_settings["cloudflare_enabled"]),
                 $global_settings["custom_trusted_proxies"] ?? []
             );
