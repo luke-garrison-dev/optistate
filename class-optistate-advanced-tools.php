@@ -469,6 +469,16 @@ class OPTISTATE_Advanced_Tools
         }
 
         try {
+            $user_id = get_current_user_id();
+            $session_tracker_key = "optistate_analyze_session_{$user_id}";
+            $prev_session_key = get_option($session_tracker_key);
+            if (
+                is_string($prev_session_key) &&
+                strpos($prev_session_key, "optistate_analyze_") === 0
+            ) {
+                delete_option($prev_session_key);
+            }
+
             $table_names = OPTISTATE_Utils::get_all_tables();
             if (empty($table_names)) {
                 OPTISTATE_Utils::send_json_error([
@@ -517,6 +527,7 @@ class OPTISTATE_Advanced_Tools
             ];
 
             update_option($transient_key, $state, "no");
+            update_option($session_tracker_key, $transient_key, "no");
 
             OPTISTATE_Utils::send_json_success([
                 "status" => "starting",
@@ -1316,6 +1327,9 @@ class OPTISTATE_Advanced_Tools
 
                     case "done":
                         delete_option($transient_key);
+                        delete_option(
+                            "optistate_analyze_session_" . get_current_user_id()
+                        );
                         $opt_count = isset($state["final_results"]["optimized"])
                             ? (int) $state["final_results"]["optimized"]
                             : 0;
@@ -1352,6 +1366,9 @@ class OPTISTATE_Advanced_Tools
                 }
             } catch (Throwable $e) {
                 delete_option($transient_key);
+                delete_option(
+                    "optistate_analyze_session_" . get_current_user_id()
+                );
                 $step = isset($state["current_step"])
                     ? $state["current_step"]
                     : "unknown";
@@ -1734,6 +1751,17 @@ class OPTISTATE_Advanced_Tools
         $values = [];
         $placeholders = [];
         $batch_count = 0;
+        static $use_row_alias = null;
+        if ($use_row_alias === null) {
+            $use_row_alias = version_compare(
+                OPTISTATE_Utils::get_mysql_version(),
+                '8.0.19',
+                '>='
+            );
+        }
+        $on_dup = $use_row_alias
+            ? ' AS _r ON DUPLICATE KEY UPDATE option_value = _r.option_value, autoload = _r.autoload'
+            : ' ON DUPLICATE KEY UPDATE option_value = VALUES(option_value), autoload = VALUES(autoload)';
 
         foreach ($backup as $option_name => $data) {
             if (!isset($data["value"], $data["autoload"])) {
@@ -1749,7 +1777,7 @@ class OPTISTATE_Advanced_Tools
                 $sql =
                     "INSERT INTO {$wpdb->options} (option_name, option_value, autoload) VALUES " .
                     implode(", ", $placeholders) .
-                    " ON DUPLICATE KEY UPDATE option_value = VALUES(option_value), autoload = VALUES(autoload)";
+                    $on_dup;
                 $result = $wpdb->query($wpdb->prepare($sql, ...$values));
                 if ($result === false) {
                     OPTISTATE_Utils::log_critical_error(
@@ -1769,7 +1797,7 @@ class OPTISTATE_Advanced_Tools
             $sql =
                 "INSERT INTO {$wpdb->options} (option_name, option_value, autoload) VALUES " .
                 implode(", ", $placeholders) .
-                " ON DUPLICATE KEY UPDATE option_value = VALUES(option_value), autoload = VALUES(autoload)";
+                $on_dup;
             $result = $wpdb->query($wpdb->prepare($sql, ...$values));
             if ($result === false) {
                 OPTISTATE_Utils::log_critical_error(
@@ -2331,7 +2359,7 @@ class OPTISTATE_Advanced_Tools
                                 if (isset($targets[$lower_table])) {
                                     $suggested_indexes = $targets[$lower_table];
                                     $table_columns = $wpdb->get_col(
-                                        "SHOW COLUMNS FROM `$table`"
+                                        "SHOW COLUMNS FROM " . OPTISTATE_Utils::escape_identifier($table)
                                     );
                                     $table_columns_map = array_flip(
                                         $table_columns
@@ -2947,6 +2975,9 @@ class OPTISTATE_Advanced_Tools
 
             $count_subqueries = [];
             foreach ($rules as $type => $rule) {
+                if (!self::is_valid_integrity_rule($rule)) {
+                    continue;
+                }
                 $child_table = $wpdb->prefix . $rule["child_table"];
                 if (!OPTISTATE_Utils::table_exists($child_table)) {
                     continue;
@@ -2994,6 +3025,9 @@ class OPTISTATE_Advanced_Tools
             }
 
             foreach ($rules as $type => $rule) {
+                if (!self::is_valid_integrity_rule($rule)) {
+                    continue;
+                }
                 if (microtime(true) - $start_time > $max_exec) {
                     $results[] = [
                         "type" => "timeout",
@@ -3061,6 +3095,9 @@ class OPTISTATE_Advanced_Tools
         global $wpdb;
 
         foreach ($rules as $type => $rule) {
+            if (!self::is_valid_integrity_rule($rule)) {
+                continue;
+            }
             if (microtime(true) - $start_time > $max_exec) {
                 $results[] = [
                     "type" => "timeout",
@@ -3302,14 +3339,16 @@ class OPTISTATE_Advanced_Tools
         if (!$escaped_table) {
             return false;
         }
+        static $column_cache = [];
+        $cache_key = strtolower($table_name);
+        if (!isset($column_cache[$cache_key])) {
+            $raw = $wpdb->get_col("SHOW COLUMNS FROM $escaped_table");
+            $column_cache[$cache_key] = $raw
+                ? array_map('strtolower', $raw)
+                : [];
+        }
 
-        $results = $wpdb->get_results(
-            $wpdb->prepare(
-                "SHOW COLUMNS FROM {$escaped_table} WHERE Field = %s",
-                $clean_column
-            )
-        );
-        return !empty($results);
+        return in_array(strtolower($clean_column), $column_cache[$cache_key], true);
     }
 
     private function check_disk_space_for_index(string $table_name): array
@@ -3431,6 +3470,15 @@ class OPTISTATE_Advanced_Tools
 
         return false;
     }
+    private static function is_valid_integrity_rule(array $rule): bool
+    {
+        $id_re = '/^[a-zA-Z0-9_]+$/';
+        return preg_match($id_re, $rule['child_table'] ?? '') === 1
+            && preg_match($id_re, $rule['parent_table'] ?? '') === 1
+            && preg_match($id_re, $rule['child_key'] ?? '') === 1
+            && preg_match($id_re, $rule['parent_key'] ?? '') === 1
+            && preg_match($id_re, $rule['context_col'] ?? '') === 1;
+    }
 
     private static function get_integrity_rules(): array
     {
@@ -3493,7 +3541,7 @@ class OPTISTATE_Advanced_Tools
                 "pk" => false,
             ],
             "child_posts" => [
-                "label" => __("Orphaned Revisions (No Parent)", "optistate"),
+                "label" => __("Orphaned Post Children & Revisions (No Parent)", "optistate"),
                 "child_table" => "posts",
                 "child_key" => "post_parent",
                 "parent_table" => "posts",
@@ -3870,6 +3918,7 @@ class OPTISTATE_Advanced_Tools
                         $table_data[] = [
                             "TABLE_NAME" => $table_name,
                             "ENGINE" => $status["ENGINE"] ?? "",
+                            "TABLE_TYPE" => $status["TABLE_TYPE"] ?? "BASE TABLE",
                             "TABLE_ROWS" => $status["TABLE_ROWS"] ?? 0,
                             "DATA_LENGTH" => $status["DATA_LENGTH"] ?? 0,
                             "INDEX_LENGTH" => $status["INDEX_LENGTH"] ?? 0,
