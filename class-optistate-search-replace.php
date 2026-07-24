@@ -9,11 +9,12 @@ class OPTISTATE_Search_Replace
     private ?array $protected_options_cache = null;
     private ?array $deferred_options_cache = null;
     private ?array $options_exclude_cache = null;
+    private ?array $scannable_tables_cache = null;
     private array $pattern_cache = [];
     private int $last_replace_count = 0;
     private const REGEX_BOUNDARY_FMT = "/(?<![\p{L}\p{N}_\-'])%s(?![\p{L}\p{N}_\-'])/%s";
     private const REGEX_BOUNDARY_ASCII_FMT = "/(?<![A-Za-z0-9_\\-'])%s(?![A-Za-z0-9_\\-'])/%s";
-    private const PREVIEW_MAX_BYTES = 524288;
+    private const PREVIEW_MAX_BYTES = 262144;
     private const PREVIEW_MAX_ROWS = 500;
     private const PREVIEW_MAX_VALUES_PER_CELL = 200;
     private const PREVIEW_MAX_SNIPPETS_PER_CELL = 10;
@@ -875,16 +876,69 @@ class OPTISTATE_Search_Replace
         return $results;
     }
 
+    public function get_selectable_tables(): array
+    {
+        return $this->resolve_tables(["all"]);
+    }
+
+    private function get_scannable_tables(): array
+    {
+        if ($this->scannable_tables_cache !== null) {
+            return $this->scannable_tables_cache;
+        }
+        global $wpdb;
+        $all_tables = OPTISTATE_Utils::get_all_tables();
+        if (!is_array($all_tables) || empty($all_tables)) {
+            $this->scannable_tables_cache = [];
+            return $this->scannable_tables_cache;
+        }
+        $core_tables = array_values($wpdb->tables("all"));
+        $prefix = (string) $wpdb->prefix;
+        $prefix_len = strlen($prefix);
+        $base_prefix = (string) $wpdb->base_prefix;
+        $other_blog_pattern = "";
+        if (is_multisite() && $base_prefix !== "" && $prefix === $base_prefix) {
+            $other_blog_pattern =
+                "/^" . preg_quote($base_prefix, "/") . "\\d+_/";
+        }
+        $owned = [];
+        foreach ($all_tables as $table) {
+            $table = (string) $table;
+            if (in_array($table, $core_tables, true)) {
+                $owned[] = $table;
+                continue;
+            }
+            if ($prefix_len === 0 || strncmp($table, $prefix, $prefix_len) !== 0) {
+                continue;
+            }
+            if (
+                $other_blog_pattern !== "" &&
+                preg_match($other_blog_pattern, $table)
+            ) {
+                continue;
+            }
+            $owned[] = $table;
+        }
+        $owned = apply_filters(
+            "optistate_sr_scannable_tables",
+            array_values(array_unique($owned))
+        );
+        $this->scannable_tables_cache = is_array($owned)
+            ? array_values(array_unique(array_map("strval", $owned)))
+            : [];
+        return $this->scannable_tables_cache;
+    }
+
     private function resolve_tables(array $tables_input): array
     {
-        $valid_db_tables = OPTISTATE_Utils::get_all_tables();
-        if (!is_array($valid_db_tables) || empty($valid_db_tables)) {
+        $scannable = $this->get_scannable_tables();
+        if (empty($scannable)) {
             return [];
         }
         if (empty($tables_input) || in_array("all", $tables_input, true)) {
-            $tables = $valid_db_tables;
+            $tables = $scannable;
         } else {
-            $tables = array_intersect($tables_input, $valid_db_tables);
+            $tables = array_intersect($tables_input, $scannable);
         }
         $protected = array_merge(
             OPTISTATE_Utils::get_all_excluded_tables(),
@@ -1009,29 +1063,33 @@ class OPTISTATE_Search_Replace
         return array_values(array_diff($text_cols, $immutable));
     }
 
-    private static function is_transactional_engine(string $table): bool
+    private static function get_table_meta(string $table): array
     {
         global $wpdb;
         static $request_cache = [];
         if (isset($request_cache[$table])) {
             return $request_cache[$table];
         }
-        $cache_key = "engine_" . $table;
+        $cache_key = "meta_" . $table;
         $cached = wp_cache_get($cache_key, "optistate_sr");
-        if ($cached !== false) {
-            $request_cache[$table] = (bool) $cached;
-            return $request_cache[$table];
+        if (
+            is_array($cached) &&
+            isset($cached["transactional"], $cached["base_table"])
+        ) {
+            $request_cache[$table] = $cached;
+            return $cached;
         }
-        $engine = $wpdb->get_var(
+        $row = $wpdb->get_row(
             $wpdb->prepare(
-                "SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s",
+                "SELECT ENGINE, TABLE_TYPE FROM information_schema.TABLES WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s",
                 DB_NAME,
                 $table
-            )
+            ),
+            ARRAY_A
         );
-        if ($engine === null) {
+        if (!is_array($row)) {
             OPTISTATE_Utils::log_critical_error(
-                "is_transactional_engine: ENGINE query returned NULL for table; " .
+                "get_table_meta: information_schema returned no row for table; " .
                     "table will be skipped this request",
                 [
                     "table" => $table,
@@ -1041,18 +1099,23 @@ class OPTISTATE_Search_Replace
                             : "no row in information_schema.TABLES",
                 ]
             );
-            wp_cache_set($cache_key, 0, "optistate_sr", 60);
-            $request_cache[$table] = false;
-            return false;
+            $meta = ["transactional" => false, "base_table" => false];
+            wp_cache_set($cache_key, $meta, "optistate_sr", 60);
+            $request_cache[$table] = $meta;
+            return $meta;
         }
-        $ok = in_array(
-            strtoupper((string) $engine),
-            self::TRANSACTIONAL_ENGINES,
-            true
-        );
-        wp_cache_set($cache_key, $ok ? 1 : 0, "optistate_sr", HOUR_IN_SECONDS);
-        $request_cache[$table] = $ok;
-        return $ok;
+        $meta = [
+            "transactional" => in_array(
+                strtoupper((string) ($row["ENGINE"] ?? "")),
+                self::TRANSACTIONAL_ENGINES,
+                true
+            ),
+            "base_table" =>
+                strtoupper((string) ($row["TABLE_TYPE"] ?? "")) === "BASE TABLE",
+        ];
+        wp_cache_set($cache_key, $meta, "optistate_sr", HOUR_IN_SECONDS);
+        $request_cache[$table] = $meta;
+        return $meta;
     }
 
     private function get_table_columns_info(string $table): array
@@ -1078,10 +1141,11 @@ class OPTISTATE_Search_Replace
                             : "SHOW COLUMNS returned no rows",
                 ]
             );
-            return ["pk" => [], "text_cols" => []];
+            return ["pk" => [], "text_cols" => [], "limits" => []];
         }
         $pk_columns = [];
         $text_cols = [];
+        $limits = [];
         foreach ($columns as $col) {
             $field = (string) ($col["Field"] ?? "");
             $type = (string) ($col["Type"] ?? "");
@@ -1099,11 +1163,48 @@ class OPTISTATE_Search_Replace
             }
             if (preg_match("/char|text|blob/i", $type)) {
                 $text_cols[] = $field;
+                $limit = self::parse_column_limit($type);
+                if ($limit !== null) {
+                    $limits[$field] = $limit;
+                }
             }
         }
-        $info = ["pk" => $pk_columns, "text_cols" => $text_cols];
+        $info = [
+            "pk" => $pk_columns,
+            "text_cols" => $text_cols,
+            "limits" => $limits,
+        ];
         wp_cache_set($cache_key, $info, "optistate_sr", HOUR_IN_SECONDS);
         return $info;
+    }
+
+    private static function parse_column_limit(string $type): ?array
+    {
+        if (preg_match('/^\s*(?:var)?char\s*\(\s*(\d+)\s*\)/i', $type, $matches)) {
+            return ["type" => "char", "length" => (int) $matches[1]];
+        }
+        $byte_lengths = [
+            "tinytext" => 255,
+            "text" => 65535,
+            "mediumtext" => 16777215,
+            "longtext" => 4294967295,
+        ];
+        $base = strtolower(trim((string) preg_replace('/[\s(].*$/', "", $type)));
+        if (isset($byte_lengths[$base])) {
+            return ["type" => "byte", "length" => $byte_lengths[$base]];
+        }
+        return null;
+    }
+
+    private static function value_fits_column(string $value, ?array $limit): bool
+    {
+        if ($limit === null) {
+            return true;
+        }
+        if ($limit["type"] === "byte") {
+            return strlen($value) <= $limit["length"];
+        }
+        return mb_strlen($value) <= $limit["length"];
     }
 
     private function acquire_or_verify_lock(
@@ -1307,7 +1408,7 @@ class OPTISTATE_Search_Replace
             OPTISTATE_Utils::send_json_error(
                 sprintf(
                     __(
-                        "Search term is too long. Maximum length is %d characters.",
+                        "Search term is too long. Maximum length is %d bytes.",
                         "optistate"
                     ),
                     self::MAX_SEARCH_LEN
@@ -1330,11 +1431,21 @@ class OPTISTATE_Search_Replace
             return;
         }
         $state = get_transient($transient_key);
-        if (
-            $reset ||
-            !is_array($state) ||
-            !isset($state["tables"], $state["search"], $state["current_idx"])
-        ) {
+        $has_state =
+            is_array($state) &&
+            isset($state["tables"], $state["search"], $state["current_idx"]);
+        if (!$reset && !$has_state) {
+            delete_transient($lock_key);
+            OPTISTATE_Utils::send_json_error(
+                __(
+                    "The scan state expired or could not be stored. Please run the dry run again.",
+                    "optistate"
+                ),
+                409
+            );
+            return;
+        }
+        if (!$has_state) {
             $state = [
                 "search" => $search,
                 "tables" => $this->resolve_tables($tables_input),
@@ -1392,7 +1503,12 @@ class OPTISTATE_Search_Replace
                 $state["current_idx"]++;
                 continue;
             }
-            if (!self::is_transactional_engine($table)) {
+            $table_meta = self::get_table_meta($table);
+            if (!$table_meta["base_table"]) {
+                $state["current_idx"]++;
+                continue;
+            }
+            if (!$table_meta["transactional"]) {
                 $state["skipped_non_transactional"][] = $table;
                 $state["current_idx"]++;
                 continue;
@@ -1694,7 +1810,7 @@ class OPTISTATE_Search_Replace
             OPTISTATE_Utils::send_json_error(
                 sprintf(
                     __(
-                        "Search term is too long. Maximum length is %d characters.",
+                        "Search term is too long. Maximum length is %d bytes.",
                         "optistate"
                     ),
                     self::MAX_SEARCH_LEN
@@ -1706,7 +1822,7 @@ class OPTISTATE_Search_Replace
             OPTISTATE_Utils::send_json_error(
                 sprintf(
                     __(
-                        "Replacement value is too long. Maximum length is %d characters.",
+                        "Replacement value is too long. Maximum length is %d bytes.",
                         "optistate"
                     ),
                     self::MAX_REPLACE_LEN
@@ -1729,16 +1845,26 @@ class OPTISTATE_Search_Replace
             return;
         }
         $state = get_transient($transient_key);
-        if (
-            $reset ||
-            !is_array($state) ||
-            !isset(
+        $has_state =
+            is_array($state) &&
+            isset(
                 $state["tables"],
                 $state["search"],
                 $state["replace"],
                 $state["current_idx"]
-            )
-        ) {
+            );
+        if (!$reset && !$has_state) {
+            delete_transient($lock_key);
+            OPTISTATE_Utils::send_json_error(
+                __(
+                    "The replacement state expired or could not be stored. No further changes were made; please re-run the dry run before retrying.",
+                    "optistate"
+                ),
+                409
+            );
+            return;
+        }
+        if (!$has_state) {
             $state = [
                 "search" => $search,
                 "replace" => $replace,
@@ -1795,7 +1921,23 @@ class OPTISTATE_Search_Replace
                 $state["last_pk"] = null;
                 continue;
             }
-            if (!self::is_transactional_engine($table)) {
+            $table_meta = self::get_table_meta($table);
+            if (!$table_meta["base_table"]) {
+                self::add_state_error(
+                    $state,
+                    sprintf(
+                        __(
+                            "Skipped %s: not a base table (views cannot be rewritten safely).",
+                            "optistate"
+                        ),
+                        $table
+                    )
+                );
+                $state["current_idx"]++;
+                $state["last_pk"] = null;
+                continue;
+            }
+            if (!$table_meta["transactional"]) {
                 self::add_state_error(
                     $state,
                     sprintf(
@@ -1942,6 +2084,7 @@ class OPTISTATE_Search_Replace
         string $lock_key
     ): string {
         global $wpdb;
+        $col_limits = $this->get_table_columns_info($table)["limits"] ?? [];
         $primary_key_q = OPTISTATE_Utils::escape_identifier($primary_key);
         $table_q = OPTISTATE_Utils::escape_identifier($table);
         $like_value = "%" . $wpdb->esc_like($search) . "%";
@@ -2123,6 +2266,26 @@ class OPTISTATE_Search_Replace
                         $partial_match
                     );
                     if (!is_string($modified) || $modified === $original) {
+                        continue;
+                    }
+                    if (
+                        !self::value_fits_column(
+                            $modified,
+                            $col_limits[$col] ?? null
+                        )
+                    ) {
+                        self::add_state_error(
+                            $state,
+                            sprintf(
+                                __(
+                                    "Skipped %1\$s.%2\$s (ID: %3\$s): the replacement would exceed the column size and would be silently truncated.",
+                                    "optistate"
+                                ),
+                                $table,
+                                $col,
+                                (string) $pk_val
+                            )
+                        );
                         continue;
                     }
                     $state["occurrences_replaced"] += $this->last_replace_count;
@@ -2393,15 +2556,43 @@ class OPTISTATE_Search_Replace
             return true;
         }
         foreach ($urls as $option => $value) {
-            if (
-                !is_string($value) ||
-                $value === "" ||
-                !wp_http_validate_url($value)
-            ) {
+            if (!is_string($value) || !self::is_valid_site_url($value)) {
                 OPTISTATE_Utils::log_critical_error(
                     "siteurl/home would become invalid after replacement",
                     ["error" => sprintf("option=%s failed URL validation", $option)]
                 );
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static function is_valid_site_url(string $url): bool
+    {
+        if ($url === "" || strlen($url) > 2000) {
+            return false;
+        }
+        if (preg_match('/[\x00-\x20\x7F<>"\'\\\\]/', $url)) {
+            return false;
+        }
+        $parts = wp_parse_url($url);
+        if (!is_array($parts) || empty($parts["scheme"]) || empty($parts["host"])) {
+            return false;
+        }
+        $scheme = strtolower((string) $parts["scheme"]);
+        if ($scheme !== "http" && $scheme !== "https") {
+            return false;
+        }
+        if (isset($parts["user"]) || isset($parts["pass"])) {
+            return false;
+        }
+        $host = (string) $parts["host"];
+        if (strpbrk($host, "#?[]@") !== false || trim($host, ".") === "") {
+            return false;
+        }
+        if (isset($parts["port"])) {
+            $port = (int) $parts["port"];
+            if ($port < 1 || $port > 65535) {
                 return false;
             }
         }

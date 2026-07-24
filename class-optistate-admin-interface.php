@@ -717,7 +717,7 @@ $display_style = $has_backup ? "" : "display:none;";
  ); ?></label> <input type="text" id="optistate-sr-search" class="sr-search-2" placeholder="e.g. http://old-domain.com" maxlength="600"> </div> <div class="optistate-sr-input-group"> <label for="optistate-sr-replace" class="sr-search"><?php esc_html_e(
     "Replace With:",
     "optistate"
-); ?></label> <input type="text" id="optistate-sr-replace" class="sr-search-2" placeholder="e.g. https://new-domain.com" maxlength="600"> </div> </div> <div class="os-mt-15"> <label class="os-cursor-pointer"><input type="checkbox" id="optistate-sr-case-sensitive" class="os-mr-4"><span class="os-font-weight-600">🔎 <?php esc_html_e(
+); ?></label> <input type="text" id="optistate-sr-replace" class="sr-search-2" placeholder="e.g. https://new-domain.com" maxlength="4096"> </div> </div> <div class="os-mt-15"> <label class="os-cursor-pointer"><input type="checkbox" id="optistate-sr-case-sensitive" class="os-mr-4"><span class="os-font-weight-600">🔎 <?php esc_html_e(
     "Case Sensitive",
     "optistate"
 ); ?></span></label> <p class="description os-sr-desc-indent"><?php esc_html_e(
@@ -739,13 +739,12 @@ $display_style = $has_backup ? "" : "display:none;";
     "-- All Tables --",
     "optistate"
 ); ?></option> <?php
-global $wpdb;
-$tables = $wpdb->get_col("SHOW TABLES");
-foreach ($tables as $table) {
+$sr_tables = $plugin->search_replace_engine->get_selectable_tables();
+foreach ($sr_tables as $sr_table) {
     echo '<option value="' .
-        esc_attr($table) .
+        esc_attr($sr_table) .
         '">' .
-        esc_html($table) .
+        esc_html($sr_table) .
         "</option>";
 }
 ?> </select> <p class="description"><?php esc_html_e(
