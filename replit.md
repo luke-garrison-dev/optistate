@@ -35,4 +35,6 @@ To develop/test:
 3. Activate from the WordPress admin panel
 
 ## User Preferences
-- Goal: Auditing and improving the plugin code
+- Goal: Enterprise-grade improvements to the plugin — targeted, high-quality changes to security, reliability, and performance
+- Keep the existing PHP structure and class layout; do not restructure or rename files unnecessarily
+- Prefer targeted, well-reasoned edits over sweeping rewrites
