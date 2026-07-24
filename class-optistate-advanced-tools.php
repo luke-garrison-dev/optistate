@@ -12,12 +12,17 @@ class OPTISTATE_Advanced_Tools
     private const BATCH_SIZE_FETCH_STANDARD = 1000;
     private const BATCH_SIZE_FETCH_CLI = 2000;
     private const BATCH_SIZE_UPDATE = 100;
-
+    private const MAX_DETAIL_ROWS = 200;
+    private const ABANDONED_THRESHOLD = 30 * DAY_IN_SECONDS;
+    private const ANALYZE_STATE_TTL = HOUR_IN_SECONDS;
+    private const ANALYZE_KEY_PREFIX = "optistate_analyze_";
     private OPTISTATE $main_plugin;
     private OPTISTATE_Process_Store $process_store;
-    private $plugin_prefix_map = null;
+    private ?array $plugin_prefix_map = null;
+    private ?array $base_table_map = null;
     private static $essential_regex = null;
     private static $plugin_map_cache_for_deletion = null;
+    private static array $released_db_locks = [];
     private static array $protected_options = [
         "jetpack_options",
         "wpseo",
@@ -32,41 +37,145 @@ class OPTISTATE_Advanced_Tools
         "fluent_form",
         "ninja_forms",
     ];
-
     private static function compile_patterns(): void
     {
         if (self::$essential_regex !== null) {
             return;
         }
-        $patterns = [
-            '/^active_plugins$/',
-            '/^template$/',
-            '/^stylesheet$/',
-            '/^siteurl$/',
-            '/^home$/',
-            '/^rewrite_rules$/',
-            '/^cron$/',
-            '/^wp_user_roles$/',
-            '/^blogname$/',
-            '/^admin_email$/',
-            '/^permalink_structure$/',
-            '/^show_on_front$/',
-            '/^page_on_front$/',
-            '/^page_for_posts$/',
-            "/^theme_mods_/",
-            "/^widget_/",
-            "/^sidebars_widgets/",
+
+        $essential_parts = [
+            'active_plugins$',
+            'template$',
+            'stylesheet$',
+            'siteurl$',
+            'home$',
+            'rewrite_rules$',
+            'cron$',
+            'wp_user_roles$',
+            'blogname$',
+            'admin_email$',
+            'permalink_structure$',
+            'show_on_front$',
+            'page_on_front$',
+            'page_for_posts$',
+            'theme_mods_',
+            'widget_',
+            'sidebars_widgets',
         ];
-        $essential_parts = [];
-        foreach ($patterns as $pattern) {
-            $essential_parts[] = preg_replace(
-                '~^/\^?|/[a-zA-Z]*$~',
-                "",
-                $pattern
-            );
-        }
+
         self::$essential_regex =
             "/^(?:" . implode("|", $essential_parts) . ")/";
+    }
+    private static function autoload_on_values(): array
+    {
+        static $values = null;
+
+        if ($values !== null) {
+            return $values;
+        }
+
+        if (function_exists("wp_autoload_values_to_autoload")) {
+            $values = array_values(
+                array_filter(
+                    (array) wp_autoload_values_to_autoload(),
+                    static function ($value) {
+                        return is_string($value) && $value !== "";
+                    }
+                )
+            );
+        } else {
+            $values = [];
+        }
+
+        if (empty($values)) {
+            $values = ["yes"];
+        }
+
+        return $values;
+    }
+    private static function autoload_off_value(): string
+    {
+        return function_exists("wp_autoload_values_to_autoload") ? "off" : "no";
+    }
+    private static function require_post(): bool
+    {
+        if (
+            (isset($_SERVER["REQUEST_METHOD"])
+                ? strtoupper((string) $_SERVER["REQUEST_METHOD"])
+                : "") !== "POST"
+        ) {
+            OPTISTATE_Utils::send_json_error(
+                ["message" => __("Invalid request method.", "optistate")],
+                405
+            );
+
+            return false;
+        }
+
+        return true;
+    }
+    private function get_base_table_map(): array
+    {
+        if ($this->base_table_map !== null) {
+            return $this->base_table_map;
+        }
+
+        global $wpdb;
+
+        $this->base_table_map = [];
+
+        $suppress = $wpdb->suppress_errors(true);
+        $rows = $wpdb->get_results("SHOW FULL TABLES", ARRAY_N);
+        $wpdb->suppress_errors($suppress);
+
+        if (is_array($rows) && !empty($rows)) {
+            foreach ($rows as $row) {
+                if (!isset($row[0])) {
+                    continue;
+                }
+                $type = isset($row[1]) ? strtoupper((string) $row[1]) : "BASE TABLE";
+                if ($type === "VIEW") {
+                    continue;
+                }
+                $this->base_table_map[(string) $row[0]] = true;
+            }
+
+            return $this->base_table_map;
+        }
+        foreach (OPTISTATE_Utils::get_all_tables() as $table_name) {
+            $this->base_table_map[$table_name] = true;
+        }
+
+        return $this->base_table_map;
+    }
+    private function get_base_tables(): array
+    {
+        return array_keys($this->get_base_table_map());
+    }
+    private static function invalidate_analysis_caches(): void
+    {
+        delete_transient("optistate_table_analysis_" . md5(DB_NAME));
+        delete_transient("optistate_index_analysis_" . md5(DB_NAME));
+    }
+    private static function release_db_lock(string $lock_name): void
+    {
+        if (isset(self::$released_db_locks[$lock_name])) {
+            return;
+        }
+
+        self::$released_db_locks[$lock_name] = true;
+
+        global $wpdb;
+
+        try {
+            $wpdb->query(
+                $wpdb->prepare("SELECT RELEASE_LOCK(%s)", $lock_name)
+            );
+        } catch (\Throwable $e) {
+            OPTISTATE_Utils::log_critical_error(
+                "Failed to release lock '{$lock_name}': " . $e->getMessage()
+            );
+        }
     }
 
     public function __construct(
@@ -152,7 +261,7 @@ class OPTISTATE_Advanced_Tools
 
         try {
             $cache_key = "optistate_table_analysis_" . md5(DB_NAME);
-            $cached_analysis = wp_cache_get($cache_key, "optistate");
+            $cached_analysis = get_transient($cache_key);
             if (is_array($cached_analysis)) {
                 OPTISTATE_Utils::send_json_success($cached_analysis);
                 return;
@@ -272,6 +381,15 @@ class OPTISTATE_Advanced_Tools
             $now = time();
             $this->build_plugin_prefix_map();
 
+            $optistate_processes_table = $wpdb->prefix . "optistate_processes";
+            $optistate_metadata_table = $wpdb->prefix . "optistate_backup_metadata";
+            $optistate_login_table =
+                $wpdb->prefix . OPTISTATE_Login_Protection::TABLE_NAME;
+            $optistate_core_table = $wpdb->prefix . "optistate_core_data";
+            $optistate_trash_table = $wpdb->prefix . "optistate_trash";
+            $trash_table_prefix = $wpdb->prefix . "trash_";
+            $unknown_label = __("Unknown", "optistate");
+
             foreach ($tables as $table_name) {
                 $status = OPTISTATE_Utils::get_table_status($table_name);
                 if (!$status) {
@@ -281,18 +399,14 @@ class OPTISTATE_Advanced_Tools
                 $is_core = OPTISTATE_Utils::is_core_table($table_name);
 
                 $is_optistate_processes =
-                    $table_name === $wpdb->prefix . "optistate_processes";
+                    $table_name === $optistate_processes_table;
                 $is_optistate_metadata =
-                    $table_name === $wpdb->prefix . "optistate_backup_metadata";
-                $is_optistate_login =
-                    $table_name ===
-                    $wpdb->prefix . OPTISTATE_Login_Protection::TABLE_NAME;
-                $is_optistate_core =
-                    $table_name === $wpdb->prefix . "optistate_core_data";
-                $is_optistate_trash =
-                    $table_name === $wpdb->prefix . "optistate_trash";
+                    $table_name === $optistate_metadata_table;
+                $is_optistate_login = $table_name === $optistate_login_table;
+                $is_optistate_core = $table_name === $optistate_core_table;
+                $is_optistate_trash = $table_name === $optistate_trash_table;
                 $is_trash_table =
-                    strpos($table_name, $wpdb->prefix . "trash_") === 0;
+                    strpos($table_name, $trash_table_prefix) === 0;
 
                 $is_optistate =
                     $is_optistate_processes ||
@@ -355,14 +469,13 @@ class OPTISTATE_Advanced_Tools
 
                 $updated_local_formatted = isset($status["UPDATE_TIME"])
                     ? mysql2date($date_format, $status["UPDATE_TIME"], true)
-                    : __("Unknown", "optistate");
+                    : $unknown_label;
                 $created_local_formatted = isset($status["CREATE_TIME"])
                     ? mysql2date($date_format, $status["CREATE_TIME"], true)
-                    : __("Unknown", "optistate");
+                    : $unknown_label;
 
                 $is_abandoned = false;
                 $abandoned_text = "";
-                $abandoned_threshold = 2592000;
 
                 if (
                     !($is_core || $is_optistate) &&
@@ -371,7 +484,7 @@ class OPTISTATE_Advanced_Tools
                     $update_ts = strtotime($status["UPDATE_TIME"]);
                     if (
                         $update_ts &&
-                        $now - $update_ts > $abandoned_threshold
+                        $now - $update_ts > self::ABANDONED_THRESHOLD
                     ) {
                         $is_abandoned = true;
                         $abandoned_text = __(
@@ -445,7 +558,7 @@ class OPTISTATE_Advanced_Tools
                 $analysis["totals"]["total_tables"]++;
             }
 
-            wp_cache_set($cache_key, $analysis, "optistate", 300);
+            set_transient($cache_key, $analysis, 5 * MINUTE_IN_SECONDS);
             OPTISTATE_Utils::send_json_success($analysis);
         } catch (Throwable $e) {
             OPTISTATE_Utils::log_critical_error(
@@ -466,6 +579,10 @@ class OPTISTATE_Advanced_Tools
         check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
         $this->main_plugin->settings_manager->check_user_access();
 
+        if (!self::require_post()) {
+            return;
+        }
+
         if (!OPTISTATE_Utils::check_rate_limit("heavy_op", 20)) {
             OPTISTATE_Utils::send_json_error(
                 [
@@ -477,17 +594,17 @@ class OPTISTATE_Advanced_Tools
         }
 
         try {
-            $user_id = get_current_user_id();
-            $session_tracker_key = "optistate_analyze_session_{$user_id}";
-            $prev_session_key = get_option($session_tracker_key);
+            $this->process_store->ensure_table_exists();
+
+            $session_tracker_key = $this->get_analyze_session_key();
+            $prev_session_key = $this->process_store->get($session_tracker_key);
             if (
                 is_string($prev_session_key) &&
-                strpos($prev_session_key, "optistate_analyze_") === 0
+                self::is_valid_analyze_key($prev_session_key)
             ) {
-                delete_option($prev_session_key);
+                $this->process_store->delete($prev_session_key);
             }
-
-            $table_names = OPTISTATE_Utils::get_all_tables();
+            $table_names = $this->get_base_tables();
             if (empty($table_names)) {
                 OPTISTATE_Utils::send_json_error([
                     "message" => __(
@@ -514,7 +631,7 @@ class OPTISTATE_Advanced_Tools
                 $unique_hash = md5(uniqid(wp_rand(), true));
             }
 
-            $transient_key = "optistate_analyze_" . $unique_hash;
+            $transient_key = self::ANALYZE_KEY_PREFIX . $unique_hash;
             $state = [
                 "current_step" => "check",
                 "tables_to_check" => $valid_table_names,
@@ -535,8 +652,22 @@ class OPTISTATE_Advanced_Tools
                 "total_to_optimize" => 0,
             ];
 
-            update_option($transient_key, $state, "no");
-            update_option($session_tracker_key, $transient_key, "no");
+            if (
+                !$this->save_analyze_state($transient_key, $state) ||
+                !$this->process_store->set(
+                    $session_tracker_key,
+                    $transient_key,
+                    self::ANALYZE_STATE_TTL
+                )
+            ) {
+                OPTISTATE_Utils::send_json_error([
+                    "message" => __(
+                        "Could not create the analysis session. Please try again.",
+                        "optistate"
+                    ),
+                ]);
+                return;
+            }
 
             OPTISTATE_Utils::send_json_success([
                 "status" => "starting",
@@ -561,6 +692,10 @@ class OPTISTATE_Advanced_Tools
         check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
         $this->main_plugin->settings_manager->check_user_access();
 
+        if (!self::require_post()) {
+            return;
+        }
+
         $original_time_limit = (int) ini_get("max_execution_time");
         $disable_functions = ini_get("disable_functions");
         $is_disabled =
@@ -581,10 +716,7 @@ class OPTISTATE_Advanced_Tools
             $transient_key = isset($_POST["transient_key"])
                 ? sanitize_text_field(wp_unslash($_POST["transient_key"]))
                 : "";
-            if (
-                empty($transient_key) ||
-                strpos($transient_key, "optistate_analyze_") !== 0
-            ) {
+            if (!self::is_valid_analyze_key($transient_key)) {
                 OPTISTATE_Utils::send_json_error([
                     "message" => __(
                         "Invalid or missing session key.",
@@ -594,8 +726,8 @@ class OPTISTATE_Advanced_Tools
                 return;
             }
 
-            $state = get_option($transient_key);
-            if ($state === false) {
+            $state = $this->load_analyze_state($transient_key);
+            if ($state === null) {
                 OPTISTATE_Utils::send_json_error([
                     "message" => __(
                         "Session expired. Please start over.",
@@ -621,14 +753,24 @@ class OPTISTATE_Advanced_Tools
             }
 
             $this->register_lock_release_on_shutdown($lock_name);
-            $state = get_option($transient_key);
-            if ($state === false) {
-                $wpdb->query(
-                    $wpdb->prepare("SELECT RELEASE_LOCK(%s)", $lock_name)
-                );
+            $state = $this->load_analyze_state($transient_key);
+            if ($state === null) {
+                self::release_db_lock($lock_name);
                 OPTISTATE_Utils::send_json_error([
                     "message" => __(
                         "Session expired. Please start over.",
+                        "optistate"
+                    ),
+                ]);
+                return;
+            }
+
+            if (!isset($state["current_step"])) {
+                $this->delete_analyze_state($transient_key);
+                self::release_db_lock($lock_name);
+                OPTISTATE_Utils::send_json_error([
+                    "message" => __(
+                        "Corrupted analysis session. Please start over.",
                         "optistate"
                     ),
                 ]);
@@ -650,8 +792,6 @@ class OPTISTATE_Advanced_Tools
 
                         if (empty($tables_to_check_in_batch_raw)) {
                             $state["current_step"] = "repair";
-                            $state["final_results"]["analyzed"] =
-                                $state["total_tables"];
                             $corrupted_tables = array_filter(
                                 $state["table_statuses"],
                                 function ($status) {
@@ -664,7 +804,7 @@ class OPTISTATE_Advanced_Tools
                             $state["total_to_repair"] = count(
                                 $state["tables_to_repair"]
                             );
-                            update_option($transient_key, $state, "no");
+                            $this->save_analyze_state($transient_key, $state);
                             OPTISTATE_Utils::send_json_success([
                                 "status" => "running",
                                 "step" => __("Repairing...", "optistate"),
@@ -786,6 +926,9 @@ class OPTISTATE_Advanced_Tools
                                                         $table_name
                                                     ]["error"] =
                                                         "No CHECK TABLE results returned";
+                                                    $state["final_results"][
+                                                        "failed"
+                                                    ]++;
                                                 }
                                                 continue;
                                             }
@@ -846,6 +989,7 @@ class OPTISTATE_Advanced_Tools
                                                 $table_name
                                             ]["error"] =
                                                 "No CHECK TABLE results returned";
+                                            $state["final_results"]["failed"]++;
                                         }
                                         continue;
                                     }
@@ -882,7 +1026,7 @@ class OPTISTATE_Advanced_Tools
                                     100
                             )
                         );
-                        update_option($transient_key, $state, "no");
+                        $this->save_analyze_state($transient_key, $state);
                         OPTISTATE_Utils::send_json_success([
                             "status" => "running",
                             "step" => __("Checking...", "optistate"),
@@ -900,7 +1044,7 @@ class OPTISTATE_Advanced_Tools
 
                         if (empty($tables_to_repair_in_batch_raw)) {
                             $state["current_step"] = "get_large_tables";
-                            update_option($transient_key, $state, "no");
+                            $this->save_analyze_state($transient_key, $state);
                             OPTISTATE_Utils::send_json_success([
                                 "status" => "running",
                                 "step" => __(
@@ -1101,7 +1245,7 @@ class OPTISTATE_Advanced_Tools
                             ? min(99, (int) round($processed_repair / $total_to_repair * 100))
                             : 99;
 
-                        update_option($transient_key, $state, "no");
+                        $this->save_analyze_state($transient_key, $state);
                         OPTISTATE_Utils::send_json_success([
                             "status" => "running",
                             "step" => __("Repairing...", "optistate"),
@@ -1139,7 +1283,7 @@ class OPTISTATE_Advanced_Tools
                             $state["tables_to_optimize"]
                         );
                         $state["current_step"] = "optimize";
-                        update_option($transient_key, $state, "no");
+                        $this->save_analyze_state($transient_key, $state);
                         OPTISTATE_Utils::send_json_success([
                             "status" => "running",
                             "step" => __("Optimizing...", "optistate"),
@@ -1157,7 +1301,7 @@ class OPTISTATE_Advanced_Tools
 
                         if (empty($tables_to_optimize_in_batch_raw)) {
                             $state["current_step"] = "done";
-                            update_option($transient_key, $state, "no");
+                            $this->save_analyze_state($transient_key, $state);
                             OPTISTATE_Utils::send_json_success([
                                 "status" => "running",
                                 "step" => __("Finishing up...", "optistate"),
@@ -1333,7 +1477,7 @@ class OPTISTATE_Advanced_Tools
                             ? min(99, (int) round($processed_opt / $total_to_opt * 100))
                             : 99;
 
-                        update_option($transient_key, $state, "no");
+                        $this->save_analyze_state($transient_key, $state);
                         OPTISTATE_Utils::send_json_success([
                             "status" => "running",
                             "step" => __("Optimizing...", "optistate"),
@@ -1342,10 +1486,7 @@ class OPTISTATE_Advanced_Tools
                         return;
 
                     case "done":
-                        delete_option($transient_key);
-                        delete_option(
-                            "optistate_analyze_session_" . get_current_user_id()
-                        );
+                        $this->delete_analyze_state($transient_key);
                         $opt_count = isset($state["final_results"]["optimized"])
                             ? (int) $state["final_results"]["optimized"]
                             : 0;
@@ -1367,12 +1508,38 @@ class OPTISTATE_Advanced_Tools
 
                         $this->main_plugin->clear_stats_cache();
                         OPTISTATE_Utils::invalidate_table_cache();
-
-                        $final_details = [];
+                        self::invalidate_analysis_caches();
+                        $problem_details = [];
+                        $ok_details = [];
                         foreach ($state["table_statuses"] as $table_status) {
-                            $final_details[] = $table_status;
+                            if (
+                                !empty($table_status["corrupted"]) ||
+                                !empty($table_status["error"])
+                            ) {
+                                $problem_details[] = $table_status;
+                            } else {
+                                $ok_details[] = $table_status;
+                            }
                         }
+
+                        $final_details = array_slice(
+                            $problem_details,
+                            0,
+                            self::MAX_DETAIL_ROWS
+                        );
+                        $remaining_budget =
+                            self::MAX_DETAIL_ROWS - count($final_details);
+                        if ($remaining_budget > 0) {
+                            $final_details = array_merge(
+                                $final_details,
+                                array_slice($ok_details, 0, $remaining_budget)
+                            );
+                        }
+
                         $state["final_results"]["details"] = $final_details;
+                        $state["final_results"]["details_truncated"] =
+                            count($problem_details) + count($ok_details) >
+                            count($final_details);
 
                         OPTISTATE_Utils::send_json_success([
                             "status" => "done",
@@ -1381,16 +1548,22 @@ class OPTISTATE_Advanced_Tools
                         return;
                 }
             } catch (Throwable $e) {
-                delete_option($transient_key);
-                delete_option(
-                    "optistate_analyze_session_" . get_current_user_id()
-                );
+                $this->delete_analyze_state($transient_key);
                 $step = isset($state["current_step"])
                     ? $state["current_step"]
                     : "unknown";
-                $table_index = isset($state["current_idx"])
-                    ? $state["current_idx"]
-                    : "?";
+                $table_index = sprintf(
+                    "check:%d/repair:%d/optimize:%d",
+                    isset($state["tables_to_check"])
+                        ? count($state["tables_to_check"])
+                        : 0,
+                    isset($state["tables_to_repair"])
+                        ? count($state["tables_to_repair"])
+                        : 0,
+                    isset($state["tables_to_optimize"])
+                        ? count($state["tables_to_optimize"])
+                        : 0
+                );
 
                 OPTISTATE_Utils::log_critical_error(
                     "Analyze/repair chunk failed: " . $e->getMessage(),
@@ -1422,7 +1595,7 @@ class OPTISTATE_Advanced_Tools
                 ]);
                 return;
             }
-            delete_option($transient_key);
+            $this->delete_analyze_state($transient_key);
             OPTISTATE_Utils::send_json_error([
                 "message" => __(
                     "An unknown error occurred during the chunked process.",
@@ -1440,30 +1613,51 @@ class OPTISTATE_Advanced_Tools
         } finally {
             OPTISTATE_Utils::safe_set_time_limit($original_time_limit);
             if (isset($lock_acquired, $lock_name) && $lock_acquired === 1) {
-                $wpdb->query(
-                    $wpdb->prepare("SELECT RELEASE_LOCK(%s)", $lock_name)
-                );
+                self::release_db_lock($lock_name);
             }
         }
     }
-
-    private function register_lock_release_on_shutdown(string $lock_name): void
+    private function save_analyze_state(string $key, array $state): bool
     {
-        global $wpdb;
-        register_shutdown_function(static function () use ($wpdb, $lock_name) {
-            try {
-                $wpdb->query(
-                    $wpdb->prepare("SELECT RELEASE_LOCK(%s)", $lock_name)
-                );
-            } catch (\Throwable $e) {
-                OPTISTATE_Utils::log_critical_error(
-                    "Failed to release lock '{$lock_name}' on shutdown: " .
-                        $e->getMessage()
-                );
-            }
-        });
+        return (bool) $this->process_store->set(
+            $key,
+            $state,
+            self::ANALYZE_STATE_TTL
+        );
+    }
+    private function load_analyze_state(string $key): ?array
+    {
+        $state = $this->process_store->get($key);
+
+        return is_array($state) ? $state : null;
     }
 
+    private function delete_analyze_state(string $key): void
+    {
+        $this->process_store->delete($key);
+        $this->process_store->delete($this->get_analyze_session_key());
+    }
+    private function get_analyze_session_key(?int $user_id = null): string
+    {
+        if ($user_id === null) {
+            $user_id = get_current_user_id();
+        }
+
+        return "optistate_ar_session_" . (int) $user_id;
+    }
+    private static function is_valid_analyze_key(string $key): bool
+    {
+        return (bool) preg_match(
+            '/^' . preg_quote(self::ANALYZE_KEY_PREFIX, "/") . '[a-f0-9]{28,32}$/',
+            $key
+        );
+    }
+    private function register_lock_release_on_shutdown(string $lock_name): void
+    {
+        register_shutdown_function(static function () use ($lock_name) {
+            self::release_db_lock($lock_name);
+        });
+    }
     private function evaluate_check_table_rows(array $rows): array
     {
         $needs_repair = false;
@@ -1471,11 +1665,20 @@ class OPTISTATE_Advanced_Tools
         $is_ok = false;
 
         foreach ($rows as $check_row) {
-            $msg_type = strtolower(trim((string) $check_row["Msg_type"]));
-            $msg_text = strtolower(trim((string) $check_row["Msg_text"]));
+            $msg_type = strtolower(trim((string) ($check_row["Msg_type"] ?? "")));
+            $msg_text = strtolower(trim((string) ($check_row["Msg_text"] ?? "")));
 
             if ($msg_type === "status" && $msg_text === "ok") {
                 $is_ok = true;
+            }
+            if (
+                strpos($msg_text, "doesn't support check") !== false ||
+                strpos($msg_text, "does not support check") !== false ||
+                strpos($msg_text, "the storage engine for the table doesn't") !==
+                    false
+            ) {
+                $is_ok = true;
+                continue;
             }
             if ($msg_type === "error") {
                 $needs_repair = true;
@@ -1518,6 +1721,11 @@ class OPTISTATE_Advanced_Tools
         ?string $error_message,
         bool $is_ok
     ): void {
+        if (!isset($state["final_results"]["analyzed"])) {
+            $state["final_results"]["analyzed"] = 0;
+        }
+        $state["final_results"]["analyzed"]++;
+
         if ($needs_repair) {
             $state["tables_to_repair"][] = $table_name;
             $state["tables_to_optimize"][] = $table_name;
@@ -1568,7 +1776,11 @@ class OPTISTATE_Advanced_Tools
         $candidates = [];
         $total_size = 0;
         $count = 0;
+        $truncated = false;
         self::compile_patterns();
+
+        $on_values = self::autoload_on_values();
+        $autoload_in = implode(",", array_fill(0, count($on_values), "%s"));
 
         $use_cli = defined("WP_CLI") && WP_CLI && php_sapi_name() === "cli";
         $start_time = time();
@@ -1595,20 +1807,25 @@ class OPTISTATE_Advanced_Tools
 
         while (true) {
             if (time() - $start_time >= $timeout_guard) {
+                $truncated = true;
                 break;
             }
             if (
                 function_exists("memory_get_usage") &&
                 memory_get_usage(true) > $memory_safety_limit
             ) {
+                $truncated = true;
                 break;
             }
 
             $chunk = $wpdb->get_results(
                 $wpdb->prepare(
-                    "SELECT option_id, option_name, LENGTH(option_value) AS option_size FROM {$wpdb->options} WHERE autoload = 'yes' AND option_id > %d ORDER BY option_id ASC LIMIT %d",
-                    $last_seen_id,
-                    $fetch_batch_size
+                    "SELECT option_id, option_name, LENGTH(option_value) AS option_size
+                       FROM {$wpdb->options}
+                      WHERE autoload IN ($autoload_in) AND option_id > %d
+                      ORDER BY option_id ASC
+                      LIMIT %d",
+                    ...array_merge($on_values, [$last_seen_id, $fetch_batch_size])
                 ),
                 ARRAY_A
             );
@@ -1635,6 +1852,7 @@ class OPTISTATE_Advanced_Tools
             "candidates" => $candidates,
             "total_count" => $count,
             "total_size" => $total_size,
+            "truncated" => $truncated,
         ];
     }
 
@@ -1669,6 +1887,7 @@ class OPTISTATE_Advanced_Tools
                 "count" => $result["total_count"],
                 "total_size" => $result["total_size"],
                 "total_size_formatted" => size_format($result["total_size"], 2),
+                "partial" => !empty($result["truncated"]),
             ]);
         } catch (Throwable $e) {
             OPTISTATE_Utils::log_critical_error(
@@ -1685,6 +1904,10 @@ class OPTISTATE_Advanced_Tools
     {
         check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
         $this->main_plugin->settings_manager->check_user_access();
+
+        if (!self::require_post()) {
+            return;
+        }
 
         if (!OPTISTATE_Utils::check_rate_limit("restore_autoload_backup", 10)) {
             OPTISTATE_Utils::send_json_error(
@@ -1763,18 +1986,17 @@ class OPTISTATE_Advanced_Tools
             ]);
         }
     }
-
-    private function save_autoload_backup(array $backup_data): void
+    private function save_autoload_backup(array $backup_data): bool
     {
         if (empty($backup_data)) {
-            return;
+            return true;
         }
-        $this->main_plugin->set_store_data(
+
+        return (bool) $this->main_plugin->set_store_data(
             self::AUTOLOAD_BACKUP_KEY,
             $backup_data
         );
     }
-
     private function restore_autoload_backup(array $backup)
     {
         global $wpdb;
@@ -1783,79 +2005,81 @@ class OPTISTATE_Advanced_Tools
             return 0;
         }
 
-        static $use_row_alias = null;
-        if ($use_row_alias === null) {
-            $version = OPTISTATE_Utils::get_mysql_version();
-            $is_mariadb = stripos($version, "MariaDB") !== false;
-            $use_row_alias =
-                !$is_mariadb && version_compare($version, "8.0.19", ">=");
+        $by_value = [];
+
+        foreach ($backup as $option_name => $data) {
+            if (!is_string($option_name) || $option_name === "") {
+                continue;
+            }
+
+            if (is_array($data)) {
+                $autoload = isset($data["autoload"])
+                    ? (string) $data["autoload"]
+                    : "";
+            } elseif (is_scalar($data)) {
+                $autoload = (string) $data;
+            } else {
+                continue;
+            }
+
+            if ($autoload === "") {
+                continue;
+            }
+
+            $by_value[$autoload][] = $option_name;
         }
-        $on_dup = $use_row_alias
-            ? " AS _r ON DUPLICATE KEY UPDATE option_value = _r.option_value, autoload = _r.autoload"
-            : " ON DUPLICATE KEY UPDATE option_value = VALUES(option_value), autoload = VALUES(autoload)";
+
+        if (empty($by_value)) {
+            return 0;
+        }
 
         $batch_size = 500;
-        $total_count = 0;
+
         try {
-            $total_count = OPTISTATE_Utils::transaction(
-                function () use ($backup, $wpdb, $on_dup, $batch_size) {
-                    $count        = 0;
-                    $values       = [];
-                    $placeholders = [];
-                    $batch_count  = 0;
+            return (int) OPTISTATE_Utils::transaction(function () use (
+                $wpdb,
+                $by_value,
+                $batch_size
+            ) {
+                $count = 0;
 
-                    foreach ($backup as $option_name => $data) {
-                        if (!isset($data["value"], $data["autoload"])) {
-                            continue;
-                        }
-                        $values[]       = $option_name;
-                        $values[]       = $data["value"];
-                        $values[]       = $data["autoload"];
-                        $placeholders[] = "(%s, %s, %s)";
-                        $batch_count++;
+                foreach ($by_value as $autoload => $names) {
+                    foreach (array_chunk($names, $batch_size) as $chunk) {
+                        $placeholders = implode(
+                            ",",
+                            array_fill(0, count($chunk), "%s")
+                        );
 
-                        if (count($placeholders) >= $batch_size) {
-                            $sql    = "INSERT INTO {$wpdb->options} (option_name, option_value, autoload) VALUES "
-                                    . implode(", ", $placeholders)
-                                    . $on_dup;
-                            $result = $wpdb->query($wpdb->prepare($sql, ...$values));
-                            if ($result === false) {
-                                throw new \Exception(
-                                    "Autoload backup restore batch failed: " . $wpdb->last_error
-                                );
-                            }
-                            $count      += $batch_count;
-                            $batch_count = 0;
-                            $values      = [];
-                            $placeholders = [];
-                        }
-                    }
+                        $result = $wpdb->query(
+                            $wpdb->prepare(
+                                "UPDATE {$wpdb->options}
+                                    SET autoload = %s
+                                  WHERE option_name IN ($placeholders)",
+                                ...array_merge([$autoload], $chunk)
+                            )
+                        );
 
-                    if (!empty($placeholders)) {
-                        $sql    = "INSERT INTO {$wpdb->options} (option_name, option_value, autoload) VALUES "
-                                . implode(", ", $placeholders)
-                                . $on_dup;
-                        $result = $wpdb->query($wpdb->prepare($sql, ...$values));
                         if ($result === false) {
                             throw new \Exception(
-                                "Autoload backup restore batch failed: " . $wpdb->last_error
+                                "Autoload backup restore batch failed: " .
+                                    $wpdb->last_error
                             );
                         }
-                        $count += $batch_count;
-                    }
 
-                    return $count;
+                        $count += count($chunk);
+                    }
                 }
-            );
+
+                return $count;
+            });
         } catch (\Throwable $e) {
             OPTISTATE_Utils::log_critical_error(
                 "Autoload backup restore failed – transaction rolled back",
                 ["error" => $e->getMessage()]
             );
+
             return false;
         }
-
-        return $total_count;
     }
 
     private function delete_autoload_backup(): void
@@ -1876,6 +2100,10 @@ class OPTISTATE_Advanced_Tools
     {
         check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
         $this->main_plugin->settings_manager->check_user_access();
+
+        if (!self::require_post()) {
+            return;
+        }
 
         if (!OPTISTATE_Utils::check_rate_limit("heavy_op", 20)) {
             OPTISTATE_Utils::send_json_error(
@@ -1905,15 +2133,22 @@ class OPTISTATE_Advanced_Tools
             "total_size_reduced" => 0,
             "errors" => [],
             "details" => [],
+            "details_truncated" => false,
         ];
         $backup_data = [];
 
         $use_cli = defined("WP_CLI") && WP_CLI && php_sapi_name() === "cli";
         self::compile_patterns();
 
+        $on_values = self::autoload_on_values();
+        $autoload_in = implode(",", array_fill(0, count($on_values), "%s"));
+
         try {
             $total_autoload = $wpdb->get_var(
-                "SELECT COUNT(*) FROM {$wpdb->options} WHERE autoload = 'yes'"
+                $wpdb->prepare(
+                    "SELECT COUNT(*) FROM {$wpdb->options} WHERE autoload IN ($autoload_in)",
+                    ...$on_values
+                )
             );
             $results["total_found"] = (int) $total_autoload;
 
@@ -1947,7 +2182,6 @@ class OPTISTATE_Advanced_Tools
             }
 
             $last_seen_id = 0;
-            $update_buffer = [];
             $options_buffer = [];
             $optimized_options = [];
 
@@ -1958,9 +2192,12 @@ class OPTISTATE_Advanced_Tools
 
                 $chunk = $wpdb->get_results(
                     $wpdb->prepare(
-                        "SELECT option_id, option_name, option_value, autoload, LENGTH(option_value) AS option_size FROM {$wpdb->options} WHERE autoload = 'yes' AND option_id > %d ORDER BY option_id ASC LIMIT %d",
-                        $last_seen_id,
-                        $fetch_batch_size
+                        "SELECT option_id, option_name, autoload, LENGTH(option_value) AS option_size
+                           FROM {$wpdb->options}
+                          WHERE autoload IN ($autoload_in) AND option_id > %d
+                          ORDER BY option_id ASC
+                          LIMIT %d",
+                        ...array_merge($on_values, [$last_seen_id, $fetch_batch_size])
                     ),
                     ARRAY_A
                 );
@@ -1977,16 +2214,14 @@ class OPTISTATE_Advanced_Tools
                     $status = self::get_autoload_candidate_status($name, $size);
 
                     if ($status === "candidate") {
-                        $update_buffer[] = $name;
                         $options_buffer[] = $option;
-                        if (count($update_buffer) >= $update_batch_size) {
+                        if (count($options_buffer) >= $update_batch_size) {
                             $optimized_options = $this->process_autoload_update_batch(
                                 $options_buffer,
                                 $results,
                                 $optimized_options,
                                 $backup_data
                             );
-                            $update_buffer = [];
                             $options_buffer = [];
                         }
                     } else {
@@ -2019,13 +2254,20 @@ class OPTISTATE_Advanced_Tools
                             default:
                                 $reason = __("Unknown reason", "optistate");
                         }
-                        if ($reason) {
-                            $results["details"][] = [
-                                "option" => $name,
-                                "size" => size_format($size, 2),
-                                "status" => "skipped",
-                                "reason" => $reason,
-                            ];
+                        if ($reason !== "") {
+                            if (
+                                count($results["details"]) <
+                                self::MAX_DETAIL_ROWS
+                            ) {
+                                $results["details"][] = [
+                                    "option" => $name,
+                                    "size" => size_format($size, 2),
+                                    "status" => "skipped",
+                                    "reason" => $reason,
+                                ];
+                            } else {
+                                $results["details_truncated"] = true;
+                            }
                         }
                     }
                 }
@@ -2044,13 +2286,14 @@ class OPTISTATE_Advanced_Tools
                 }
             }
 
-            if (!empty($update_buffer)) {
+            if (!empty($options_buffer)) {
                 $optimized_options = $this->process_autoload_update_batch(
                     $options_buffer,
                     $results,
                     $optimized_options,
                     $backup_data
                 );
+                $options_buffer = [];
             }
 
             if (!empty($optimized_options)) {
@@ -2060,10 +2303,6 @@ class OPTISTATE_Advanced_Tools
                 wp_cache_delete("alloptions", "options");
                 wp_cache_delete("notoptions", "options");
             }
-            if (!empty($backup_data)) {
-                $this->save_autoload_backup($backup_data);
-            }
-
             if ($results["optimized"] > 0) {
                 $this->main_plugin->clear_stats_cache();
             }
@@ -2112,7 +2351,6 @@ class OPTISTATE_Advanced_Tools
             );
         }
     }
-
     private function process_autoload_update_batch(
         array $options_data,
         array &$results,
@@ -2124,27 +2362,30 @@ class OPTISTATE_Advanced_Tools
         }
 
         global $wpdb;
-        $option_names = array_column($options_data, "option_name");
-        foreach ($options_data as $row) {
-            $backup_data[$row["option_name"]] = [
-                "value" => $row["option_value"],
-                "autoload" => $row["autoload"],
-            ];
-        }
-        $this->save_autoload_backup($backup_data);
 
+        $option_names = [];
         $size_by_name = [];
+
         foreach ($options_data as $row) {
-            $size_by_name[$row["option_name"]] =
-                (int) ($row["option_size"] ?? 0);
+            $option_name = (string) $row["option_name"];
+            $option_names[] = $option_name;
+            $size_by_name[$option_name] = (int) ($row["option_size"] ?? 0);
+            $backup_data[$option_name] = (string) ($row["autoload"] ?? "");
+        }
+
+        if (!$this->save_autoload_backup($backup_data)) {
+            throw new Exception(
+                "Autoload rollback snapshot could not be persisted; aborting before modifying options."
+            );
         }
 
         $placeholders = implode(",", array_fill(0, count($option_names), "%s"));
-        $query = $wpdb->prepare(
-            "UPDATE {$wpdb->options} SET autoload = 'no' WHERE option_name IN ($placeholders)",
-            ...$option_names
+        $rows_affected = $wpdb->query(
+            $wpdb->prepare(
+                "UPDATE {$wpdb->options} SET autoload = %s WHERE option_name IN ($placeholders)",
+                ...array_merge([self::autoload_off_value()], $option_names)
+            )
         );
-        $rows_affected = $wpdb->query($query);
 
         if ($rows_affected === false) {
             throw new Exception("Database update failed: " . $wpdb->last_error);
@@ -2157,11 +2398,16 @@ class OPTISTATE_Advanced_Tools
                 ? $size_by_name[$option_name]
                 : 0;
             $results["total_size_reduced"] += $size;
-            $results["details"][] = [
-                "option" => $option_name,
-                "size" => size_format($size, 2),
-                "status" => "optimized",
-            ];
+
+            if (count($results["details"]) < self::MAX_DETAIL_ROWS) {
+                $results["details"][] = [
+                    "option" => $option_name,
+                    "size" => size_format($size, 2),
+                    "status" => "optimized",
+                ];
+            } else {
+                $results["details_truncated"] = true;
+            }
         }
 
         return $optimized_options;
@@ -2547,7 +2793,12 @@ class OPTISTATE_Advanced_Tools
     {
         check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
         $this->main_plugin->settings_manager->check_user_access();
-        if (!OPTISTATE_Utils::check_rate_limit("manage_index", 15)) {
+
+        if (!self::require_post()) {
+            return;
+        }
+
+        if (!OPTISTATE_Utils::check_rate_limit("manage_index", 2)) {
             OPTISTATE_Utils::send_json_error(
                 [
                     "message" => OPTISTATE_Utils::get_rate_limit_message(false),
@@ -2675,6 +2926,7 @@ class OPTISTATE_Advanced_Tools
                 }
             }
 
+            $space_warning = "";
             if ($action_type === "add") {
                 $space_check = $this->check_disk_space_for_index($table);
                 if (!$space_check["success"]) {
@@ -2682,6 +2934,9 @@ class OPTISTATE_Advanced_Tools
                         "message" => $space_check["message"],
                     ]);
                     return;
+                }
+                if (empty($space_check["available_space"])) {
+                    $space_warning = (string) $space_check["message"];
                 }
             }
 
@@ -2717,11 +2972,17 @@ class OPTISTATE_Advanced_Tools
                     ? __("Index creation started in background.", "optistate")
                     : __("Index removal started in background.", "optistate");
 
-            OPTISTATE_Utils::send_json_success([
+            $response = [
                 "status" => "processing",
                 "task_id" => $task_id,
                 "message" => $msg,
-            ]);
+            ];
+
+            if ($space_warning !== "") {
+                $response["warning"] = $space_warning;
+            }
+
+            OPTISTATE_Utils::send_json_success($response);
         } catch (Throwable $e) {
             OPTISTATE_Utils::log_critical_error(
                 "Manage index failed: " . $e->getMessage(),
@@ -2742,7 +3003,11 @@ class OPTISTATE_Advanced_Tools
 
         try {
             $task = $this->process_store->get($task_id);
-            if (!$task || !in_array($task["status"], ["pending", "running"])) {
+            if (
+                !is_array($task) ||
+                !isset($task["status"], $task["escaped_table"], $task["table"], $task["index_name"]) ||
+                !in_array($task["status"], ["pending", "running"], true)
+            ) {
                 return;
             }
 
@@ -2836,21 +3101,24 @@ class OPTISTATE_Advanced_Tools
                 for ($attempt = 1; $attempt <= $max_retries; $attempt++) {
                     try {
                         $suppress = $wpdb->suppress_errors(true);
+
                         $result = $wpdb->query(
                             $sql . " , ALGORITHM=INPLACE, LOCK=NONE"
                         );
-                        $wpdb->suppress_errors($suppress);
+                        $error = $wpdb->last_error;
 
                         if ($result === false) {
                             $result = $wpdb->query($sql);
+                            $error = $wpdb->last_error;
                         }
+
+                        $wpdb->suppress_errors($suppress);
 
                         if ($result !== false) {
                             $success = true;
                             break;
                         }
 
-                        $error = $wpdb->last_error;
                         $last_error = $error;
 
                         if (
@@ -2919,8 +3187,7 @@ class OPTISTATE_Advanced_Tools
                     30 * MINUTE_IN_SECONDS
                 );
 
-                $cache_key = "optistate_index_analysis_" . md5(DB_NAME);
-                delete_transient($cache_key);
+                self::invalidate_analysis_caches();
                 $this->main_plugin->clear_stats_cache();
                 OPTISTATE_Utils::invalidate_table_cache();
 
@@ -3062,7 +3329,10 @@ class OPTISTATE_Advanced_Tools
 
             $count_subqueries = [];
             foreach ($rules as $type => $rule) {
-                if (!self::is_valid_integrity_rule($rule)) {
+                if (
+                    !is_array($rule) ||
+                    !self::is_valid_integrity_rule($rule, $type)
+                ) {
                     continue;
                 }
                 $child_table = $wpdb->prefix . $rule["child_table"];
@@ -3118,7 +3388,10 @@ class OPTISTATE_Advanced_Tools
             }
 
             foreach ($rules as $type => $rule) {
-                if (!self::is_valid_integrity_rule($rule)) {
+                if (
+                    !is_array($rule) ||
+                    !self::is_valid_integrity_rule($rule, $type)
+                ) {
                     continue;
                 }
                 if (microtime(true) - $start_time > $max_exec) {
@@ -3188,7 +3461,7 @@ class OPTISTATE_Advanced_Tools
         global $wpdb;
 
         foreach ($rules as $type => $rule) {
-            if (!self::is_valid_integrity_rule($rule)) {
+            if (!is_array($rule) || !self::is_valid_integrity_rule($rule, $type)) {
                 continue;
             }
             if (microtime(true) - $start_time > $max_exec) {
@@ -3237,7 +3510,12 @@ class OPTISTATE_Advanced_Tools
     {
         check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
         $this->main_plugin->settings_manager->check_user_access();
-        if (!OPTISTATE_Utils::check_rate_limit("fix_integrity", 10)) {
+
+        if (!self::require_post()) {
+            return;
+        }
+
+        if (!OPTISTATE_Utils::check_rate_limit("fix_integrity", 2)) {
             OPTISTATE_Utils::send_json_error(
                 [
                     "message" => OPTISTATE_Utils::get_rate_limit_message(false),
@@ -3251,24 +3529,48 @@ class OPTISTATE_Advanced_Tools
             $type = isset($_POST["type"]) ? sanitize_key($_POST["type"]) : "";
             $rules = self::get_integrity_rules();
 
-            if (!isset($rules[$type])) {
+            if (!isset($rules[$type]) || !is_array($rules[$type])) {
                 OPTISTATE_Utils::send_json_error([
                     "message" => __("Invalid rule type.", "optistate"),
                 ]);
                 return;
             }
 
-            global $wpdb;
             $rule = $rules[$type];
+            if (!self::is_valid_integrity_rule($rule, $type)) {
+                OPTISTATE_Utils::send_json_error([
+                    "message" => __(
+                        "Invalid rule definition.",
+                        "optistate"
+                    ),
+                ]);
+                return;
+            }
+
+            global $wpdb;
             $child_table = $wpdb->prefix . $rule["child_table"];
             $parent_table = $wpdb->prefix . $rule["parent_table"];
+
+            if (
+                !OPTISTATE_Utils::table_exists($child_table) ||
+                !OPTISTATE_Utils::table_exists($parent_table)
+            ) {
+                OPTISTATE_Utils::send_json_error([
+                    "message" => __(
+                        "The tables for this rule are not present.",
+                        "optistate"
+                    ),
+                ]);
+                return;
+            }
+
             $extra_where = isset($rule["extra_where"])
                 ? $rule["extra_where"]
                 : "";
             $limit = 2000;
             $deleted_count = 0;
-            $transaction_started = false;
             $affected_object_ids = [];
+            $deleted_post_ids = [];
 
             try {
                 if ($type === "term_relationships") {
@@ -3291,65 +3593,116 @@ class OPTISTATE_Advanced_Tools
                             );
                         }
 
-                        $wpdb->query("START TRANSACTION");
-                        $transaction_started = true;
+                        $deleted_count = (int) OPTISTATE_Utils::transaction(
+                            function () use ($wpdb, $child_table, $values) {
+                                $deleted = $wpdb->query(
+                                    "DELETE FROM $child_table WHERE (object_id, term_taxonomy_id) IN (" .
+                                        implode(",", $values) .
+                                        ")"
+                                );
 
-                        $deleted = $wpdb->query(
-                            "DELETE FROM $child_table WHERE (object_id, term_taxonomy_id) IN (" .
-                                implode(",", $values) .
-                                ")"
+                                if ($deleted === false) {
+                                    throw new \Exception(
+                                        "term_relationships delete failed: " .
+                                            $wpdb->last_error
+                                    );
+                                }
+
+                                return $deleted;
+                            }
                         );
-                        if ($deleted !== false) {
-                            $deleted_count = $deleted;
-                        }
                     }
                 } else {
                     $pk = $rule["pk"];
+                    if ($pk === false || !is_string($pk) || $pk === "") {
+                        OPTISTATE_Utils::send_json_error([
+                            "message" => __(
+                                "This rule has no primary key and cannot be fixed automatically.",
+                                "optistate"
+                            ),
+                        ]);
+                        return;
+                    }
+
                     $ids_sql = "SELECT c.$pk FROM $child_table c LEFT JOIN $parent_table p ON c.{$rule["child_key"]} = p.{$rule["parent_key"]} WHERE p.{$rule["parent_key"]} IS NULL $extra_where LIMIT $limit";
                     $ids = $wpdb->get_col($ids_sql);
                     if (!empty($ids)) {
-                        $ids_string = implode(",", array_map("absint", $ids));
-                        $wpdb->query("START TRANSACTION");
-                        $transaction_started = true;
-
-                        if ($type === "comments_on_deleted") {
-                            $wpdb->query(
-                                "DELETE FROM {$wpdb->commentmeta} WHERE comment_id IN ($ids_string)"
-                            );
-                        } elseif ($type === "child_posts") {
-                            $wpdb->query(
-                                "DELETE FROM {$wpdb->postmeta} WHERE post_id IN ($ids_string)"
-                            );
-                            $wpdb->query(
-                                "DELETE FROM {$wpdb->term_relationships} WHERE object_id IN ($ids_string)"
-                            );
-                        }
-
-                        $deleted = $wpdb->query(
-                            "DELETE FROM $child_table WHERE $pk IN ($ids_string)"
+                        $safe_ids = array_values(
+                            array_filter(
+                                array_map("absint", $ids),
+                                static function ($id) {
+                                    return $id > 0;
+                                }
+                            )
                         );
-                        if ($deleted !== false) {
-                            $deleted_count = $deleted;
+
+                        if (!empty($safe_ids)) {
+                            $ids_string = implode(",", $safe_ids);
+
+                            if ($type === "child_posts") {
+                                $deleted_post_ids = $safe_ids;
+                            }
+
+                            $deleted_count = (int) OPTISTATE_Utils::transaction(
+                                function () use (
+                                    $wpdb,
+                                    $child_table,
+                                    $pk,
+                                    $ids_string,
+                                    $type
+                                ) {
+                                    if ($type === "comments_on_deleted") {
+                                        if (
+                                            $wpdb->query(
+                                                "DELETE FROM {$wpdb->commentmeta} WHERE comment_id IN ($ids_string)"
+                                            ) === false
+                                        ) {
+                                            throw new \Exception(
+                                                "commentmeta delete failed: " .
+                                                    $wpdb->last_error
+                                            );
+                                        }
+                                    } elseif ($type === "child_posts") {
+                                        if (
+                                            $wpdb->query(
+                                                "DELETE FROM {$wpdb->postmeta} WHERE post_id IN ($ids_string)"
+                                            ) === false
+                                        ) {
+                                            throw new \Exception(
+                                                "postmeta delete failed: " .
+                                                    $wpdb->last_error
+                                            );
+                                        }
+                                        if (
+                                            $wpdb->query(
+                                                "DELETE FROM {$wpdb->term_relationships} WHERE object_id IN ($ids_string)"
+                                            ) === false
+                                        ) {
+                                            throw new \Exception(
+                                                "term_relationships delete failed: " .
+                                                    $wpdb->last_error
+                                            );
+                                        }
+                                    }
+
+                                    $deleted = $wpdb->query(
+                                        "DELETE FROM $child_table WHERE $pk IN ($ids_string)"
+                                    );
+
+                                    if ($deleted === false) {
+                                        throw new \Exception(
+                                            "orphan delete failed: " .
+                                                $wpdb->last_error
+                                        );
+                                    }
+
+                                    return $deleted;
+                                }
+                            );
                         }
                     }
-                }
-
-                if ($transaction_started) {
-                    $wpdb->query("COMMIT");
                 }
             } catch (Throwable $e) {
-                if ($transaction_started) {
-                    try {
-                        $wpdb->query("ROLLBACK");
-                    } catch (Throwable $rollback_err) {
-                        OPTISTATE_Utils::log_critical_error(
-                            "Integrity fix rollback failed: " .
-                                $rollback_err->getMessage(),
-                            ["original_error" => $e->getMessage()]
-                        );
-                    }
-                }
-
                 OPTISTATE_Utils::log_critical_error(
                     "Integrity fix failed: " . $e->getMessage(),
                     [
@@ -3384,6 +3737,9 @@ class OPTISTATE_Advanced_Tools
                             $rule["label"]
                         )
                 );
+                foreach ($deleted_post_ids as $post_id) {
+                    clean_post_cache($post_id);
+                }
 
                 if ($remaining === 0 || $deleted_count > 100) {
                     if (!empty($affected_object_ids)) {
@@ -3566,9 +3922,18 @@ class OPTISTATE_Advanced_Tools
 
         return false;
     }
-    private static function is_valid_integrity_rule(array $rule): bool
-    {
+    private static function is_valid_integrity_rule(
+        array $rule,
+        $type = null
+    ): bool {
         $id_re = '/^[a-zA-Z0-9_]+$/';
+
+        if ($type !== null) {
+            if (!is_string($type) || preg_match($id_re, $type) !== 1) {
+                return false;
+            }
+        }
+
         if (
             preg_match($id_re, $rule["child_table"] ?? "") !== 1 ||
             preg_match($id_re, $rule["parent_table"] ?? "") !== 1 ||
@@ -3696,13 +4061,7 @@ class OPTISTATE_Advanced_Tools
 
     public function ajax_delete_table(): void
     {
-        if ($_SERVER["REQUEST_METHOD"] !== "POST") {
-            OPTISTATE_Utils::send_json_error(
-                [
-                    "message" => __("Invalid request method.", "optistate"),
-                ],
-                400
-            );
+        if (!self::require_post()) {
             return;
         }
 
@@ -3790,7 +4149,7 @@ class OPTISTATE_Advanced_Tools
                 return;
             }
 
-            if ($update_time && time() - $update_time < 2592000) {
+            if ($update_time && time() - $update_time < self::ABANDONED_THRESHOLD) {
                 OPTISTATE_Utils::send_json_error([
                     "message" => __(
                         "Protected: This table was accessed within the last 30 days and cannot be deleted.",
@@ -3846,6 +4205,8 @@ class OPTISTATE_Advanced_Tools
                 );
                 $this->main_plugin->clear_stats_cache();
                 OPTISTATE_Utils::invalidate_table_cache();
+                self::invalidate_analysis_caches();
+                $this->base_table_map = null;
 
                 OPTISTATE_Utils::send_json_success([
                     "message" => sprintf(
@@ -3857,6 +4218,11 @@ class OPTISTATE_Advanced_Tools
                     ),
                 ]);
             } else {
+                OPTISTATE_Utils::log_critical_error(
+                    "Trash unavailable; falling back to irreversible DROP TABLE",
+                    ["table" => $table_name]
+                );
+
                 $drop_error = "";
                 $dropped = OPTISTATE_Utils::without_foreign_key_checks(
                     function () use ($wpdb, $escaped_table_name, &$drop_error) {
@@ -3909,7 +4275,7 @@ class OPTISTATE_Advanced_Tools
                     $this->main_plugin->log_entry(
                         sprintf(
                             __(
-                                "🗑️ Deleted Database Table '%s' by {username}",
+                                "🗑️ Permanently deleted Database Table '%s' (trash unavailable) by {username}",
                                 "optistate"
                             ),
                             $table_name
@@ -3917,10 +4283,15 @@ class OPTISTATE_Advanced_Tools
                     );
                     $this->main_plugin->clear_stats_cache();
                     OPTISTATE_Utils::invalidate_table_cache();
+                    self::invalidate_analysis_caches();
+                    $this->base_table_map = null;
 
                     OPTISTATE_Utils::send_json_success([
                         "message" => sprintf(
-                            __("Table '%s' successfully deleted.", "optistate"),
+                            __(
+                                "Table '%s' was permanently deleted. The trash was unavailable, so this deletion cannot be undone.",
+                                "optistate"
+                            ),
                             $table_name
                         ),
                     ]);
@@ -3951,9 +4322,12 @@ class OPTISTATE_Advanced_Tools
         check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
         $this->main_plugin->settings_manager->check_user_access();
 
-        $is_continuation = (bool) get_transient(
-            $this->get_optimize_tables_transient_key()
-        );
+        if (!self::require_post()) {
+            return;
+        }
+
+        $state_key = $this->get_optimize_tables_transient_key();
+        $is_continuation = (bool) get_transient($state_key);
         if (
             !$is_continuation &&
             !OPTISTATE_Utils::check_rate_limit("heavy_op", 20)
@@ -3966,6 +4340,21 @@ class OPTISTATE_Advanced_Tools
             );
             return;
         }
+        global $wpdb;
+        $lock_name = "optistate_opt_" . md5($state_key);
+        $lock_acquired = (int) $wpdb->get_var(
+            $wpdb->prepare("SELECT GET_LOCK(%s, 0)", $lock_name)
+        );
+
+        if ($lock_acquired !== 1) {
+            OPTISTATE_Utils::send_json_success([
+                "status" => "running",
+                "percentage" => 0,
+            ]);
+            return;
+        }
+
+        $this->register_lock_release_on_shutdown($lock_name);
 
         try {
             $result = $this->perform_optimize_tables(true);
@@ -3980,6 +4369,7 @@ class OPTISTATE_Advanced_Tools
 
             $this->main_plugin->clear_stats_cache();
             OPTISTATE_Utils::invalidate_table_cache();
+            self::invalidate_analysis_caches();
 
             $count = isset($result["optimized"])
                 ? (int) $result["optimized"]
@@ -4008,6 +4398,8 @@ class OPTISTATE_Advanced_Tools
                     "optistate"
                 ),
             ]);
+        } finally {
+            self::release_db_lock($lock_name);
         }
     }
 
@@ -4033,7 +4425,7 @@ class OPTISTATE_Advanced_Tools
             $state = get_transient($transient_key);
 
             if (!$state || !is_array($state) || $is_cron || $is_cli) {
-                $tables = OPTISTATE_Utils::get_all_tables();
+                $tables = $this->get_base_tables();
                 $table_data = [];
                 OPTISTATE_Utils::preload_all_table_statuses();
 
@@ -4043,8 +4435,7 @@ class OPTISTATE_Advanced_Tools
                         $table_data[] = [
                             "TABLE_NAME" => $table_name,
                             "ENGINE" => $status["ENGINE"] ?? "",
-                            "TABLE_TYPE" =>
-                                $status["TABLE_TYPE"] ?? "BASE TABLE",
+                            "TABLE_TYPE" => "BASE TABLE",
                             "TABLE_ROWS" => $status["TABLE_ROWS"] ?? 0,
                             "DATA_LENGTH" => $status["DATA_LENGTH"] ?? 0,
                             "INDEX_LENGTH" => $status["INDEX_LENGTH"] ?? 0,
@@ -4060,6 +4451,8 @@ class OPTISTATE_Advanced_Tools
                         "failed" => 0,
                         "reclaimed" => 0,
                         "details" => [],
+                        "details_truncated" => false,
+                        "status" => "done",
                     ];
                     if ($return_data) {
                         return $empty_results;
@@ -4077,6 +4470,7 @@ class OPTISTATE_Advanced_Tools
                         "failed" => 0,
                         "reclaimed" => 0,
                         "details" => [],
+                        "details_truncated" => false,
                     ],
                 ];
             }
@@ -4107,14 +4501,14 @@ class OPTISTATE_Advanced_Tools
 
                 if (self::should_skip_table_optimization($table)) {
                     $results["skipped"]++;
-                    $results["details"][] = [
+                    self::push_detail($results, [
                         "table" => $table_name,
                         "status" => "skipped",
                         "reason" => __(
                             "No overhead or not supported",
                             "optistate"
                         ),
-                    ];
+                    ]);
                 } else {
                     $opt_result = $this->_optimize_table_enterprise(
                         $table_name,
@@ -4123,11 +4517,11 @@ class OPTISTATE_Advanced_Tools
                     if ($opt_result["success"]) {
                         $results["optimized"]++;
                         $results["reclaimed"] += $initial_overhead;
-                        $results["details"][] = [
+                        self::push_detail($results, [
                             "table" => $table_name,
                             "status" => "optimized",
                             "method" => $opt_result["method"],
-                        ];
+                        ]);
                     } else {
                         $results["failed"]++;
                         $results["details"][] = [
@@ -4282,9 +4676,12 @@ class OPTISTATE_Advanced_Tools
                 "method" => null,
             ];
         }
-
         if ($engine === "MYISAM") {
+            $suppress = $wpdb->suppress_errors(true);
             $result = $wpdb->query("OPTIMIZE TABLE $escaped_table");
+            $err = $wpdb->last_error;
+            $wpdb->suppress_errors($suppress);
+
             if ($result !== false) {
                 return [
                     "success" => true,
@@ -4292,35 +4689,53 @@ class OPTISTATE_Advanced_Tools
                     "error" => null,
                 ];
             }
-            if ($result === false) {
-                OPTISTATE_Utils::log_critical_error(
-                    "Table optimize failed (MyISAM)",
-                    ["table" => $table_name, "error" => $wpdb->last_error]
-                );
-            }
+
+            OPTISTATE_Utils::log_critical_error(
+                "Table optimize failed (MyISAM)",
+                ["table" => $table_name, "error" => $err]
+            );
+
             return [
                 "success" => false,
-                "error" => $wpdb->last_error,
+                "error" => $err,
                 "method" => null,
             ];
         }
 
+        $suppress = $wpdb->suppress_errors(true);
         $result = $wpdb->query("OPTIMIZE TABLE $escaped_table");
+        $err = $wpdb->last_error;
+        $wpdb->suppress_errors($suppress);
+
         if ($result === false) {
             OPTISTATE_Utils::log_critical_error(
                 "Table optimize failed (generic)",
                 [
                     "table" => $table_name,
                     "engine" => $engine,
-                    "error" => $wpdb->last_error,
+                    "error" => $err,
                 ]
             );
         }
+
         return [
             "success" => $result !== false,
-            "error" => $result === false ? $wpdb->last_error : null,
+            "error" => $result === false ? $err : null,
             "method" => "Standard",
         ];
+    }
+    private static function push_detail(array &$results, array $detail): void
+    {
+        if (!isset($results["details"]) || !is_array($results["details"])) {
+            $results["details"] = [];
+        }
+
+        if (count($results["details"]) < self::MAX_DETAIL_ROWS) {
+            $results["details"][] = $detail;
+            return;
+        }
+
+        $results["details_truncated"] = true;
     }
 
     private static function should_skip_table_optimization(array $table): bool
