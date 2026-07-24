@@ -95,8 +95,8 @@ jQuery(document).ready(function($) {
             if (completed) return;
             if (!running || cancelled) {
                 cancelled = false;
-                running = false;
-                start();
+                running = true;
+                timeoutId = setTimeout(doPoll, 100);
             } else if (!timeoutId) {
                 timeoutId = setTimeout(doPoll, 100);
             }
@@ -274,9 +274,12 @@ jQuery(document).ready(function($) {
                     if (responseData.status === 'done') {
                         resetButton();
                         updatePageSpeedUI(responseData.data);
-                        showToast('Performance audit completed successfully!', 'success');
+                        showToast(__('Performance audit completed successfully!', 'optistate'), 'success');
                         debouncedLoadOptimizationLog();
                         resolve(responseData);
+                        return false;
+                    } else if (responseData.status === 'error') {
+                        reject(responseData.message || 'Audit failed.');
                         return false;
                     } else {
                         return true;
@@ -1798,53 +1801,53 @@ jQuery(document).ready(function($) {
         $container.empty().append(fragment);
     }
 
-function displayStats(stats) {
-    if (!stats || typeof stats !== 'object') return;
-    const currentHeight = $statsContainer.outerHeight();
-    if (currentHeight > 0) $statsContainer.css({
-        minHeight: currentHeight
-    });
-    const fragment = document.createDocumentFragment();
-    Object.keys(stats).forEach(key => {
-        if (!labels[key]) return;
-        let value = (stats[key] === false || stats[key] === null) ? '0 B' : stats[key];
-        let isHtml = false;
-        if (key === 'engine_distribution') {
-            if (typeof value === 'object' && value !== null) {
-                const parts = [];
-                for (const engine in value) {
-                    if (value.hasOwnProperty(engine)) {
-                        const data = value[engine];
-                        parts.push(engine + ': ' + data.count + ' tables (' + data.size + ')');
+    function displayStats(stats) {
+        if (!stats || typeof stats !== 'object') return;
+        const currentHeight = $statsContainer.outerHeight();
+        if (currentHeight > 0) $statsContainer.css({
+            minHeight: currentHeight
+        });
+        const fragment = document.createDocumentFragment();
+        Object.keys(stats).forEach(key => {
+            if (!labels[key]) return;
+            let value = (stats[key] === false || stats[key] === null) ? '0 B' : stats[key];
+            let isHtml = false;
+            if (key === 'engine_distribution') {
+                if (typeof value === 'object' && value !== null) {
+                    const parts = [];
+                    for (const engine in value) {
+                        if (value.hasOwnProperty(engine)) {
+                            const data = value[engine];
+                            parts.push(engine + ': ' + data.count + ' tables (' + data.size + ')');
+                        }
                     }
+                    value = parts.length ? parts.join('<br>') : 'N/A';
+                    isHtml = true;
+                } else {
+                    value = 'N/A';
                 }
-                value = parts.length ? parts.join('<br>') : 'N/A';
-                isHtml = true;
-            } else {
-                value = 'N/A';
             }
-        }
-        if (key === 'db_creation_date') {
-            value = `<span class="os-nowrap">${esc_html(value)}</span>`;
-            isHtml = true;
-        } else if (!isHtml) {
-            const numValue = typeof value === 'number' ? value : parseInt(value, 10);
-            value = (!isNaN(numValue) && String(numValue) === String(value)) ? esc_html(numValue.toLocaleString()) : esc_html(String(value));
-        }
-        const label = labels[key];
-        let labelHtml = esc_html(label);
-        if (STATS_TOOLTIPS[key]) {
-            labelHtml += ` <span class="dashicons dashicons-info" title="${esc_attr(STATS_TOOLTIPS[key])}" style="cursor:help; font-size:16px; vertical-align:middle;"></span>`;
-        }
-        const div = document.createElement('div');
-        div.className = 'optistate-stat-item';
-        div.innerHTML = `<div class="optistate-stat-label">${labelHtml}</div><div class="optistate-stat-value">${value}</div>`;
-        fragment.appendChild(div);
-    });
-    $statsContainer.empty().append(fragment).css({
-        minHeight: ''
-    });
-    debouncedLoadOptimizationLog();
+            if (key === 'db_creation_date') {
+                value = `<span class="os-nowrap">${esc_html(value)}</span>`;
+                isHtml = true;
+            } else if (!isHtml) {
+                const numValue = typeof value === 'number' ? value : parseInt(value, 10);
+                value = (!isNaN(numValue) && String(numValue) === String(value)) ? esc_html(numValue.toLocaleString()) : esc_html(String(value));
+            }
+            const label = labels[key];
+            let labelHtml = esc_html(label);
+            if (STATS_TOOLTIPS[key]) {
+                labelHtml += ` <span class="dashicons dashicons-info" title="${esc_attr(STATS_TOOLTIPS[key])}" style="cursor:help; font-size:16px; vertical-align:middle;"></span>`;
+            }
+            const div = document.createElement('div');
+            div.className = 'optistate-stat-item';
+            div.innerHTML = `<div class="optistate-stat-label">${labelHtml}</div><div class="optistate-stat-value">${value}</div>`;
+            fragment.appendChild(div);
+        });
+        $statsContainer.empty().append(fragment).css({
+            minHeight: ''
+        });
+        debouncedLoadOptimizationLog();
         const config = window.optistate_OneClickConfig || {};
         let defaultKeys = config.default_keys || [];
         let extraKeys = config.extra_items || [];
@@ -4106,6 +4109,7 @@ function displayStats(stats) {
                 if (res.success) {
                     updateSecurityUI(isChecked);
                     showToast(isChecked ? __('⚠️ Security checks disabled. Please restore carefully.', 'optistate') : __('✅ Security checks re-enabled.', 'optistate'), isChecked ? 'warning' : 'success');
+                    debouncedLoadOptimizationLog();
                 } else {
                     showToast(__('Failed to save security setting.', 'optistate'), 'error');
                     $checkbox.prop('checked', !isChecked);
@@ -4321,6 +4325,9 @@ function displayStats(stats) {
                     } else if (res.data.status === 'processing') {
                         $btn.html(`<span class="spinner is-active os-spinner-inline"></span> ${__('Auditing...', 'optistate')}`);
                         pollPageSpeedStatus(res.data.task_id);
+                    } else {
+                        showToast(res.data.message || __('Audit failed to start.', 'optistate'), 'error');
+                        resetBtn();
                     }
                 } else {
                     showToast(res.data.message || __('Audit failed to start.', 'optistate'), 'error');
@@ -4337,20 +4344,20 @@ function displayStats(stats) {
                 resetBtn();
             });
         };
-const loadCachedPageSpeed = () => {
-    if ($('#psi-score').length === 0) return;
-    $.post(optistate_Ajax.ajaxurl, {
-        action: 'optistate_run_pagespeed_audit',
-        nonce: optistate_Ajax.nonce,
-        cached_only: 'true',
-        force_refresh: 'false',
-        strategy: $(SELECTORS.psiStrategy).val()
-    }).done(function(response) {
-        if (response.success && response.data && typeof response.data === 'object' && 'score' in response.data) {
-            updatePageSpeedUI(response.data);
-        }
-    }).fail(function() {});
-};
+        const loadCachedPageSpeed = () => {
+            if ($('#psi-score').length === 0) return;
+            $.post(optistate_Ajax.ajaxurl, {
+                action: 'optistate_run_pagespeed_audit',
+                nonce: optistate_Ajax.nonce,
+                cached_only: 'true',
+                force_refresh: 'false',
+                strategy: $(SELECTORS.psiStrategy).val()
+            }).done(function(response) {
+                if (response.success && response.data && typeof response.data === 'object' && 'score' in response.data) {
+                    updatePageSpeedUI(response.data);
+                }
+            }).fail(function() {});
+        };
         $('#save-pagespeed-key-btn').on('click', function() {
             const key = $('#optistate_pagespeed_key').val().trim();
             const $btn = $(this);
