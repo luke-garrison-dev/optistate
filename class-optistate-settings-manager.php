@@ -174,7 +174,7 @@ class OPTISTATE_Settings_Manager
                     break;
                 case "auto_optimize_time":
                     $validated[$key] = preg_match(
-                        '/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/',
+                        '/^(0[0-9]|1[0-9]|2[0-3]):00$/',
                         (string) $value
                     )
                         ? (string) $value
@@ -194,9 +194,6 @@ class OPTISTATE_Settings_Manager
                 case "login_protect_enabled":
                 case "cloudflare_enabled":
                 case "ip_blocker_enabled":
-                    $validated[$key] = (bool) $value;
-                    break;
-                case "login_captcha_enabled":
                     $validated[$key] = (bool) $value;
                     break;
                 case "performance_features":
@@ -219,9 +216,7 @@ class OPTISTATE_Settings_Manager
                 case "pagespeed_api_key":
                     $key_val = trim((string) $value);
                     if (empty($key_val)) {
-                        $key_val = $this->get_default_settings()[
-                            "pagespeed_api_key"
-                        ];
+                        $key_val = $defaults["pagespeed_api_key"];
                     } else {
                         if (strpos($key_val, "enc:") !== 0) {
                             $key_val = OPTISTATE_Utils::encrypt_data($key_val);
@@ -577,6 +572,8 @@ class OPTISTATE_Settings_Manager
             $old_max_backups = (int) $current_settings["max_backups"];
             $old_auto_backup_only =
                 (bool) $current_settings["auto_backup_only"];
+            $old_disable_restore_security =
+                (bool) ($current_settings["disable_restore_security"] ?? false);
             $days_input = isset($_POST["auto_optimize_days"])
                 ? sanitize_text_field(wp_unslash($_POST["auto_optimize_days"]))
                 : "0";
@@ -651,7 +648,8 @@ class OPTISTATE_Settings_Manager
                 $old_time !== $time_input ||
                 $old_email !== $email_notifications ||
                 $old_auto_backup_only !== $auto_backup_only ||
-                $old_max_backups !== $max_backups;
+                $old_max_backups !== $max_backups ||
+                $old_disable_restore_security !== $disable_restore_security;
             if ($settings_changed) {
                 $this->main_plugin->log_entry(
                     "⚙️ " .
@@ -885,6 +883,7 @@ class OPTISTATE_Settings_Manager
                     $validated_cron_state
                 );
                 delete_transient("optistate_cron_jobs_cache");
+                delete_transient("optistate_cron_slowed_schedules");
             }
             if (
                 !empty($validated_settings["login_protect_enabled"]) ||
@@ -1275,9 +1274,10 @@ class OPTISTATE_Settings_Manager
             $old_backup =
                 (bool) ($current_settings["one_click_backup"] ?? false);
             $backup_changed = $old_backup !== $one_click_backup;
-            $current_settings["one_click_extra_items"] = $items;
-            $current_settings["one_click_backup"] = $one_click_backup;
-            $success = $this->save_persistent_settings($current_settings);
+            $success = $this->save_persistent_settings([
+                "one_click_extra_items" => $items,
+                "one_click_backup"      => $one_click_backup,
+            ]);
             if ($success) {
                 if ($extra_changed || $backup_changed) {
                     $this->main_plugin->log_entry(

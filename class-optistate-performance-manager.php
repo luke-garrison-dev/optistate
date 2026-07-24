@@ -62,7 +62,7 @@ class OPTISTATE_Performance_Manager
         if ($definitions === null) {
             $has_persistent_cache = wp_using_ext_object_cache();
             $manual_base =
-                plugin_dir_url(dirname(__FILE__)) . "manual/v1.4.3.html";
+                plugin_dir_url(dirname(__FILE__)) . "manual/v" . OPTISTATE::VERSION . ".html";
             $site_url_encoded = rawurlencode(trailingslashit(get_site_url()));
             $manual_link =
                 '<a href="' .
@@ -730,7 +730,7 @@ class OPTISTATE_Performance_Manager
                 isset($feature_def["options"]) &&
                 is_array($feature_def["options"])
             ) {
-                if (array_key_exists($value, $feature_def["options"])) {
+                if (is_string($value) && array_key_exists($value, $feature_def["options"])) {
                     $validated[$key] = sanitize_key($value);
                 } else {
                     $validated[$key] = $feature_def["default"];
@@ -786,6 +786,7 @@ class OPTISTATE_Performance_Manager
     private function _cron_manager_set_state(array $state): bool
     {
         $this->cron_manager_state_cache = $state;
+        delete_transient("optistate_cron_slowed_schedules");
         return $this->main_plugin->set_store_data("cron_manager_state", $state);
     }
     public function cleanup_orphaned_cron_state(): void
@@ -841,20 +842,34 @@ class OPTISTATE_Performance_Manager
     }
     public function register_custom_cron_schedules(array $schedules): array
     {
-        $state = $this->_cron_manager_get_state();
-        foreach ($state as $entry) {
-            if (isset($entry["slowed_schedule"], $entry["slowed_interval"])) {
-                $schedule_name = $entry["slowed_schedule"];
-                $interval = (int) $entry["slowed_interval"];
-                if (!isset($schedules[$schedule_name]) && $interval > 0) {
-                    $schedules[$schedule_name] = [
-                        "interval" => $interval,
-                        "display" => sprintf(
-                            __("Slowed (%s seconds)", "optistate"),
-                            number_format_i18n($interval)
-                        ),
-                    ];
+        $slowed = get_transient("optistate_cron_slowed_schedules");
+        if (!is_array($slowed)) {
+            $slowed = [];
+            $state = $this->_cron_manager_get_state();
+            foreach ($state as $entry) {
+                if (
+                    isset($entry["slowed_schedule"], $entry["slowed_interval"]) &&
+                    (int) $entry["slowed_interval"] > 0
+                ) {
+                    $slowed[(string) $entry["slowed_schedule"]] =
+                        (int) $entry["slowed_interval"];
                 }
+            }
+            set_transient(
+                "optistate_cron_slowed_schedules",
+                $slowed,
+                15 * MINUTE_IN_SECONDS
+            );
+        }
+        foreach ($slowed as $schedule_name => $interval) {
+            if (!isset($schedules[$schedule_name])) {
+                $schedules[$schedule_name] = [
+                    "interval" => $interval,
+                    "display" => sprintf(
+                        __("Slowed (%s seconds)", "optistate"),
+                        number_format_i18n($interval)
+                    ),
+                ];
             }
         }
         return $schedules;
@@ -1937,7 +1952,10 @@ class OPTISTATE_Performance_Manager
         $ip_blocker_enabled = !empty($global_settings["ip_blocker_enabled"]);
         $whitelist = $global_settings["ip_whitelist"] ?? [];
         if ($ip_blocker_enabled && !empty($whitelist)) {
-            $client_ip = OPTISTATE_Utils::get_client_ip();
+            $client_ip = OPTISTATE_Utils::get_client_ip(
+                !empty($global_settings["cloudflare_enabled"]),
+                $global_settings["custom_trusted_proxies"] ?? []
+            );
             foreach ($whitelist as $entry) {
                 if (OPTISTATE_Utils::ip_in_range($client_ip, $entry)) {
                     return;
