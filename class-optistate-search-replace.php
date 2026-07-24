@@ -931,6 +931,7 @@ class OPTISTATE_Search_Replace
 
     private function resolve_tables(array $tables_input): array
     {
+        global $wpdb;
         $scannable = $this->get_scannable_tables();
         if (empty($scannable)) {
             return [];
@@ -941,10 +942,26 @@ class OPTISTATE_Search_Replace
             $tables = array_intersect($tables_input, $scannable);
         }
         $protected = array_merge(
-            OPTISTATE_Utils::get_all_excluded_tables(),
+            OPTISTATE_Utils::get_optistate_core_excluded_tables(),
             self::get_additional_protected_tables()
         );
-        return array_values(array_diff($tables, $protected));
+        $tables = array_diff($tables, $protected);
+        $scratch_prefixes = [];
+        foreach (["optistate_old_", "optistate_temp_", "trash_"] as $suffix) {
+            $scratch_prefixes[] = $wpdb->prefix . $suffix;
+        }
+        return array_values(
+            array_filter($tables, static function ($table) use (
+                $scratch_prefixes
+            ) {
+                foreach ($scratch_prefixes as $prefix) {
+                    if (strncmp($table, $prefix, strlen($prefix)) === 0) {
+                        return false;
+                    }
+                }
+                return true;
+            })
+        );
     }
 
     private static function get_additional_protected_tables(): array
@@ -968,6 +985,9 @@ class OPTISTATE_Search_Replace
         $this->protected_options_cache = [
             "optistate_settings",
             "active_plugins",
+            "active_sitewide_plugins",
+            "site_admins",
+            "wpmu_upgrade_site",
             "wp_user_roles",
             "cron",
             "db_version",
@@ -985,44 +1005,51 @@ class OPTISTATE_Search_Replace
         return $this->deferred_options_cache;
     }
 
-    private function build_options_exclude(): array
+    private function build_protected_key_exclude(string $key_column): array
     {
-        if ($this->options_exclude_cache !== null) {
-            return $this->options_exclude_cache;
+        if (isset($this->options_exclude_cache[$key_column])) {
+            return $this->options_exclude_cache[$key_column];
         }
         global $wpdb;
+        if ($this->options_exclude_cache === null) {
+            $this->options_exclude_cache = [];
+        }
+        $key_q = OPTISTATE_Utils::escape_identifier($key_column);
         $protected = $this->get_protected_options();
         $sql = "";
         $values = [];
         if (!empty($protected)) {
             $sql .=
-                " AND `option_name` NOT IN (" .
+                " AND $key_q NOT IN (" .
                 implode(", ", array_fill(0, count($protected), "%s")) .
                 ")";
             $values = array_merge($values, $protected);
         }
         foreach (self::OPTISTATE_TRANSIENT_PREFIXES as $prefix) {
-            $sql .= " AND `option_name` NOT LIKE %s";
+            $sql .= " AND $key_q NOT LIKE %s";
             $values[] = $wpdb->esc_like($prefix) . "%";
         }
-        $this->options_exclude_cache = ["sql" => $sql, "values" => $values];
-        return $this->options_exclude_cache;
+        $this->options_exclude_cache[$key_column] = [
+            "sql" => $sql,
+            "values" => $values,
+        ];
+        return $this->options_exclude_cache[$key_column];
     }
 
-    private function should_protect_option(string $option_name): string
+    private function should_protect_key(string $key): string
     {
-        if ($option_name === "") {
+        if ($key === "") {
             return "";
         }
-        if (in_array($option_name, $this->get_protected_options(), true)) {
+        if (in_array($key, $this->get_protected_options(), true)) {
             return "skip";
         }
         foreach (self::OPTISTATE_TRANSIENT_PREFIXES as $prefix) {
-            if (strpos($option_name, $prefix) === 0) {
+            if (strpos($key, $prefix) === 0) {
                 return "skip";
             }
         }
-        if (in_array($option_name, $this->get_deferred_options(), true)) {
+        if (in_array($key, $this->get_deferred_options(), true)) {
             return "defer";
         }
         return "";
@@ -1031,10 +1058,15 @@ class OPTISTATE_Search_Replace
     {
         global $wpdb;
         $immutable = [];
+        $kv = $this->get_key_value_columns($table);
+        if ($kv !== null) {
+            $immutable[] = $kv["key"];
+        }
         if ($table === $wpdb->options) {
-            $immutable = ["option_name", "autoload"];
+            $immutable[] = "autoload";
         } elseif ($table === $wpdb->users) {
-            $immutable = ["user_pass", "user_activation_key"];
+            $immutable[] = "user_pass";
+            $immutable[] = "user_activation_key";
         }
         $immutable = apply_filters(
             "optistate_sr_immutable_columns",
@@ -1046,10 +1078,34 @@ class OPTISTATE_Search_Replace
         }
         return array_values(array_unique(array_map("strval", $immutable)));
     }
-    private function get_context_columns(string $table): array
+    private function get_key_value_columns(string $table): ?array
     {
         global $wpdb;
-        return $table === $wpdb->options ? ["option_name"] : [];
+        if ($table === $wpdb->options) {
+            return [
+                "key" => "option_name",
+                "value" => "option_value",
+                "cache_group" => "options",
+            ];
+        }
+        if (
+            is_multisite() &&
+            isset($wpdb->sitemeta) &&
+            $table === $wpdb->sitemeta
+        ) {
+            return [
+                "key" => "meta_key",
+                "value" => "meta_value",
+                "cache_group" => "site-options",
+            ];
+        }
+        return null;
+    }
+
+    private function get_context_columns(string $table): array
+    {
+        $kv = $this->get_key_value_columns($table);
+        return $kv === null ? [] : [$kv["key"]];
     }
 
     private function get_replaceable_columns(
@@ -1278,58 +1334,87 @@ class OPTISTATE_Search_Replace
         $state["errors"][] = $message;
     }
 
-    private function remember_touched_option(
+    private function remember_touched_key(
         array &$state,
-        string $option_name
+        string $cache_group,
+        string $key
     ): void {
-        if (
-            !isset($state["touched_options"]) ||
-            !is_array($state["touched_options"])
-        ) {
-            $state["touched_options"] = [];
-        }
-        if (isset($state["touched_options"][$option_name])) {
+        if ($cache_group === "" || $key === "") {
             return;
         }
-        if (count($state["touched_options"]) >= self::MAX_TOUCHED_OPTIONS) {
+        if (!isset($state["touched"]) || !is_array($state["touched"])) {
+            $state["touched"] = [];
+        }
+        if (
+            !isset($state["touched"][$cache_group]) ||
+            !is_array($state["touched"][$cache_group])
+        ) {
+            $state["touched"][$cache_group] = [];
+        }
+        if (isset($state["touched"][$cache_group][$key])) {
+            return;
+        }
+        $total = 0;
+        foreach ($state["touched"] as $group_keys) {
+            $total += count($group_keys);
+        }
+        if ($total >= self::MAX_TOUCHED_OPTIONS) {
             $state["touched_overflow"] = true;
             return;
         }
-        $state["touched_options"][$option_name] = true;
+        $state["touched"][$cache_group][$key] = true;
     }
     private function flush_options_cache(array $touched, bool $overflow): void
     {
+        $network_id = is_multisite() ? (int) get_current_network_id() : 0;
         if ($overflow) {
-            if (
+            $can_flush_group =
                 function_exists("wp_cache_supports") &&
                 function_exists("wp_cache_flush_group") &&
-                wp_cache_supports("flush_group")
-            ) {
+                wp_cache_supports("flush_group");
+            if ($can_flush_group) {
                 wp_cache_flush_group("options");
+                if ($network_id > 0) {
+                    wp_cache_flush_group("site-options");
+                }
             } elseif (function_exists("wp_cache_flush")) {
                 wp_cache_flush();
             }
         } else {
-            foreach (array_keys($touched) as $option) {
-                wp_cache_delete((string) $option, "options");
+            foreach ($touched as $group => $keys) {
+                if (!is_array($keys)) {
+                    continue;
+                }
+                foreach (array_keys($keys) as $key) {
+                    if ($group === "site-options") {
+                        wp_cache_delete(
+                            $network_id . ":" . (string) $key,
+                            "site-options"
+                        );
+                    } else {
+                        wp_cache_delete((string) $key, "options");
+                    }
+                }
             }
         }
         wp_cache_delete("alloptions", "options");
         wp_cache_delete("notoptions", "options");
+        if ($network_id > 0) {
+            wp_cache_delete($network_id . ":notoptions", "site-options");
+        }
     }
     private function checkpoint_options_cache(array &$state): void
     {
         $touched =
-            isset($state["touched_options"]) &&
-            is_array($state["touched_options"])
-                ? $state["touched_options"]
+            isset($state["touched"]) && is_array($state["touched"])
+                ? $state["touched"]
                 : [];
         $overflow = !empty($state["touched_overflow"]);
         if (empty($touched) && !$overflow) {
             return;
         }
         $this->flush_options_cache($touched, $overflow);
-        $state["touched_options"] = [];
+        $state["touched"] = [];
         $state["touched_overflow"] = false;
     }
 
@@ -1615,8 +1700,9 @@ class OPTISTATE_Search_Replace
         $where_fmt = implode(" OR ", $where_parts);
         $exclude_sql = "";
         $exclude_values = [];
-        if ($table === $wpdb->options) {
-            $exclude = $this->build_options_exclude();
+        $kv_columns = $this->get_key_value_columns($table);
+        if ($kv_columns !== null) {
+            $exclude = $this->build_protected_key_exclude($kv_columns["key"]);
             $exclude_sql = $exclude["sql"];
             $exclude_values = $exclude["values"];
         }
@@ -1877,7 +1963,7 @@ class OPTISTATE_Search_Replace
                 "deferred_updates" => [],
                 "gc_counter" => 0,
                 "occurrences_replaced" => 0,
-                "touched_options" => [],
+                "touched" => [],
                 "touched_overflow" => false,
                 "case_sensitive" => $case_sensitive_post,
                 "partial_match" => $partial_match_post,
@@ -2015,12 +2101,14 @@ class OPTISTATE_Search_Replace
         }
         self::release_session($transient_key, $lock_key);
         $this->flush_options_cache(
-            isset($state["touched_options"]) &&
-                is_array($state["touched_options"])
-                ? $state["touched_options"]
+            isset($state["touched"]) && is_array($state["touched"])
+                ? $state["touched"]
                 : [],
             !empty($state["touched_overflow"])
         );
+        if ($state["rows_affected"] > 0) {
+            $this->main_plugin->clear_stats_cache();
+        }
         $this->main_plugin->log_entry(
             sprintf(
                 "↳↰ Search & Replace Executed by {username}: '%s' -> '%s' (%s rows)",
@@ -2056,12 +2144,14 @@ class OPTISTATE_Search_Replace
     ): string {
         self::release_session($transient_key, $lock_key);
         $this->flush_options_cache(
-            isset($state["touched_options"]) &&
-                is_array($state["touched_options"])
-                ? $state["touched_options"]
+            isset($state["touched"]) && is_array($state["touched"])
+                ? $state["touched"]
                 : [],
             !empty($state["touched_overflow"])
         );
+        if (!empty($state["rows_affected"])) {
+            $this->main_plugin->clear_stats_cache();
+        }
         OPTISTATE_Utils::send_json_error($message, 500, [
             "rows" => (int) ($state["rows_affected"] ?? 0),
         ]);
@@ -2100,9 +2190,11 @@ class OPTISTATE_Search_Replace
         $where_fmt = implode(" OR ", $where_parts);
         $exclude_sql = "";
         $exclude_values = [];
-        $is_options_table = $table === $wpdb->options;
-        if ($is_options_table) {
-            $exclude = $this->build_options_exclude();
+        $kv_columns = $this->get_key_value_columns($table);
+        $key_column = $kv_columns === null ? "" : $kv_columns["key"];
+        $cache_group = $kv_columns === null ? "" : $kv_columns["cache_group"];
+        if ($kv_columns !== null) {
+            $exclude = $this->build_protected_key_exclude($key_column);
             $exclude_sql = $exclude["sql"];
             $exclude_values = $exclude["values"];
         }
@@ -2242,12 +2334,14 @@ class OPTISTATE_Search_Replace
                 }
                 $pk_val = $row[$primary_key];
                 $last_pk_in_batch = $pk_val;
-                $option_name = $is_options_table
-                    ? (string) ($row["option_name"] ?? "")
-                    : "";
-                $protection = $is_options_table
-                    ? $this->should_protect_option($option_name)
-                    : "";
+                $row_key =
+                    $key_column !== ""
+                        ? (string) ($row[$key_column] ?? "")
+                        : "";
+                $protection =
+                    $key_column !== ""
+                        ? $this->should_protect_key($row_key)
+                        : "";
                 if ($protection === "skip") {
                     continue;
                 }
@@ -2333,8 +2427,12 @@ class OPTISTATE_Search_Replace
                     }
                     if ($result > 0) {
                         $batch_rows++;
-                        if ($option_name !== "") {
-                            $this->remember_touched_option($state, $option_name);
+                        if ($row_key !== "") {
+                            $this->remember_touched_key(
+                                $state,
+                                $cache_group,
+                                $row_key
+                            );
                         }
                     }
                 }
@@ -2343,7 +2441,11 @@ class OPTISTATE_Search_Replace
                         "table" => $table,
                         "data" => $deferred_data,
                         "where" => [$primary_key => $pk_val],
-                        "option_name" => $option_name,
+                        "key" => $row_key,
+                        "value" => $kv_columns === null
+                            ? null
+                            : ($deferred_data[$kv_columns["value"]] ?? null),
+                        "cache_group" => $cache_group,
                     ];
                 }
             }
@@ -2450,7 +2552,7 @@ class OPTISTATE_Search_Replace
                     $deferred["where"]
                 );
                 if ($result === false || $wpdb->last_error !== "") {
-                    $failed_option = (string) ($deferred["option_name"] ?? "");
+                    $failed_option = (string) ($deferred["key"] ?? "");
                     OPTISTATE_Utils::log_critical_error(
                         "Deferred search/replace update failed",
                         [
@@ -2470,10 +2572,11 @@ class OPTISTATE_Search_Replace
                 }
                 if ($result > 0) {
                     $deferred_rows++;
-                    $option_name = (string) ($deferred["option_name"] ?? "");
-                    if ($option_name !== "") {
-                        $this->remember_touched_option($state, $option_name);
-                    }
+                    $this->remember_touched_key(
+                        $state,
+                        (string) ($deferred["cache_group"] ?? ""),
+                        (string) ($deferred["key"] ?? "")
+                    );
                 }
             }
             if ($failed_option !== null) {
@@ -2543,23 +2646,31 @@ class OPTISTATE_Search_Replace
     {
         $urls = [];
         foreach ($state["deferred_updates"] as $deferred) {
-            $option = (string) ($deferred["option_name"] ?? "");
-            if ($option !== "siteurl" && $option !== "home") {
+            $key = (string) ($deferred["key"] ?? "");
+            if ($key !== "siteurl" && $key !== "home") {
                 continue;
             }
-            if (!isset($deferred["data"]["option_value"])) {
+            if (!isset($deferred["value"])) {
                 continue;
             }
-            $urls[$option] = $deferred["data"]["option_value"];
+            $urls[] = ["key" => $key, "value" => $deferred["value"]];
         }
         if (empty($urls)) {
             return true;
         }
-        foreach ($urls as $option => $value) {
-            if (!is_string($value) || !self::is_valid_site_url($value)) {
+        foreach ($urls as $entry) {
+            if (
+                !is_string($entry["value"]) ||
+                !self::is_valid_site_url($entry["value"])
+            ) {
                 OPTISTATE_Utils::log_critical_error(
                     "siteurl/home would become invalid after replacement",
-                    ["error" => sprintf("option=%s failed URL validation", $option)]
+                    [
+                        "error" => sprintf(
+                            "option=%s failed URL validation",
+                            $entry["key"]
+                        ),
+                    ]
                 );
                 return false;
             }
