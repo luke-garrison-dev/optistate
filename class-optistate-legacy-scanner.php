@@ -300,10 +300,55 @@ class OPTISTATE_Legacy_Scanner
             !isset($state["results"], $state["db"], $state["folders"]) ||
             !is_array($state["results"]) ||
             !is_array($state["db"]) ||
-            !is_array($state["folders"])
+            !is_array($state["folders"]) ||
+            !isset(
+                $state["max_results"],
+                $state["max_folders"],
+                $state["folder_count"]
+            )
         ) {
             return null;
         }
+
+        $state["max_results"] = (int) $state["max_results"];
+        $state["max_folders"] = (int) $state["max_folders"];
+        $state["folder_count"] = (int) $state["folder_count"];
+
+        if (
+            $state["max_results"] < 1 ||
+            $state["max_folders"] < 0 ||
+            $state["folder_count"] < 0
+        ) {
+            return null;
+        }
+
+        $state["db"]["options_cursor"] = (string) ($state["db"][
+            "options_cursor"
+        ] ?? "");
+        $state["db"]["options_done"] = !empty($state["db"]["options_done"]);
+        $state["db"]["tables_cursor"] = (string) ($state["db"][
+            "tables_cursor"
+        ] ?? "");
+        $state["db"]["tables_done"] = !empty($state["db"]["tables_done"]);
+
+        if (
+            !isset($state["db"]["meta"]) ||
+            !is_array($state["db"]["meta"])
+        ) {
+            $state["db"]["meta"] = [];
+        }
+
+        $state["folders"]["key"] = (string) ($state["folders"]["key"] ?? "");
+        $state["folders"]["count"] = max(
+            0,
+            (int) ($state["folders"]["count"] ?? 0)
+        );
+        $state["folders"]["index"] = max(
+            0,
+            (int) ($state["folders"]["index"] ?? 0)
+        );
+        $state["folders"]["done"] = !empty($state["folders"]["done"]);
+
         $state["seen"] = [];
 
         foreach ($state["results"] as $result) {

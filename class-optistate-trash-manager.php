@@ -14,6 +14,7 @@ class OPTISTATE_Trash_Manager
 
     private static ?bool $table_exists_cache = null;
     private static bool $table_verified = false;
+    private static bool $table_cache_dirty = false;
 
     private const TRASH_MAX_AGE = 14 * DAY_IN_SECONDS;
     private const TABLE_TRANSIENT = "optistate_trash_table_exists";
@@ -402,6 +403,26 @@ class OPTISTATE_Trash_Manager
         return array_values(array_unique($resolved));
     }
 
+    private function mark_table_cache_dirty(): void
+    {
+        if (self::$table_cache_dirty) {
+            return;
+        }
+
+        self::$table_cache_dirty = true;
+
+        add_action("shutdown", [$this, "flush_table_cache"], 1);
+    }
+    public function flush_table_cache(): void
+    {
+        if (!self::$table_cache_dirty) {
+            return;
+        }
+
+        self::$table_cache_dirty = false;
+
+        OPTISTATE_Utils::invalidate_table_cache();
+    }
     private function is_inside_trash_dir(string $path): bool
     {
         if ($path === "") {
@@ -904,7 +925,8 @@ class OPTISTATE_Trash_Manager
 
         OPTISTATE_Utils::clear_table_existence_cache($table_name);
         OPTISTATE_Utils::clear_table_existence_cache($trash_table_name);
-        OPTISTATE_Utils::invalidate_table_cache();
+
+        $this->mark_table_cache_dirty();
 
         $this->main_plugin->log_entry(
             sprintf(
@@ -1476,7 +1498,8 @@ class OPTISTATE_Trash_Manager
 
         OPTISTATE_Utils::clear_table_existence_cache($trash_table);
         OPTISTATE_Utils::clear_table_existence_cache($original_table);
-        OPTISTATE_Utils::invalidate_table_cache();
+
+        $this->mark_table_cache_dirty();
 
         return true;
     }
@@ -2045,7 +2068,8 @@ class OPTISTATE_Trash_Manager
                 });
 
                 OPTISTATE_Utils::clear_table_existence_cache($target);
-                OPTISTATE_Utils::invalidate_table_cache();
+
+                $this->mark_table_cache_dirty();
 
                 return !OPTISTATE_Utils::table_exists($target);
 
@@ -2243,6 +2267,8 @@ class OPTISTATE_Trash_Manager
             );
         }
 
+        $this->flush_table_cache();
+
         return $count;
     }
     public function delete_all_trash(): array
@@ -2349,6 +2375,8 @@ class OPTISTATE_Trash_Manager
             );
         }
 
+        $this->flush_table_cache();
+
         $this->main_plugin->log_entry($log_message . " by {username}");
 
         return [
@@ -2442,7 +2470,11 @@ class OPTISTATE_Trash_Manager
         }
 
         try {
-            if ($this->permanently_delete($key)) {
+            $deleted = $this->permanently_delete($key);
+
+            $this->flush_table_cache();
+
+            if ($deleted) {
                 OPTISTATE_Utils::send_json_success([
                     "message" => __("Item permanently deleted.", "optistate"),
                 ]);
