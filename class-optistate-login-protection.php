@@ -844,10 +844,7 @@ class OPTISTATE_Login_Protection
         check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
         $this->main_plugin->settings_manager->check_user_access();
         if (!OPTISTATE_Utils::check_rate_limit("unblock_user", 10)) {
-            OPTISTATE_Utils::send_json_error(
-                OPTISTATE_Utils::get_rate_limit_message(true),
-                429
-            );
+            OPTISTATE_Utils::send_rate_limit_error(true);
             return;
         }
         if (!isset($_POST["ip_address"])) {

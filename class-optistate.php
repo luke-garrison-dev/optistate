@@ -2592,7 +2592,11 @@ final class OPTISTATE
             $force_refresh &&
             !OPTISTATE_Utils::check_rate_limit("refresh_stats", 5)
         ) {
-            OPTISTATE_Utils::send_rate_limit_error();
+            OPTISTATE_Utils::send_json_error(
+                OPTISTATE_Utils::get_rate_limit_message(false),
+                429,
+                ["stats" => $this->get_combined_database_statistics(false)]
+            );
 
             return;
         }
