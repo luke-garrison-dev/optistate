@@ -882,11 +882,6 @@ class OPTISTATE_Utils
         return $decrypted;
     }
 
-    public static function is_encrypted($value): bool
-    {
-        return is_string($value) && strpos($value, 'enc:') === 0;
-    }
-
     public static function check_rate_limit(string $action, int $duration_in_seconds = 10): bool
     {
         $user_id = get_current_user_id();
