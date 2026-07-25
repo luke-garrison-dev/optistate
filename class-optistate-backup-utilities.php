@@ -804,4 +804,62 @@ if ($metadata && isset($metadata["database_name"])) {
         }
         return strpos($line, "-- Created by WP Optimal State Plugin") !== false;
     }
+    public static function scan_sql_for_php_threats(string $sample): bool
+    {
+        return (bool) preg_match(
+            '/<\?php|<\?=|<\s*\?|script\s*language\s*=\s*["\']?php["\']?|eval\s*\(|exec\s*\(|system\s*\(|passthru\s*\(|shell_exec\s*\(|base64_decode/i',
+            $sample
+        );
+    }
+    public static function cleanup_failed_upload(
+        ?object $wp_filesystem,
+        OPTISTATE_Process_Store $process_store,
+        string $path,
+        string $session_key
+    ): bool {
+        $upload_dir      = wp_upload_dir();
+        $temp_dir        = trailingslashit($upload_dir["basedir"]) . OPTISTATE::TEMP_DIR_NAME . "/";
+        $normalized_path = wp_normalize_path($path);
+        $normalized_temp = wp_normalize_path($temp_dir);
+
+        if (strpos($normalized_path, $normalized_temp) !== 0) {
+            $process_store->delete($session_key);
+            return false;
+        }
+
+        if (strpos($normalized_path, "..") !== false) {
+            $process_store->delete($session_key);
+            return false;
+        }
+
+        if ($wp_filesystem && $wp_filesystem->exists($normalized_path)) {
+            $deleted = $wp_filesystem->delete($normalized_path);
+            if (!$deleted) {
+                OPTISTATE_Utils::log_critical_error(
+                    "Failed to delete failed upload file",
+                    ["path" => $normalized_path]
+                );
+            }
+        }
+
+        $process_store->delete($session_key);
+        return true;
+    }
+    public static function protect_temp_directory(
+        OPTISTATE $main_plugin,
+        string $temp_dir
+    ): void {
+        $rules = [
+            "# WP Optimal State - Secure Temp Restore Directory",
+            "Options -Indexes",
+            "<IfModule mod_authz_core.c>",
+            " Require all denied",
+            "</IfModule>",
+            "<IfModule !mod_authz_core.c>",
+            " Order deny,allow",
+            " Deny from all",
+            "</IfModule>",
+        ];
+        $main_plugin->ensure_directory($temp_dir, 0750, $rules);
+    }
 }

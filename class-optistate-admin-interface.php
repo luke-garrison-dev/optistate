@@ -589,7 +589,7 @@ foreach ($recent_posts as $post) {
     "Optimize Autoloaded Options",
     "optistate"
 ); ?></button> </div> <?php
-$autoload_backup = $plugin->advanced_tools->get_autoload_backup();
+$autoload_backup = OPTISTATE_Tools_Utilities::get_autoload_backup($plugin);
 $has_backup =
     $autoload_backup && is_array($autoload_backup) && !empty($autoload_backup);
 $backup_count = $has_backup ? count($autoload_backup) : 0;

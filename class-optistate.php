@@ -121,6 +121,7 @@ final class OPTISTATE
         "performance_audit",
         "health_score",
         "db_backup_manager",
+        "db_backup_upload",
         "server_caching",
         "login_protection",
         "two_factor",
@@ -218,6 +219,7 @@ final class OPTISTATE
     {
         $services = [
             "db_backup_manager",
+            "db_backup_upload",
             "advanced_tools",
             "login_protection",
             "cleanup_functions",
@@ -404,6 +406,17 @@ final class OPTISTATE
                     $this,
                     (int) ($settings["max_backups"] ?? 3),
                     $this->get_service("process_store")
+                );
+
+            case "db_backup_upload":
+                $upload_dir = wp_upload_dir();
+                $backup_dir = trailingslashit($upload_dir["basedir"]) . OPTISTATE::BACKUP_DIR_NAME . "/";
+
+                return new OPTISTATE_Backup_Upload(
+                    $this,
+                    $this->get_service("process_store"),
+                    $this->get_filesystem(),
+                    $backup_dir
                 );
 
             case "two_factor":

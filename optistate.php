@@ -45,6 +45,8 @@ define('OPTISTATE_INCLUDES_DIR', OPTISTATE_PLUGIN_DIR . 'includes/');
         'optistate_presets'              => 'class-optistate-presets.php',
         'optistate_backup_engine'        => 'class-optistate-backup-engine.php',
         'optistate_backup_utilities'     => 'class-optistate-backup-utilities.php',
+	    'optistate_tools_utilities'      => 'class-optistate-tools-utilities.php',
+	    'optistate_backup_upload'        => 'class-optistate-backup-upload.php',
         'optistate_db_wrapper'           => 'class-optistate-db-wrapper.php',
         'optistate_restore_engine'       => 'class-optistate-restore-engine.php',
         'optistate_sql_parser'           => 'class-optistate-sql-parser.php',
