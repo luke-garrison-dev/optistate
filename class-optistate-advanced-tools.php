@@ -154,9 +154,20 @@ class OPTISTATE_Advanced_Tools
     }
     private static function invalidate_analysis_caches(): void
     {
-        delete_transient("optistate_table_analysis_" . md5(DB_NAME));
-        delete_transient("optistate_index_analysis_" . md5(DB_NAME));
+        $table_key = "optistate_table_analysis_" . md5(DB_NAME);
+        $index_key = "optistate_index_analysis_" . md5(DB_NAME);
+
+        wp_cache_delete($table_key, "optistate");
+        delete_transient($table_key);
+
+        wp_cache_delete($index_key, "optistate");
+        delete_transient($index_key);
     }
+    private static function mark_db_lock_acquired(string $lock_name): void
+    {
+        unset(self::$released_db_locks[$lock_name]);
+    }
+
     private static function release_db_lock(string $lock_name): void
     {
         if (isset(self::$released_db_locks[$lock_name])) {
@@ -261,7 +272,7 @@ class OPTISTATE_Advanced_Tools
 
         try {
             $cache_key = "optistate_table_analysis_" . md5(DB_NAME);
-            $cached_analysis = get_transient($cache_key);
+            $cached_analysis = wp_cache_get($cache_key, "optistate");
             if (is_array($cached_analysis)) {
                 OPTISTATE_Utils::send_json_success($cached_analysis);
                 return;
@@ -558,7 +569,7 @@ class OPTISTATE_Advanced_Tools
                 $analysis["totals"]["total_tables"]++;
             }
 
-            set_transient($cache_key, $analysis, 5 * MINUTE_IN_SECONDS);
+            wp_cache_set($cache_key, $analysis, "optistate", 300);
             OPTISTATE_Utils::send_json_success($analysis);
         } catch (Throwable $e) {
             OPTISTATE_Utils::log_critical_error(
@@ -726,17 +737,6 @@ class OPTISTATE_Advanced_Tools
                 return;
             }
 
-            $state = $this->load_analyze_state($transient_key);
-            if ($state === null) {
-                OPTISTATE_Utils::send_json_error([
-                    "message" => __(
-                        "Session expired. Please start over.",
-                        "optistate"
-                    ),
-                ]);
-                return;
-            }
-
             global $wpdb;
             $lock_name = "optistate_ar_" . md5($transient_key);
             $lock_acquired = (int) $wpdb->get_var(
@@ -752,6 +752,7 @@ class OPTISTATE_Advanced_Tools
                 return;
             }
 
+            self::mark_db_lock_acquired($lock_name);
             $this->register_lock_release_on_shutdown($lock_name);
             $state = $this->load_analyze_state($transient_key);
             if ($state === null) {
@@ -2134,6 +2135,7 @@ class OPTISTATE_Advanced_Tools
             "errors" => [],
             "details" => [],
             "details_truncated" => false,
+            "listed" => ["optimized" => 0, "skipped" => 0],
         ];
         $backup_data = [];
 
@@ -2255,19 +2257,12 @@ class OPTISTATE_Advanced_Tools
                                 $reason = __("Unknown reason", "optistate");
                         }
                         if ($reason !== "") {
-                            if (
-                                count($results["details"]) <
-                                self::MAX_DETAIL_ROWS
-                            ) {
-                                $results["details"][] = [
-                                    "option" => $name,
-                                    "size" => size_format($size, 2),
-                                    "status" => "skipped",
-                                    "reason" => $reason,
-                                ];
-                            } else {
-                                $results["details_truncated"] = true;
-                            }
+                            self::push_autoload_detail($results, "skipped", [
+                                "option" => $name,
+                                "size" => size_format($size, 2),
+                                "status" => "skipped",
+                                "reason" => $reason,
+                            ]);
                         }
                     }
                 }
@@ -2318,6 +2313,7 @@ class OPTISTATE_Advanced_Tools
                 )
             );
 
+            unset($results["listed"]);
             OPTISTATE_Utils::send_json_success($results);
         } catch (Throwable $e) {
             $error_message = "Optimization failed: " . $e->getMessage();
@@ -2342,6 +2338,7 @@ class OPTISTATE_Advanced_Tools
                 ["file" => $e->getFile(), "line" => $e->getLine()]
             );
 
+            unset($results["listed"]);
             OPTISTATE_Utils::send_json_error(
                 [
                     "message" => $error_message,
@@ -2399,15 +2396,11 @@ class OPTISTATE_Advanced_Tools
                 : 0;
             $results["total_size_reduced"] += $size;
 
-            if (count($results["details"]) < self::MAX_DETAIL_ROWS) {
-                $results["details"][] = [
-                    "option" => $option_name,
-                    "size" => size_format($size, 2),
-                    "status" => "optimized",
-                ];
-            } else {
-                $results["details_truncated"] = true;
-            }
+            self::push_autoload_detail($results, "optimized", [
+                "option" => $option_name,
+                "size" => size_format($size, 2),
+                "status" => "optimized",
+            ]);
         }
 
         return $optimized_options;
@@ -2833,6 +2826,15 @@ class OPTISTATE_Advanced_Tools
                 ]);
                 return;
             }
+            if (!in_array($action_type, ["add", "drop"], true)) {
+                OPTISTATE_Utils::send_json_error([
+                    "message" => __(
+                        "Unsupported index operation.",
+                        "optistate"
+                    ),
+                ]);
+                return;
+            }
 
             $escaped_table = OPTISTATE_Utils::validate_table_name($table);
             if (!$escaped_table) {
@@ -3018,7 +3020,15 @@ class OPTISTATE_Advanced_Tools
             $table = $task["escaped_table"];
             $table_raw = $task["table"];
             $index_name = $task["index_name"];
-            $type = isset($task["type"]) ? $task["type"] : "add";
+            $type = isset($task["type"]) ? (string) $task["type"] : "";
+            if (!in_array($type, ["add", "drop"], true)) {
+                $this->_mark_index_task_error(
+                    $task_id,
+                    $task,
+                    __("Unsupported index operation.", "optistate")
+                );
+                return;
+            }
 
             if (!preg_match('/^[a-zA-Z0-9_]+$/', $index_name)) {
                 $this->_mark_index_task_error(
@@ -3082,9 +3092,16 @@ class OPTISTATE_Advanced_Tools
                     "ALTER TABLE $table ADD INDEX $escaped_index_name (" .
                     implode(", ", $safe_columns) .
                     ")";
-            } else {
+            } elseif ($type === "drop") {
                 $escaped_index_name = "`" . esc_sql($index_name) . "`";
                 $sql = "ALTER TABLE $table DROP INDEX $escaped_index_name";
+            } else {
+                $this->_mark_index_task_error(
+                    $task_id,
+                    $task,
+                    __("Unsupported index operation.", "optistate")
+                );
+                return;
             }
 
             $max_retries = 3;
@@ -4354,6 +4371,7 @@ class OPTISTATE_Advanced_Tools
             return;
         }
 
+        self::mark_db_lock_acquired($lock_name);
         $this->register_lock_release_on_shutdown($lock_name);
 
         try {
@@ -4724,6 +4742,29 @@ class OPTISTATE_Advanced_Tools
             "method" => "Standard",
         ];
     }
+    private static function push_autoload_detail(
+        array &$results,
+        string $bucket,
+        array $detail
+    ): void {
+        if (!isset($results["details"]) || !is_array($results["details"])) {
+            $results["details"] = [];
+        }
+
+        if (!isset($results["listed"][$bucket])) {
+            $results["listed"][$bucket] = 0;
+        }
+
+        if ($results["listed"][$bucket] >= self::MAX_DETAIL_ROWS) {
+            $results["details_truncated"] = true;
+
+            return;
+        }
+
+        $results["details"][] = $detail;
+        $results["listed"][$bucket]++;
+    }
+
     private static function push_detail(array &$results, array $detail): void
     {
         if (!isset($results["details"]) || !is_array($results["details"])) {
