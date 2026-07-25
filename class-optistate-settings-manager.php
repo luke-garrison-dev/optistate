@@ -174,7 +174,7 @@ class OPTISTATE_Settings_Manager
                     break;
                 case "auto_optimize_time":
                     $validated[$key] = preg_match(
-                    '/^(0[0-9]|1[0-9]|2[0-3]):00$/',
+                        '/^(0[0-9]|1[0-9]|2[0-3]):00$/',
                         (string) $value
                     )
                         ? (string) $value
@@ -485,17 +485,27 @@ class OPTISTATE_Settings_Manager
             );
         }
     }
-    public function ajax_save_max_backups(): void
+
+    private function guard_save_request(): bool
     {
         check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
+
         if (!$this->check_user_access()) {
-            return;
+            return false;
         }
+
         if (!OPTISTATE_Utils::check_rate_limit("save_settings", 3)) {
-            OPTISTATE_Utils::send_json_error(
-                OPTISTATE_Utils::get_rate_limit_message(true),
-                429
-            );
+            OPTISTATE_Utils::send_rate_limit_error(true);
+
+            return false;
+        }
+
+        return true;
+    }
+
+    public function ajax_save_max_backups(): void
+    {
+        if (!$this->guard_save_request()) {
             return;
         }
         try {
@@ -552,169 +562,162 @@ class OPTISTATE_Settings_Manager
             );
         }
     }
-public function ajax_save_auto_settings(): void
-{
-    check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
-    if (!$this->check_user_access()) {
-        return;
-    }
-    if (!OPTISTATE_Utils::check_rate_limit("save_settings", 3)) {
-        OPTISTATE_Utils::send_json_error(
-            OPTISTATE_Utils::get_rate_limit_message(true),
-            429
-        );
-        return;
-    }
-    try {
-        $current_settings = $this->get_persistent_settings();
-        $old_days = (int) $current_settings["auto_optimize_days"];
-        $old_time = $current_settings["auto_optimize_time"];
-        $old_email = (bool) $current_settings["email_notifications"];
-        $old_max_backups = (int) $current_settings["max_backups"];
-        $old_auto_backup_only =
-            (bool) $current_settings["auto_backup_only"];
-        $old_disable_restore_security =
-            (bool) ($current_settings["disable_restore_security"] ?? false);
-
-        $days_input = isset($_POST["auto_optimize_days"])
-            ? sanitize_text_field(wp_unslash($_POST["auto_optimize_days"]))
-            : "0";
-        if (!is_string($days_input) || !ctype_digit($days_input)) {
-            OPTISTATE_Utils::send_json_error(
-                __("Invalid data format for days.", "optistate")
-            );
+    public function ajax_save_auto_settings(): void
+    {
+        if (!$this->guard_save_request()) {
             return;
         }
-        $days = (int) $days_input;
-        if ($days < 0 || $days > 365) {
-            OPTISTATE_Utils::send_json_error(
-                __(
-                    "Invalid days value. Must be between 0 and 365.",
-                    "optistate"
-                )
-            );
-            return;
-        }
-        $time_input = isset($_POST["auto_optimize_time"])
-            ? sanitize_text_field(wp_unslash($_POST["auto_optimize_time"]))
-            : "02:00";
-        if (!preg_match('/^(0[0-9]|1[0-9]|2[0-3]):00$/', $time_input)) {
-            OPTISTATE_Utils::send_json_error(
-                __("Invalid time value selected.", "optistate")
-            );
-            return;
-        }
-        $email_notifications =
-            isset($_POST["email_notifications"]) &&
-            $_POST["email_notifications"] === "1";
-        $auto_backup_only =
-            isset($_POST["auto_backup_only"]) &&
-            $_POST["auto_backup_only"] === "1";
-        $max_backups_input = isset($_POST["max_backups"])
-            ? sanitize_text_field(wp_unslash($_POST["max_backups"]))
-            : "3";
-        if (
-            !is_string($max_backups_input) ||
-            !ctype_digit($max_backups_input)
-        ) {
-            OPTISTATE_Utils::send_json_error(
-                __("Invalid data format for max backups.", "optistate")
-            );
-            return;
-        }
-        $max_backups = (int) $max_backups_input;
-        if ($max_backups < 1 || $max_backups > 10) {
-            OPTISTATE_Utils::send_json_error(
-                __(
-                    "Invalid max backups value. Must be between 1 and 10.",
-                    "optistate"
-                )
-            );
-            return;
-        }
-        if (isset($_POST["disable_restore_security"])) {
-            $disable_restore_security =
-                ($_POST["disable_restore_security"] === "1");
-        } else {
-            $disable_restore_security = $old_disable_restore_security;
-        }
+        try {
+            $current_settings = $this->get_persistent_settings();
+            $old_days = (int) $current_settings["auto_optimize_days"];
+            $old_time = $current_settings["auto_optimize_time"];
+            $old_email = (bool) $current_settings["email_notifications"];
+            $old_max_backups = (int) $current_settings["max_backups"];
+            $old_auto_backup_only =
+                (bool) $current_settings["auto_backup_only"];
+            $old_disable_restore_security =
+                (bool) ($current_settings["disable_restore_security"] ?? false);
 
-        $settings_to_save = [
-            "auto_optimize_days"   => $days,
-            "auto_optimize_time"   => $time_input,
-            "email_notifications"  => $email_notifications,
-            "auto_backup_only"     => $auto_backup_only,
-            "max_backups"          => $max_backups,
-        ];
-        if (isset($_POST["disable_restore_security"])) {
-            $settings_to_save["disable_restore_security"] =
-                $disable_restore_security;
-        }
-
-        $this->save_persistent_settings($settings_to_save);
-        $this->main_plugin->update_cron_schedule($days, $time_input);
-
-        $disable_restore_changed =
-            $old_disable_restore_security !== $disable_restore_security;
-        $other_changed =
-            $old_days !== $days ||
-            $old_time !== $time_input ||
-            $old_email !== $email_notifications ||
-            $old_auto_backup_only !== $auto_backup_only ||
-            $old_max_backups !== $max_backups;
-
-        if ($other_changed) {
-            $this->main_plugin->log_entry(
-                "⚙️ " .
+            $days_input = isset($_POST["auto_optimize_days"])
+                ? sanitize_text_field(wp_unslash($_POST["auto_optimize_days"]))
+                : "0";
+            if (!is_string($days_input) || !ctype_digit($days_input)) {
+                OPTISTATE_Utils::send_json_error(
+                    __("Invalid data format for days.", "optistate")
+                );
+                return;
+            }
+            $days = (int) $days_input;
+            if ($days < 0 || $days > 365) {
+                OPTISTATE_Utils::send_json_error(
                     __(
-                        "Automatic Backup & Cleanup Settings Updated by {username}",
+                        "Invalid days value. Must be between 0 and 365.",
                         "optistate"
                     )
-            );
-        }
-
-        if ($disable_restore_changed) {
-            $status = $disable_restore_security
-                ? __("Disabled", "optistate")
-                : __("Enabled", "optistate");
-            $this->main_plugin->log_entry(
-                sprintf(
+                );
+                return;
+            }
+            $time_input = isset($_POST["auto_optimize_time"])
+                ? sanitize_text_field(wp_unslash($_POST["auto_optimize_time"]))
+                : "02:00";
+            if (!preg_match('/^(0[0-9]|1[0-9]|2[0-3]):00$/', $time_input)) {
+                OPTISTATE_Utils::send_json_error(
+                    __("Invalid time value selected.", "optistate")
+                );
+                return;
+            }
+            $email_notifications =
+                isset($_POST["email_notifications"]) &&
+                $_POST["email_notifications"] === "1";
+            $auto_backup_only =
+                isset($_POST["auto_backup_only"]) &&
+                $_POST["auto_backup_only"] === "1";
+            $max_backups_input = isset($_POST["max_backups"])
+                ? sanitize_text_field(wp_unslash($_POST["max_backups"]))
+                : "3";
+            if (
+                !is_string($max_backups_input) ||
+                !ctype_digit($max_backups_input)
+            ) {
+                OPTISTATE_Utils::send_json_error(
+                    __("Invalid data format for max backups.", "optistate")
+                );
+                return;
+            }
+            $max_backups = (int) $max_backups_input;
+            if ($max_backups < 1 || $max_backups > 10) {
+                OPTISTATE_Utils::send_json_error(
                     __(
-                        "🔓 Restore Security Checks %s by {username}",
+                        "Invalid max backups value. Must be between 1 and 10.",
                         "optistate"
-                    ),
-                    $status
+                    )
+                );
+                return;
+            }
+            if (isset($_POST["disable_restore_security"])) {
+                $disable_restore_security =
+                    $_POST["disable_restore_security"] === "1";
+            } else {
+                $disable_restore_security = $old_disable_restore_security;
+            }
+
+            $settings_to_save = [
+                "auto_optimize_days" => $days,
+                "auto_optimize_time" => $time_input,
+                "email_notifications" => $email_notifications,
+                "auto_backup_only" => $auto_backup_only,
+                "max_backups" => $max_backups,
+            ];
+            if (isset($_POST["disable_restore_security"])) {
+                $settings_to_save[
+                    "disable_restore_security"
+                ] = $disable_restore_security;
+            }
+
+            $this->save_persistent_settings($settings_to_save);
+            $this->main_plugin->update_cron_schedule($days, $time_input);
+
+            $disable_restore_changed =
+                $old_disable_restore_security !== $disable_restore_security;
+            $other_changed =
+                $old_days !== $days ||
+                $old_time !== $time_input ||
+                $old_email !== $email_notifications ||
+                $old_auto_backup_only !== $auto_backup_only ||
+                $old_max_backups !== $max_backups;
+
+            if ($other_changed) {
+                $this->main_plugin->log_entry(
+                    "⚙️ " .
+                        __(
+                            "Automatic Backup & Cleanup Settings Updated by {username}",
+                            "optistate"
+                        )
+                );
+            }
+
+            if ($disable_restore_changed) {
+                $status = $disable_restore_security
+                    ? __("Disabled", "optistate")
+                    : __("Enabled", "optistate");
+                $this->main_plugin->log_entry(
+                    sprintf(
+                        __(
+                            "🔓 Restore Security Checks %s by {username}",
+                            "optistate"
+                        ),
+                        $status
+                    )
+                );
+            }
+
+            $final_settings = $this->get_persistent_settings();
+            OPTISTATE_Utils::send_json_success([
+                "message" => __(
+                    "Settings for scheduled tasks saved successfully!",
+                    "optistate"
+                ),
+                "days" => $final_settings["auto_optimize_days"],
+                "time" => $final_settings["auto_optimize_time"],
+                "email_notifications" => $final_settings["email_notifications"],
+                "auto_backup_only" => $final_settings["auto_backup_only"],
+                "max_backups" => $final_settings["max_backups"],
+                "disable_restore_security" =>
+                    $final_settings["disable_restore_security"],
+            ]);
+        } catch (\Throwable $e) {
+            OPTISTATE_Utils::log_critical_error(
+                "ajax_save_auto_settings failed: " . $e->getMessage(),
+                ["trace" => $e->getTraceAsString()]
+            );
+            OPTISTATE_Utils::send_json_error(
+                __(
+                    "An unexpected error occurred while saving the settings.",
+                    "optistate"
                 )
             );
         }
-
-        $final_settings = $this->get_persistent_settings();
-        OPTISTATE_Utils::send_json_success([
-            "message" => __(
-                "Settings for scheduled tasks saved successfully!",
-                "optistate"
-            ),
-            "days"                    => $final_settings["auto_optimize_days"],
-            "time"                    => $final_settings["auto_optimize_time"],
-            "email_notifications"    => $final_settings["email_notifications"],
-            "auto_backup_only"       => $final_settings["auto_backup_only"],
-            "max_backups"            => $final_settings["max_backups"],
-            "disable_restore_security" =>
-                $final_settings["disable_restore_security"],
-        ]);
-    } catch (\Throwable $e) {
-        OPTISTATE_Utils::log_critical_error(
-            "ajax_save_auto_settings failed: " . $e->getMessage(),
-            ["trace" => $e->getTraceAsString()]
-        );
-        OPTISTATE_Utils::send_json_error(
-            __(
-                "An unexpected error occurred while saving the settings.",
-                "optistate"
-            )
-        );
     }
-}
     public function ajax_export_settings(): void
     {
         check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
@@ -722,10 +725,7 @@ public function ajax_save_auto_settings(): void
             return;
         }
         if (!OPTISTATE_Utils::check_rate_limit("impexp_settings", 5)) {
-            OPTISTATE_Utils::send_json_error(
-                OPTISTATE_Utils::get_rate_limit_message(false),
-                429
-            );
+            OPTISTATE_Utils::send_rate_limit_error();
             return;
         }
         try {
@@ -762,10 +762,7 @@ public function ajax_save_auto_settings(): void
             return;
         }
         if (!OPTISTATE_Utils::check_rate_limit("impexp_settings", 5)) {
-            OPTISTATE_Utils::send_json_error(
-                OPTISTATE_Utils::get_rate_limit_message(false),
-                429
-            );
+            OPTISTATE_Utils::send_rate_limit_error();
             return;
         }
         try {
@@ -1007,15 +1004,7 @@ public function ajax_save_auto_settings(): void
     }
     public function ajax_save_user_access(): void
     {
-        check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
-        if (!$this->check_user_access()) {
-            return;
-        }
-        if (!OPTISTATE_Utils::check_rate_limit("save_settings", 3)) {
-            OPTISTATE_Utils::send_json_error(
-                OPTISTATE_Utils::get_rate_limit_message(true),
-                429
-            );
+        if (!$this->guard_save_request()) {
             return;
         }
         try {
@@ -1274,15 +1263,7 @@ public function ajax_save_auto_settings(): void
     }
     public function ajax_save_one_click_extra_items(): void
     {
-        check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
-        if (!$this->check_user_access()) {
-            return;
-        }
-        if (!OPTISTATE_Utils::check_rate_limit("save_settings", 3)) {
-            OPTISTATE_Utils::send_json_error(
-                OPTISTATE_Utils::get_rate_limit_message(true),
-                429
-            );
+        if (!$this->guard_save_request()) {
             return;
         }
         try {
@@ -1305,7 +1286,7 @@ public function ajax_save_auto_settings(): void
             $backup_changed = $old_backup !== $one_click_backup;
             $success = $this->save_persistent_settings([
                 "one_click_extra_items" => $items,
-                "one_click_backup"      => $one_click_backup,
+                "one_click_backup" => $one_click_backup,
             ]);
             if ($success) {
                 if ($extra_changed || $backup_changed) {

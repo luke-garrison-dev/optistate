@@ -17,7 +17,6 @@ class OPTISTATE_DB_Wrapper
     private ?int $transaction_start_time = null;
     private array $init_commands = [];
     private array $active_locks = [];
-    private array $persistent_locks = [];
     private ?int $last_ping = null;
     private ?string $cached_wp_timezone = null;
     private bool $timezone_cache_populated = false;
@@ -25,7 +24,7 @@ class OPTISTATE_DB_Wrapper
     {
         register_shutdown_function([$this, "emergency_cleanup"]);
     }
-public function set_session_state(string $query): bool
+    public function set_session_state(string $query): bool
     {
         $result = $this->query($query);
         if (
@@ -106,42 +105,8 @@ public function set_session_state(string $query): bool
     }
     private function refresh_connection(): void
     {
-        $to_replay = $this->persistent_locks;
         $this->close();
         $this->get_connection();
-        if ($this->connection) {
-            if (!empty($to_replay)) {
-                foreach ($to_replay as $lock_name => $timeout) {
-                    $escaped = $this->connection->real_escape_string(
-                        $lock_name
-                    );
-                    $res = @$this->connection->query(
-                        "SELECT GET_LOCK('$escaped', " . (int) $timeout . ")"
-                    );
-                    $reacquired = false;
-                    if ($res instanceof mysqli_result) {
-                        $row = $res->fetch_row();
-                        $reacquired = $row && (int) $row[0] === 1;
-                        $res->free();
-                    }
-                    if ($reacquired) {
-                        $this->persistent_locks[$lock_name] = (int) $timeout;
-                        $this->active_locks[$lock_name] = [
-                            "timeout" => (int) $timeout,
-                            "acquired_at" => time(),
-                            "lock_result" => 1,
-                            "query" => "REPLAY GET_LOCK",
-                        ];
-                    } else {
-                        unset($this->persistent_locks[$lock_name]);
-                        OPTISTATE_Utils::log_critical_error(
-                            "Advisory lock could not be re-acquired after reconnect",
-                            ["lock_name" => $lock_name]
-                        );
-                    }
-                }
-            }
-        }
     }
     public function get_connection(): mysqli
     {
@@ -436,38 +401,6 @@ public function set_session_state(string $query): bool
     {
         return isset($this->active_locks[$lock_name]) &&
             ($this->active_locks[$lock_name]["lock_result"] ?? null) === 1;
-    }
-    public function acquire_persistent_lock(
-        string $lock_name,
-        int $timeout = 5
-    ): bool {
-        $connection = $this->get_connection();
-        $escaped = $connection->real_escape_string($lock_name);
-        $result = $this->query(
-            "SELECT GET_LOCK('$escaped', " . (int) $timeout . ")"
-        );
-        if (!$this->is_lock_held($lock_name)) {
-            return false;
-        }
-        $this->persistent_locks[$lock_name] = (int) $timeout;
-        return true;
-    }
-    public function release_persistent_lock(string $lock_name): bool
-    {
-        unset($this->persistent_locks[$lock_name]);
-        $connection = $this->get_connection();
-        $escaped = $connection->real_escape_string($lock_name);
-        $result = $this->query("SELECT RELEASE_LOCK('$escaped')");
-        if ($result instanceof mysqli_result) {
-            $row = $result->fetch_row();
-            $result->free();
-            return $row && (int) $row[0] === 1;
-        }
-        return false;
-    }
-    public function get_persistent_locks(): array
-    {
-        return array_keys($this->persistent_locks);
     }
     private function track_lock_operation(string $query): void
     {

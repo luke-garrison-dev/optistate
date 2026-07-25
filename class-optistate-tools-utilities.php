@@ -308,12 +308,7 @@ class OPTISTATE_Tools_Utilities
         $main_plugin->settings_manager->check_user_access();
 
         if (!OPTISTATE_Utils::check_rate_limit("preview_autoload", 10)) {
-            OPTISTATE_Utils::send_json_error(
-                [
-                    "message" => OPTISTATE_Utils::get_rate_limit_message(false),
-                ],
-                429
-            );
+            OPTISTATE_Utils::send_rate_limit_error();
             return;
         }
 
@@ -358,12 +353,7 @@ class OPTISTATE_Tools_Utilities
         }
 
         if (!OPTISTATE_Utils::check_rate_limit("heavy_op", 20)) {
-            OPTISTATE_Utils::send_json_error(
-                [
-                    "message" => OPTISTATE_Utils::get_rate_limit_message(false),
-                ],
-                429
-            );
+            OPTISTATE_Utils::send_rate_limit_error();
             return;
         }
 
@@ -598,12 +588,7 @@ class OPTISTATE_Tools_Utilities
         }
 
         if (!OPTISTATE_Utils::check_rate_limit("restore_autoload_backup", 10)) {
-            OPTISTATE_Utils::send_json_error(
-                [
-                    "message" => OPTISTATE_Utils::get_rate_limit_message(false),
-                ],
-                429
-            );
+            OPTISTATE_Utils::send_rate_limit_error();
             return;
         }
 
@@ -1088,12 +1073,7 @@ class OPTISTATE_Tools_Utilities
         $main_plugin->settings_manager->check_user_access();
 
         if (!OPTISTATE_Utils::check_rate_limit("scan_integrity", 10)) {
-            OPTISTATE_Utils::send_json_error(
-                [
-                    "message" => OPTISTATE_Utils::get_rate_limit_message(false),
-                ],
-                429
-            );
+            OPTISTATE_Utils::send_rate_limit_error();
             return;
         }
 
@@ -1239,12 +1219,7 @@ class OPTISTATE_Tools_Utilities
         }
 
         if (!OPTISTATE_Utils::check_rate_limit("fix_integrity", 2)) {
-            OPTISTATE_Utils::send_json_error(
-                [
-                    "message" => OPTISTATE_Utils::get_rate_limit_message(false),
-                ],
-                429
-            );
+            OPTISTATE_Utils::send_rate_limit_error();
             return;
         }
 

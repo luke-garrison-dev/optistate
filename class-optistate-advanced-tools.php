@@ -90,12 +90,7 @@ class OPTISTATE_Advanced_Tools
         $this->main_plugin->settings_manager->check_user_access();
 
         if (!OPTISTATE_Utils::check_rate_limit("table_analysis", 5)) {
-            OPTISTATE_Utils::send_json_error(
-                [
-                    "message" => OPTISTATE_Utils::get_rate_limit_message(false),
-                ],
-                429
-            );
+            OPTISTATE_Utils::send_rate_limit_error();
             return;
         }
 
@@ -424,12 +419,7 @@ class OPTISTATE_Advanced_Tools
         }
 
         if (!OPTISTATE_Utils::check_rate_limit("heavy_op", 20)) {
-            OPTISTATE_Utils::send_json_error(
-                [
-                    "message" => OPTISTATE_Utils::get_rate_limit_message(false),
-                ],
-                429
-            );
+            OPTISTATE_Utils::send_rate_limit_error();
             return;
         }
 
@@ -1499,12 +1489,7 @@ class OPTISTATE_Advanced_Tools
         $this->main_plugin->settings_manager->check_user_access();
 
         if (!OPTISTATE_Utils::check_rate_limit("analyze_indexes", 10)) {
-            OPTISTATE_Utils::send_json_error(
-                [
-                    "message" => OPTISTATE_Utils::get_rate_limit_message(false),
-                ],
-                429
-            );
+            OPTISTATE_Utils::send_rate_limit_error();
             return;
         }
 
@@ -1879,12 +1864,7 @@ class OPTISTATE_Advanced_Tools
         }
 
         if (!OPTISTATE_Utils::check_rate_limit("manage_index", 2)) {
-            OPTISTATE_Utils::send_json_error(
-                [
-                    "message" => OPTISTATE_Utils::get_rate_limit_message(false),
-                ],
-                429
-            );
+            OPTISTATE_Utils::send_rate_limit_error();
             return;
         }
 
@@ -2416,20 +2396,14 @@ class OPTISTATE_Advanced_Tools
 
     public function ajax_delete_table(): void
     {
+        check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
         if (!OPTISTATE_Tools_Utilities::require_post()) {
             return;
         }
-
-        check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
         $this->main_plugin->settings_manager->check_user_access();
 
         if (!OPTISTATE_Utils::check_rate_limit("delete_table", 5)) {
-            OPTISTATE_Utils::send_json_error(
-                [
-                    "message" => OPTISTATE_Utils::get_rate_limit_message(false),
-                ],
-                429
-            );
+            OPTISTATE_Utils::send_rate_limit_error();
             return;
         }
 
@@ -2681,12 +2655,7 @@ class OPTISTATE_Advanced_Tools
             !$is_continuation &&
             !OPTISTATE_Utils::check_rate_limit("heavy_op", 20)
         ) {
-            OPTISTATE_Utils::send_json_error(
-                [
-                    "message" => OPTISTATE_Utils::get_rate_limit_message(false),
-                ],
-                429
-            );
+            OPTISTATE_Utils::send_rate_limit_error();
             return;
         }
         global $wpdb;

@@ -20,6 +20,7 @@ class OPTISTATE_Search_Replace
     private const PREVIEW_MAX_SNIPPETS_PER_CELL = 10;
     private const PREVIEW_SNIPPET_LENGTH = 160;
     private const PREVIEW_HIGHLIGHT_OPEN = '<strong style="background:#ffeb3b;">';
+	private const PREVIEW_HIGHLIGHT_CLOSE = '</strong>';
     private const EXECUTE_BATCH_SIZE = 300;
     private const DRY_RUN_BATCH_SIZE = 200;
     private const CHUNK_TIME_BUDGET = 4.0;
@@ -170,7 +171,12 @@ class OPTISTATE_Search_Replace
             return substr_count($text, $search);
         }
         $count = @preg_match_all(
-            $this->build_pattern($search, $case_sensitive, $partial_match, true),
+            $this->build_pattern(
+                $search,
+                $case_sensitive,
+                $partial_match,
+                true
+            ),
             $text
         );
         if (is_int($count)) {
@@ -240,7 +246,8 @@ class OPTISTATE_Search_Replace
         if ($escaped_search === "" || $preview_text === "") {
             return $preview_text;
         }
-        $replacement = self::PREVIEW_HIGHLIGHT_OPEN . '$0</strong>';
+        $replacement =
+            self::PREVIEW_HIGHLIGHT_OPEN . '$0' . self::PREVIEW_HIGHLIGHT_CLOSE;
         $highlighted = @preg_replace(
             $this->build_pattern(
                 $escaped_search,
@@ -293,11 +300,6 @@ class OPTISTATE_Search_Replace
             0,
             $partial_match
         );
-    }
-
-    public function get_last_replace_count(): int
-    {
-        return $this->last_replace_count;
     }
 
     private static function bsr_unserialize(string $serialized_string)
@@ -636,11 +638,7 @@ class OPTISTATE_Search_Replace
                             isset($data[$body_end]) &&
                             $data[$body_end] === "}"
                         ) {
-                            $result .= substr(
-                                $data,
-                                $i,
-                                $body_end + 1 - $i
-                            );
+                            $result .= substr($data, $i, $body_end + 1 - $i);
                             $i = $body_end + 1;
                             self::mark_value_consumed($stack);
                             continue;
@@ -664,7 +662,9 @@ class OPTISTATE_Search_Replace
                     $i = $semi + 1;
                     if (!empty($stack)) {
                         $top = count($stack) - 1;
-                        $stack[$top]["expect_key"] = !$stack[$top]["expect_key"];
+                        $stack[$top]["expect_key"] = !$stack[$top][
+                            "expect_key"
+                        ];
                     }
                     continue;
                 }
@@ -908,7 +908,10 @@ class OPTISTATE_Search_Replace
                 $owned[] = $table;
                 continue;
             }
-            if ($prefix_len === 0 || strncmp($table, $prefix, $prefix_len) !== 0) {
+            if (
+                $prefix_len === 0 ||
+                strncmp($table, $prefix, $prefix_len) !== 0
+            ) {
                 continue;
             }
             if (
@@ -971,7 +974,9 @@ class OPTISTATE_Search_Replace
             return [];
         }
         return array_values(
-            array_filter(array_map("strval", $tables), static function ($table) {
+            array_filter(array_map("strval", $tables), static function (
+                $table
+            ) {
                 return $table !== "";
             })
         );
@@ -1167,7 +1172,8 @@ class OPTISTATE_Search_Replace
                 true
             ),
             "base_table" =>
-                strtoupper((string) ($row["TABLE_TYPE"] ?? "")) === "BASE TABLE",
+                strtoupper((string) ($row["TABLE_TYPE"] ?? "")) ===
+                "BASE TABLE",
         ];
         wp_cache_set($cache_key, $meta, "optistate_sr", HOUR_IN_SECONDS);
         $request_cache[$table] = $meta;
@@ -1236,7 +1242,9 @@ class OPTISTATE_Search_Replace
 
     private static function parse_column_limit(string $type): ?array
     {
-        if (preg_match('/^\s*(?:var)?char\s*\(\s*(\d+)\s*\)/i', $type, $matches)) {
+        if (
+            preg_match("/^\s*(?:var)?char\s*\(\s*(\d+)\s*\)/i", $type, $matches)
+        ) {
             return ["type" => "char", "length" => (int) $matches[1]];
         }
         $byte_lengths = [
@@ -1245,15 +1253,19 @@ class OPTISTATE_Search_Replace
             "mediumtext" => 16777215,
             "longtext" => 4294967295,
         ];
-        $base = strtolower(trim((string) preg_replace('/[\s(].*$/', "", $type)));
+        $base = strtolower(
+            trim((string) preg_replace('/[\s(].*$/', "", $type))
+        );
         if (isset($byte_lengths[$base])) {
             return ["type" => "byte", "length" => $byte_lengths[$base]];
         }
         return null;
     }
 
-    private static function value_fits_column(string $value, ?array $limit): bool
-    {
+    private static function value_fits_column(
+        string $value,
+        ?array $limit
+    ): bool {
         if ($limit === null) {
             return true;
         }
@@ -1473,10 +1485,7 @@ class OPTISTATE_Search_Replace
         $this->main_plugin->settings_manager->check_user_access();
         $reset = self::read_post_string("reset") === "true";
         if ($reset && !OPTISTATE_Utils::check_rate_limit("sr_dry_run", 5)) {
-            OPTISTATE_Utils::send_json_error(
-                OPTISTATE_Utils::get_rate_limit_message(false),
-                429
-            );
+            OPTISTATE_Utils::send_rate_limit_error();
             return;
         }
         $search = self::read_post_string("search");
@@ -1875,10 +1884,7 @@ class OPTISTATE_Search_Replace
         $this->main_plugin->settings_manager->check_user_access();
         $reset = self::read_post_string("reset") === "true";
         if ($reset && !OPTISTATE_Utils::check_rate_limit("sr_execute", 10)) {
-            OPTISTATE_Utils::send_json_error(
-                OPTISTATE_Utils::get_rate_limit_message(false),
-                429
-            );
+            OPTISTATE_Utils::send_rate_limit_error();
             return;
         }
         $search = self::read_post_string("search");
@@ -2052,7 +2058,10 @@ class OPTISTATE_Search_Replace
                             $table
                         )
                         : sprintf(
-                            __("Skipped %s: no primary key found.", "optistate"),
+                            __(
+                                "Skipped %s: no primary key found.",
+                                "optistate"
+                            ),
                             $table
                         )
                 );
@@ -2442,9 +2451,10 @@ class OPTISTATE_Search_Replace
                         "data" => $deferred_data,
                         "where" => [$primary_key => $pk_val],
                         "key" => $row_key,
-                        "value" => $kv_columns === null
-                            ? null
-                            : ($deferred_data[$kv_columns["value"]] ?? null),
+                        "value" =>
+                            $kv_columns === null
+                                ? null
+                                : $deferred_data[$kv_columns["value"]] ?? null,
                         "cache_group" => $cache_group,
                     ];
                 }
@@ -2687,7 +2697,11 @@ class OPTISTATE_Search_Replace
             return false;
         }
         $parts = wp_parse_url($url);
-        if (!is_array($parts) || empty($parts["scheme"]) || empty($parts["host"])) {
+        if (
+            !is_array($parts) ||
+            empty($parts["scheme"]) ||
+            empty($parts["host"])
+        ) {
             return false;
         }
         $scheme = strtolower((string) $parts["scheme"]);

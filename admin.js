@@ -304,7 +304,6 @@ jQuery(document).ready(function($) {
 
     function pollIndexStatus(taskId, $btn, action_type) {
         let attempts = 0;
-        let runningCount = 0;
         const isDrop = action_type === 'drop';
         const poller = createPoller({
             action: 'optistate_check_index_status',
@@ -335,17 +334,6 @@ jQuery(document).ready(function($) {
                     reject(responseData.message);
                     return false;
                 } else {
-                    if (status === 'running') {
-                        runningCount++;
-                        if (runningCount >= 5) {
-                            runningCount = 0;
-                            $.post(optistate_Ajax.ajaxurl, {
-                                action: 'optistate_force_run_index_worker',
-                                task_id: taskId,
-                                nonce: optistate_Ajax.nonce
-                            });
-                        }
-                    }
                     const label = (attempts % 2 === 0) ? 'Applying...' : 'Verifying...';
                     $btn.css({
                         'display': 'inline-flex',
@@ -471,9 +459,7 @@ jQuery(document).ready(function($) {
     const $dbSizeValue = $(SELECTORS.dbSizeValue);
     const $cleanupItemsContainer = $(SELECTORS.cleanupItemsContainer);
     const $perfFeaturesContainer = $(SELECTORS.perfFeaturesContainer);
-    const $settingsLogContainer = $(SELECTORS.settingsLogContainer);
     const $healthScoreWrapper = $(SELECTORS.healthScoreWrapper);
-    const $healthScoreLoading = $(SELECTORS.healthScoreLoading);
     const $refreshStatsBtn = $('#optistate-refresh-stats');
     const $autoOptimizeDays = $('#auto_optimize_days');
     const $autoOptimizeTime = $('#auto_optimize_time');

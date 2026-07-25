@@ -134,11 +134,7 @@ class OPTISTATE_Trash_Manager
 
         return $this->trash_dir_cache;
     }
-    private function is_post_request(): bool
-    {
-        return isset($_SERVER["REQUEST_METHOD"]) &&
-            $_SERVER["REQUEST_METHOD"] === "POST";
-    }
+	
     private function read_trash_key(): string
     {
         if (!isset($_POST["key"]) || !is_scalar($_POST["key"])) {
@@ -2431,12 +2427,7 @@ class OPTISTATE_Trash_Manager
     }
     public function ajax_restore_trash_item(): void
     {
-        if (!$this->is_post_request()) {
-            OPTISTATE_Utils::send_json_error(
-                __("Invalid request method.", "optistate"),
-                405
-            );
-
+        if (!OPTISTATE_Tools_Utilities::require_post()) {
             return;
         }
 
@@ -2482,12 +2473,7 @@ class OPTISTATE_Trash_Manager
     }
     public function ajax_permanently_delete_trash_item(): void
     {
-        if (!$this->is_post_request()) {
-            OPTISTATE_Utils::send_json_error(
-                __("Invalid request method.", "optistate"),
-                405
-            );
-
+        if (!OPTISTATE_Tools_Utilities::require_post()) {
             return;
         }
 
@@ -2540,12 +2526,7 @@ class OPTISTATE_Trash_Manager
     }
     public function ajax_delete_all_trash(): void
     {
-        if (!$this->is_post_request()) {
-            OPTISTATE_Utils::send_json_error(
-                __("Invalid request method.", "optistate"),
-                405
-            );
-
+        if (!OPTISTATE_Tools_Utilities::require_post()) {
             return;
         }
 
@@ -2558,10 +2539,7 @@ class OPTISTATE_Trash_Manager
                 self::DELETE_ALL_RATE_LIMIT
             )
         ) {
-            OPTISTATE_Utils::send_json_error(
-                OPTISTATE_Utils::get_rate_limit_message(false),
-                429
-            );
+            OPTISTATE_Utils::send_rate_limit_error();
 
             return;
         }

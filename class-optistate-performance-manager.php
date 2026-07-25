@@ -1007,10 +1007,7 @@ class OPTISTATE_Performance_Manager
         check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
         $this->main_plugin->settings_manager->check_user_access();
         if (!OPTISTATE_Utils::check_rate_limit("cron_manager_action", 3)) {
-            OPTISTATE_Utils::send_json_error(
-                OPTISTATE_Utils::get_rate_limit_message(false),
-                429
-            );
+            OPTISTATE_Utils::send_rate_limit_error();
             return;
         }
         $action = isset($_POST["cron_action"])
@@ -2022,10 +2019,7 @@ class OPTISTATE_Performance_Manager
             $force_refresh &&
             !OPTISTATE_Utils::check_rate_limit("refresh_crons", 2)
         ) {
-            OPTISTATE_Utils::send_json_error(
-                OPTISTATE_Utils::get_rate_limit_message(false),
-                429
-            );
+            OPTISTATE_Utils::send_rate_limit_error();
             return;
         }
         $current_settings = $this->get_performance_settings();
@@ -2060,10 +2054,7 @@ class OPTISTATE_Performance_Manager
         check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
         $this->main_plugin->settings_manager->check_user_access();
         if (!OPTISTATE_Utils::check_rate_limit("save_settings", 3)) {
-            OPTISTATE_Utils::send_json_error(
-                OPTISTATE_Utils::get_rate_limit_message(true),
-                429
-            );
+            OPTISTATE_Utils::send_rate_limit_error(true);
             return;
         }
         $features = isset($_POST["features"])

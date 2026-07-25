@@ -1386,15 +1386,7 @@ class OPTISTATE_Legacy_Scanner
     {
         $this->start_scan_clock();
 
-        if (
-            !isset($_SERVER["REQUEST_METHOD"]) ||
-            $_SERVER["REQUEST_METHOD"] !== "POST"
-        ) {
-            OPTISTATE_Utils::send_json_error(
-                __("Invalid request method.", "optistate"),
-                405
-            );
-
+        if (!OPTISTATE_Tools_Utilities::require_post()) {
             return;
         }
 
@@ -1402,10 +1394,7 @@ class OPTISTATE_Legacy_Scanner
         $this->main_plugin->settings_manager->check_user_access();
 
         if (!OPTISTATE_Utils::check_rate_limit("legacy_scan", 5)) {
-            OPTISTATE_Utils::send_json_error(
-                OPTISTATE_Utils::get_rate_limit_message(false),
-                429
-            );
+            OPTISTATE_Utils::send_rate_limit_error();
 
             return;
         }
@@ -2589,25 +2578,14 @@ class OPTISTATE_Legacy_Scanner
 
     public function ajax_delete_legacy_data(): void
     {
-        if (
-            !isset($_SERVER["REQUEST_METHOD"]) ||
-            $_SERVER["REQUEST_METHOD"] !== "POST"
-        ) {
-            OPTISTATE_Utils::send_json_error(
-                __("Invalid request method.", "optistate"),
-                405
-            );
-
+        if (!OPTISTATE_Tools_Utilities::require_post()) {
             return;
         }
 
         check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
         $this->main_plugin->settings_manager->check_user_access();
         if (!OPTISTATE_Utils::check_rate_limit("legacy_delete", 1)) {
-            OPTISTATE_Utils::send_json_error(
-                OPTISTATE_Utils::get_rate_limit_message(false),
-                429
-            );
+            OPTISTATE_Utils::send_rate_limit_error();
 
             return;
         }

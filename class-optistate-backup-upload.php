@@ -235,10 +235,7 @@ class OPTISTATE_Backup_Upload
                             60
                         )
                     ) {
-                        OPTISTATE_Utils::send_json_error(
-                            OPTISTATE_Utils::get_rate_limit_message(false),
-                            429
-                        );
+                        OPTISTATE_Utils::send_rate_limit_error();
                         return;
                     }
                 }

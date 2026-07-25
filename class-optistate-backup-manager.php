@@ -336,10 +336,7 @@ class OPTISTATE_Backup_Manager
                 return;
             }
             if (!OPTISTATE_Utils::check_rate_limit("create_backup", 60)) {
-                OPTISTATE_Utils::send_json_error(
-                    OPTISTATE_Utils::get_rate_limit_message(false),
-                    429
-                );
+                OPTISTATE_Utils::send_rate_limit_error();
                 return;
             }
             $date_part = current_time("Y-m-d");
@@ -2409,10 +2406,7 @@ if (empty($filepath)) {
             if (!OPTISTATE_Utils::check_rate_limit("restore_backup", 60)) {
                 $this->restore_engine->release_restore_lock();
                 $this->process_store->delete("optistate_restore_in_progress");
-                OPTISTATE_Utils::send_json_error(
-                    OPTISTATE_Utils::get_rate_limit_message(false),
-                    429
-                );
+                OPTISTATE_Utils::send_rate_limit_error();
                 return;
             }
             if (

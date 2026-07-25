@@ -134,7 +134,6 @@ final class OPTISTATE
 
     private ?OPTISTATE_Admin_Interface $admin_interface = null;
 
-    private ?string $mysql_version_cache = null;
     private array $directory_check_cache = [];
 
     public ?WP_Filesystem_Base $wp_filesystem = null;
@@ -410,7 +409,10 @@ final class OPTISTATE
 
             case "db_backup_upload":
                 $upload_dir = wp_upload_dir();
-                $backup_dir = trailingslashit($upload_dir["basedir"]) . OPTISTATE::BACKUP_DIR_NAME . "/";
+                $backup_dir =
+                    trailingslashit($upload_dir["basedir"]) .
+                    OPTISTATE::BACKUP_DIR_NAME .
+                    "/";
 
                 return new OPTISTATE_Backup_Upload(
                     $this,
@@ -1264,19 +1266,6 @@ final class OPTISTATE
         return $log_entries;
     }
 
-    private function get_mysql_version(): string
-    {
-        if ($this->mysql_version_cache === null) {
-            global $wpdb;
-
-            $this->mysql_version_cache = (string) $wpdb->get_var(
-                "SELECT VERSION()"
-            );
-        }
-
-        return $this->mysql_version_cache;
-    }
-
     public function get_total_database_size(bool $force_refresh = false): float
     {
         if (!$force_refresh) {
@@ -1337,8 +1326,8 @@ final class OPTISTATE
 
                 $this->collect_shell_statistics($stats);
                 $this->collect_disk_statistics($stats);
-
-                $stats["mysql_version"] = $this->get_mysql_version() ?: "N/A";
+                $stats["mysql_version"] =
+                    OPTISTATE_Utils::get_mysql_version() ?: "N/A";
                 $stats["php_version"] = PHP_VERSION;
                 $stats["wp_version"] = get_bloginfo("version");
 
@@ -2603,11 +2592,7 @@ final class OPTISTATE
             $force_refresh &&
             !OPTISTATE_Utils::check_rate_limit("refresh_stats", 5)
         ) {
-            OPTISTATE_Utils::send_json_error(
-                OPTISTATE_Utils::get_rate_limit_message(false),
-                429,
-                ["stats" => $this->get_combined_database_statistics(false)]
-            );
+            OPTISTATE_Utils::send_rate_limit_error();
 
             return;
         }
@@ -2644,10 +2629,7 @@ final class OPTISTATE
             $is_manual_refresh &&
             !OPTISTATE_Utils::check_rate_limit("refresh_logs", 2)
         ) {
-            OPTISTATE_Utils::send_json_error(
-                OPTISTATE_Utils::get_rate_limit_message(false),
-                429
-            );
+            OPTISTATE_Utils::send_rate_limit_error();
 
             return;
         }
@@ -2675,10 +2657,7 @@ final class OPTISTATE
         $this->settings_manager->check_user_access();
 
         if (!OPTISTATE_Utils::check_rate_limit("apply_preset", 5)) {
-            OPTISTATE_Utils::send_json_error(
-                OPTISTATE_Utils::get_rate_limit_message(false),
-                429
-            );
+           OPTISTATE_Utils::send_rate_limit_error();
 
             return;
         }
@@ -2806,6 +2785,28 @@ final class OPTISTATE
         }
     }
 
+    private function guard_download_request(
+        string $rate_limit_key,
+        int $rate_limit_max
+    ): bool {
+        check_ajax_referer(self::NONCE_ACTION, "nonce");
+
+        if (!current_user_can("manage_options")) {
+            wp_die(esc_html__("Insufficient permissions.", "optistate"), 403);
+        }
+
+        $this->settings_manager->check_user_access();
+
+        if (
+            !OPTISTATE_Utils::check_rate_limit($rate_limit_key, $rate_limit_max)
+        ) {
+            OPTISTATE_Utils::send_rate_limit_error();
+            return false;
+        }
+
+        return true;
+    }
+
     private function prepare_download(
         string $content_type,
         string $filename,
@@ -2827,18 +2828,7 @@ final class OPTISTATE
 
     public function ajax_download_htaccess(): void
     {
-        check_ajax_referer(self::NONCE_ACTION, "nonce");
-        if (!current_user_can("manage_options")) {
-            wp_die(esc_html__("Insufficient permissions.", "optistate"), 403);
-        }
-        $this->settings_manager->check_user_access();
-
-        if (!OPTISTATE_Utils::check_rate_limit("download_htaccess", 5)) {
-            OPTISTATE_Utils::send_json_error(
-                OPTISTATE_Utils::get_rate_limit_message(false),
-                429
-            );
-
+        if (!$this->guard_download_request("download_htaccess", 5)) {
             return;
         }
 
@@ -2878,18 +2868,7 @@ final class OPTISTATE
 
     public function ajax_download_error_log(): void
     {
-        check_ajax_referer(self::NONCE_ACTION, "nonce");
-        if (!current_user_can("manage_options")) {
-            wp_die(esc_html__("Insufficient permissions.", "optistate"), 403);
-        }
-        $this->settings_manager->check_user_access();
-
-        if (!OPTISTATE_Utils::check_rate_limit("error_log", 5)) {
-            OPTISTATE_Utils::send_json_error(
-                OPTISTATE_Utils::get_rate_limit_message(false),
-                429
-            );
-
+        if (!$this->guard_download_request("error_log", 5)) {
             return;
         }
 
@@ -2981,18 +2960,7 @@ final class OPTISTATE
 
     public function ajax_download_activity_log(): void
     {
-        check_ajax_referer(self::NONCE_ACTION, "nonce");
-        if (!current_user_can("manage_options")) {
-            wp_die(esc_html__("Insufficient permissions.", "optistate"), 403);
-        }
-        $this->settings_manager->check_user_access();
-
-        if (!OPTISTATE_Utils::check_rate_limit("activity_log", 3)) {
-            OPTISTATE_Utils::send_json_error(
-                OPTISTATE_Utils::get_rate_limit_message(false),
-                429
-            );
-
+        if (!$this->guard_download_request("activity_log", 3)) {
             return;
         }
 

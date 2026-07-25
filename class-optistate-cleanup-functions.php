@@ -68,19 +68,9 @@ class OPTISTATE_Cleanup_Functions
         $this->set_last_affected_ids("post", $ids);
     }
 
-    private function get_last_affected_post_ids(): array
-    {
-        return $this->get_last_affected_ids("post");
-    }
-
     private function set_last_affected_comment_ids(array $ids): void
     {
         $this->set_last_affected_ids("comment", $ids);
-    }
-
-    private function get_last_affected_comment_ids(): array
-    {
-        return $this->get_last_affected_ids("comment");
     }
 
     private function set_last_affected_term_ids(array $ids): void
@@ -88,20 +78,11 @@ class OPTISTATE_Cleanup_Functions
         $this->set_last_affected_ids("term", $ids);
     }
 
-    private function get_last_affected_term_ids(): array
-    {
-        return $this->get_last_affected_ids("term");
-    }
-
     private function set_last_affected_user_ids(array $ids): void
     {
         $this->set_last_affected_ids("user", $ids);
     }
 
-    private function get_last_affected_user_ids(): array
-    {
-        return $this->get_last_affected_ids("user");
-    }
     public static function get_all_cleanup_items(): array
     {
         static $items = null;
@@ -309,10 +290,7 @@ class OPTISTATE_Cleanup_Functions
         $this->main_plugin->settings_manager->check_user_access();
 
         if (!OPTISTATE_Utils::check_rate_limit("one_click", 30)) {
-            OPTISTATE_Utils::send_json_error(
-                OPTISTATE_Utils::get_rate_limit_message(false),
-                429
-            );
+            OPTISTATE_Utils::send_rate_limit_error();
             return;
         }
 
@@ -453,10 +431,10 @@ class OPTISTATE_Cleanup_Functions
     }
     private function flush_collected_caches(): void
     {
-        $affected_post_ids    = $this->get_last_affected_post_ids();
-        $affected_comment_ids = $this->get_last_affected_comment_ids();
-        $affected_term_ids    = $this->get_last_affected_term_ids();
-        $affected_user_ids    = $this->get_last_affected_user_ids();
+        $affected_post_ids    = $this->get_last_affected_ids("post");
+        $affected_comment_ids = $this->get_last_affected_ids("comment");
+        $affected_term_ids    = $this->get_last_affected_ids("term");
+        $affected_user_ids    = $this->get_last_affected_ids("user");
 
         if (!empty($affected_post_ids)) {
             foreach (array_unique(array_map("absint", $affected_post_ids)) as $post_id) {

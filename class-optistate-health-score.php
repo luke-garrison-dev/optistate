@@ -36,10 +36,7 @@ class OPTISTATE_Health_Score
         $cache_key = "optistate_health_score";
         if ($force_refresh) {
             if (!OPTISTATE_Utils::check_rate_limit("refresh_stats", 5)) {
-                OPTISTATE_Utils::send_json_error(
-                    OPTISTATE_Utils::get_rate_limit_message(false),
-                    429
-                );
+                OPTISTATE_Utils::send_rate_limit_error();
                 return;
             }
             delete_transient($cache_key);

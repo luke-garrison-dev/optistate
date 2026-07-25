@@ -897,10 +897,7 @@ if ($enabled) {
                 wp_die(-1);
             }
             if (!OPTISTATE_Utils::check_rate_limit("2fa_generate_secret", 5)) {
-                OPTISTATE_Utils::send_json_error(
-                    OPTISTATE_Utils::get_rate_limit_message(true),
-                    429
-                );
+                OPTISTATE_Utils::send_rate_limit_error(true);
                 return;
             }
             $secret = $this->generate_secret();
@@ -968,10 +965,7 @@ if ($enabled) {
                 wp_die(-1);
             }
             if (!OPTISTATE_Utils::check_rate_limit("2fa_verify_code", 2)) {
-                OPTISTATE_Utils::send_json_error(
-                    OPTISTATE_Utils::get_rate_limit_message(true),
-                    429
-                );
+                OPTISTATE_Utils::send_rate_limit_error(true);
                 return;
             }
             $code = isset($_POST["code"])
@@ -1023,10 +1017,7 @@ if ($enabled) {
             if (
                 !OPTISTATE_Utils::check_rate_limit("2fa_regenerate_backup", 5)
             ) {
-                OPTISTATE_Utils::send_json_error(
-                    OPTISTATE_Utils::get_rate_limit_message(true),
-                    429
-                );
+                OPTISTATE_Utils::send_rate_limit_error(true);
                 return;
             }
             $codes = $this->generate_backup_codes();
@@ -1063,10 +1054,7 @@ if ($enabled) {
             check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
             $this->main_plugin->settings_manager->check_user_access();
             if (!OPTISTATE_Utils::check_rate_limit("save_settings", 3)) {
-                OPTISTATE_Utils::send_json_error(
-                    OPTISTATE_Utils::get_rate_limit_message(true),
-                    429
-                );
+                OPTISTATE_Utils::send_rate_limit_error(true);
                 return;
             }
             $enabled = isset($_POST["enabled"]) && $_POST["enabled"] === "1";
