@@ -32,14 +32,24 @@ class OPTISTATE_Backup_Engine
         }
         $this->wp_filesystem = $wp_filesystem;
     }
-    private function get_effective_batch_size(mysqli $conn): int {
+    private function get_effective_batch_size(mysqli $conn): int
+    {
         static $cached = null;
-        if ($cached !== null) return $cached;
-        $res = @$conn->query("SHOW SESSION VARIABLES LIKE 'max_allowed_packet'");
+        if ($cached !== null) {
+            return $cached;
+        }
+        $res = @$conn->query(
+            "SHOW SESSION VARIABLES LIKE 'max_allowed_packet'"
+        );
         $row = $res ? $res->fetch_assoc() : null;
-        if ($res) $res->free();
+        if ($res) {
+            $res->free();
+        }
         $server = isset($row["Value"]) ? (int) $row["Value"] : 4 * 1024 * 1024;
-        $cached = max(512 * 1024, min(self::TARGET_BATCH_SIZE, (int) ($server * 0.75)));
+        $cached = max(
+            512 * 1024,
+            min(self::TARGET_BATCH_SIZE, (int) ($server * 0.75))
+        );
         return $cached;
     }
 
@@ -64,7 +74,11 @@ class OPTISTATE_Backup_Engine
                     uniqid((string) wp_rand(), true) . microtime()
                 );
             }
-            $filename = preg_replace('/\.sql(\.gz)?$/i', '', $filename) . '_' . $random_suffix . '.sql.gz';
+            $filename =
+                preg_replace('/\.sql(\.gz)?$/i', "", $filename) .
+                "_" .
+                $random_suffix .
+                ".sql.gz";
             $filepath = $this->backup_dir . $filename;
             if ($this->wp_filesystem->exists($filepath)) {
                 throw new Exception(
@@ -351,7 +365,8 @@ class OPTISTATE_Backup_Engine
                             );
                         }
                         $state["uncompressed_size"] += $header_len;
-                        $trans_note = "-- NOTE: This dump is chunked; consistency is per-batch, not per-file.\n\n";
+                        $trans_note =
+                            "-- NOTE: This dump is chunked; consistency is per-batch, not per-file.\n\n";
                         $trans_len = strlen($trans_note);
                         if (gzwrite($handle, $trans_note) !== $trans_len) {
                             throw new Exception(
@@ -551,22 +566,37 @@ class OPTISTATE_Backup_Engine
                                     continue;
                                 }
                                 $col = $cols[0];
-                                if ($col->Column_name === null || $col->Data_type === null) {
+                                if (
+                                    $col->Column_name === null ||
+                                    $col->Data_type === null
+                                ) {
                                     continue;
                                 }
-                                if (strtoupper((string) $col->Is_nullable) === "YES") {
+                                if (
+                                    strtoupper((string) $col->Is_nullable) ===
+                                    "YES"
+                                ) {
                                     continue;
                                 }
                                 $col_name = $col->Column_name;
-                                $col_type = strtolower((string) $col->Data_type);
+                                $col_type = strtolower(
+                                    (string) $col->Data_type
+                                );
                                 $can_use_keyset_pagination = true;
                                 $selected_primary_key = $col_name;
                                 $state["primary_key_type"] = in_array(
                                     $col_type,
                                     [
-                                        "tinyint", "smallint", "mediumint",
-                                        "int", "bigint", "decimal", "numeric",
-                                        "float", "double", "real",
+                                        "tinyint",
+                                        "smallint",
+                                        "mediumint",
+                                        "int",
+                                        "bigint",
+                                        "decimal",
+                                        "numeric",
+                                        "float",
+                                        "double",
+                                        "real",
                                     ],
                                     true
                                 )
@@ -821,26 +851,36 @@ class OPTISTATE_Backup_Engine
         }
 
         $wrapper = OPTISTATE_DB_Wrapper::get_instance();
-static $backup_session_registered = false;
-if (!$backup_session_registered) {
-    $wrapper->set_session_state('net_read_timeout', "SET SESSION net_read_timeout = 120");
-    $wrapper->set_session_state('wait_timeout', "SET SESSION wait_timeout = 600");
-    $wrapper->set_session_state('sql_big_selects', "SET SESSION SQL_BIG_SELECTS=1");
-    $wrapper->set_session_state('isolation', "SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ");
-    $backup_session_registered = true;
-}
+        static $backup_session_registered = false;
+        if (!$backup_session_registered) {
+            $wrapper->set_session_state(
+                "net_read_timeout",
+                "SET SESSION net_read_timeout = 120"
+            );
+            $wrapper->set_session_state(
+                "wait_timeout",
+                "SET SESSION wait_timeout = 600"
+            );
+            $wrapper->set_session_state(
+                "sql_big_selects",
+                "SET SESSION SQL_BIG_SELECTS=1"
+            );
+            $wrapper->set_session_state(
+                "isolation",
+                "SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ"
+            );
+            $backup_session_registered = true;
+        }
         if (!$wrapper->begin_transaction()) {
             throw new Exception(
-                __(
-                    "Failed to start read transaction for backup.",
-                    "optistate"
-                )
+                __("Failed to start read transaction for backup.", "optistate")
             );
         }
 
         try {
             if ($primary_key) {
-                $safe_primary_key = "`" . str_replace("`", "``", $primary_key) . "`";
+                $safe_primary_key =
+                    "`" . str_replace("`", "``", $primary_key) . "`";
                 if ($is_first_batch) {
                     $query = $wpdb->prepare(
                         "SELECT " .
@@ -881,13 +921,18 @@ if (!$backup_session_registered) {
                         : [$offset_batch_size, $offset]
                 );
             }
-            $result = $wrapper->get_connection()->query($query, MYSQLI_USE_RESULT);
+            $result = $wrapper
+                ->get_connection()
+                ->query($query, MYSQLI_USE_RESULT);
             if (!$result) {
                 $db_error = $wrapper->get_error();
                 $wrapper->rollback();
                 throw new Exception(
                     sprintf(
-                        __("Failed to read data from table '%s': %s", "optistate"),
+                        __(
+                            "Failed to read data from table '%s': %s",
+                            "optistate"
+                        ),
                         $table_name,
                         $db_error
                     )
@@ -1042,7 +1087,9 @@ if (!$backup_session_registered) {
         $conn = $wrapper->get_connection();
         $result = $conn->query($query, MYSQLI_USE_RESULT);
         if (!$result) {
-            throw new Exception("Unbuffered query failed: " . $wrapper->get_error());
+            throw new Exception(
+                "Unbuffered query failed: " . $wrapper->get_error()
+            );
         }
         $insert_header = "INSERT INTO {$safe_table} ({$column_list}) VALUES ";
         $row_buffer = [];
@@ -1061,7 +1108,11 @@ if (!$backup_session_registered) {
             $row_count++;
             $total_rows++;
             if ($buffer_size >= $target_bytes || $row_count >= 5000) {
-                $written = self::flush_buffer($row_buffer, $insert_header, $file_handle);
+                $written = self::flush_buffer(
+                    $row_buffer,
+                    $insert_header,
+                    $file_handle
+                );
                 if (!empty($state)) {
                     $state["uncompressed_size"] += $written;
                 }
@@ -1075,12 +1126,16 @@ if (!$backup_session_registered) {
         }
         mysqli_free_result($result);
         if (!empty($row_buffer)) {
-            $written = self::flush_buffer($row_buffer, $insert_header, $file_handle);
+            $written = self::flush_buffer(
+                $row_buffer,
+                $insert_header,
+                $file_handle
+            );
             if (!empty($state)) {
                 $state["uncompressed_size"] += $written;
             }
         }
-        return ['status' => 'done', 'offset' => 0];
+        return ["status" => "done", "offset" => 0];
     }
 
     private static function flush_buffer(

@@ -84,16 +84,20 @@ class OPTISTATE_Login_Protection
     {
         check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
         $this->main_plugin->settings_manager->check_user_access();
+
         if (!OPTISTATE_Utils::check_rate_limit("save_settings", 3)) {
             OPTISTATE_Utils::send_rate_limit_error(true);
             return;
         }
+
         global $wpdb;
         $table_name = $wpdb->prefix . self::TABLE_NAME;
         if (!OPTISTATE_Utils::table_exists($table_name)) {
             $this->create_table();
         }
+
         $current_settings = (array) $this->main_plugin->settings_manager->get_persistent_settings();
+
         $enabled = isset($_POST["enabled"]) && $_POST["enabled"] === "true";
         $max_attempts =
             isset($_POST["max_attempts"]) && is_scalar($_POST["max_attempts"])
@@ -108,10 +112,12 @@ class OPTISTATE_Login_Protection
         $captcha_enabled =
             isset($_POST["captcha_enabled"]) &&
             $_POST["captcha_enabled"] === "true";
+
         $max_attempts = max(1, $max_attempts);
         if (!in_array($duration, [1, 3, 6, 12, 24, 48], true)) {
             $duration = 6;
         }
+
         $status_changed =
             $enabled !==
             (bool) ($current_settings["login_protect_enabled"] ?? false);
@@ -126,6 +132,7 @@ class OPTISTATE_Login_Protection
         $captcha_changed =
             $captcha_enabled !==
             (bool) ($current_settings["login_captcha_enabled"] ?? false);
+
         if (
             $status_changed ||
             $params_changed ||
@@ -139,9 +146,20 @@ class OPTISTATE_Login_Protection
                 "cloudflare_enabled" => $cf_enabled,
                 "login_captcha_enabled" => $captcha_enabled,
             ]);
-            $this->main_plugin->settings_manager->save_persistent_settings(
+
+            $success = $this->main_plugin->settings_manager->save_persistent_settings(
                 $new_settings
             );
+            if (!$success) {
+                OPTISTATE_Utils::send_json_error(
+                    __(
+                        "Failed to save settings. Please try again.",
+                        "optistate"
+                    )
+                );
+                return;
+            }
+
             $now = time();
             if ($status_changed || $params_changed || $cf_changed) {
                 $currently_blocked = $wpdb->get_col(
@@ -168,6 +186,7 @@ class OPTISTATE_Login_Protection
                     }
                 }
             }
+
             $username = "{username}";
             if ($status_changed) {
                 $log_msg = $enabled
@@ -214,6 +233,7 @@ class OPTISTATE_Login_Protection
             }
             wp_cache_delete("alloptions", "options");
         }
+
         $reload_needed = $enabled && $status_changed;
         OPTISTATE_Utils::send_json_success([
             "message" => __(
@@ -613,7 +633,9 @@ class OPTISTATE_Login_Protection
         if (!($user instanceof WP_User)) {
             return $user;
         }
-        if (apply_filters("optistate_defer_login_attempt_clear", false, $user)) {
+        if (
+            apply_filters("optistate_defer_login_attempt_clear", false, $user)
+        ) {
             return $user;
         }
         $this->clear_login_attempts((string) $username, $user);
@@ -938,17 +960,22 @@ class OPTISTATE_Login_Protection
     {
         check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
         $this->main_plugin->settings_manager->check_user_access();
+
         if (!OPTISTATE_Utils::check_rate_limit("save_settings", 3)) {
             OPTISTATE_Utils::send_rate_limit_error(true);
             return;
         }
+
         global $wpdb;
         $table_name = $wpdb->prefix . self::TABLE_NAME;
         if (!OPTISTATE_Utils::table_exists($table_name)) {
             $this->create_table();
         }
+
         $current_settings = (array) $this->main_plugin->settings_manager->get_persistent_settings();
+
         $enabled = isset($_POST["enabled"]) && $_POST["enabled"] === "true";
+
         $ip_list_raw = isset($_POST["ip_list"])
             ? sanitize_textarea_field(wp_unslash($_POST["ip_list"]))
             : "";
@@ -970,6 +997,7 @@ class OPTISTATE_Login_Protection
             }
         }
         $valid_ips = array_values(array_unique($valid_ips));
+
         $whitelist_raw = isset($_POST["ip_whitelist"])
             ? sanitize_textarea_field(wp_unslash($_POST["ip_whitelist"]))
             : "";
@@ -993,6 +1021,7 @@ class OPTISTATE_Login_Protection
             }
         }
         $valid_whitelist = array_values(array_unique($valid_whitelist));
+
         $current_user_ip = $this->get_client_ip();
         $is_self_blocked = false;
         foreach ($valid_ips as $rule) {
@@ -1014,6 +1043,7 @@ class OPTISTATE_Login_Protection
             );
             return;
         }
+
         $status_changed =
             $enabled !==
             (bool) ($current_settings["ip_blocker_enabled"] ?? false);
@@ -1022,21 +1052,34 @@ class OPTISTATE_Login_Protection
         $whitelist_changed =
             $valid_whitelist !==
             (array) ($current_settings["ip_whitelist"] ?? []);
+
         if ($status_changed || $list_changed || $whitelist_changed) {
             $new_settings = array_merge($current_settings, [
                 "ip_blocker_enabled" => $enabled,
                 "ip_block_list" => $valid_ips,
                 "ip_whitelist" => $valid_whitelist,
             ]);
-            $this->main_plugin->settings_manager->save_persistent_settings(
+
+            $success = $this->main_plugin->settings_manager->save_persistent_settings(
                 $new_settings
             );
+            if (!$success) {
+                OPTISTATE_Utils::send_json_error(
+                    __(
+                        "Failed to save settings. Please try again.",
+                        "optistate"
+                    )
+                );
+                return;
+            }
+
             delete_transient(self::CIDR_CACHE_KEY);
             $this->bump_ip_rules_version();
             delete_transient("optistate_admin_blocked_ip_list");
             if (isset($this->main_plugin->performance_manager)) {
                 $this->main_plugin->performance_manager->rebuild_htaccess();
             }
+
             $old_ips = $wpdb->get_col(
                 "SELECT ip_address FROM $table_name WHERE attempts_count = -1"
             );
@@ -1045,6 +1088,7 @@ class OPTISTATE_Login_Protection
                 delete_transient("optistate_global_clean_" . md5($old_ip));
             }
             $wpdb->query("DELETE FROM $table_name WHERE attempts_count = -1");
+
             if (!empty($valid_ips)) {
                 $now = time();
                 $blocked_until = 2147483647;
@@ -1076,6 +1120,7 @@ class OPTISTATE_Login_Protection
                     }
                 }
             }
+
             $username = "{username}";
             if ($status_changed) {
                 $log_msg = $enabled
@@ -1096,6 +1141,7 @@ class OPTISTATE_Login_Protection
             }
             wp_cache_delete("alloptions", "options");
         }
+
         $reload_needed = $enabled && $status_changed;
         OPTISTATE_Utils::send_json_success([
             "message" => __(

@@ -585,7 +585,11 @@ class OPTISTATE_TwoFactor
                         $challenge["attempts"],
                         5 * MINUTE_IN_SECONDS
                     );
-                    $manual_base = plugin_dir_url(dirname(__FILE__)) . "manual/v" . OPTISTATE::VERSION . ".html";
+                    $manual_base =
+                        plugin_dir_url(dirname(__FILE__)) .
+                        "manual/v" .
+                        OPTISTATE::VERSION .
+                        ".html";
                     $manual_url = esc_url($manual_base . "#ch-9-6-1");
                     $error_message = sprintf(
                         __(
@@ -1052,18 +1056,32 @@ if ($enabled) {
         try {
             check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
             $this->main_plugin->settings_manager->check_user_access();
+
             if (!OPTISTATE_Utils::check_rate_limit("save_settings", 3)) {
                 OPTISTATE_Utils::send_rate_limit_error(true);
                 return;
             }
+
             $enabled = isset($_POST["enabled"]) && $_POST["enabled"] === "1";
+
             $settings = $this->main_plugin->settings_manager->get_persistent_settings();
             $current = !empty($settings["enable_two_factor"]);
+
             if ($current !== $enabled) {
                 $settings["enable_two_factor"] = $enabled;
-                $this->main_plugin->settings_manager->save_persistent_settings(
+                $success = $this->main_plugin->settings_manager->save_persistent_settings(
                     $settings
                 );
+                if (!$success) {
+                    OPTISTATE_Utils::send_json_error(
+                        __(
+                            "Failed to save 2FA settings. Please try again.",
+                            "optistate"
+                        )
+                    );
+                    return;
+                }
+
                 $this->main_plugin->log_entry(
                     "🔑 " .
                         ($enabled
@@ -1078,6 +1096,7 @@ if ($enabled) {
                 );
                 wp_cache_delete("alloptions", "options");
             }
+
             OPTISTATE_Utils::send_json_success([
                 "message" => __(
                     "2FA settings saved successfully.",

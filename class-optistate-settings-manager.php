@@ -77,10 +77,13 @@ class OPTISTATE_Settings_Manager
     {
         try {
             $this->ensure_table_exists();
+
             $current = $this->get_persistent_settings();
             $merged = array_merge($current, $new_settings);
             $validated = $this->validate_settings($merged);
+
             $old_version = $this->get_settings_version();
+
             $result = $this->main_plugin->set_store_data(
                 "settings",
                 $validated
@@ -88,6 +91,7 @@ class OPTISTATE_Settings_Manager
             if (!$result) {
                 return false;
             }
+
             $option_updated = update_option(
                 self::SETTINGS_CACHED_OPTION,
                 $validated,
@@ -101,17 +105,21 @@ class OPTISTATE_Settings_Manager
                     "SETTINGS_CACHED_OPTION update returned false and value differs",
                     ["validated_hash" => md5(serialize($validated))]
                 );
+                return false;
             }
+
             $this->increment_settings_version();
             wp_cache_delete(
                 "optistate_settings_rows_v" . $old_version,
                 "optistate"
             );
+
             $this->settings_cache = null;
             $this->main_plugin->clear_directory_existence_cache();
             OPTISTATE_Utils::clear_table_existence_cache();
             $this->main_plugin->invalidate_plugin_caches();
             self::reset_table_cache();
+
             return true;
         } catch (\Throwable $e) {
             OPTISTATE_Utils::log_critical_error(
@@ -365,20 +373,29 @@ class OPTISTATE_Settings_Manager
         if (empty($allowed_users)) {
             return;
         }
+
         $key = array_search($user_id, $allowed_users, true);
         if ($key !== false) {
             unset($allowed_users[$key]);
             $allowed_users = array_values($allowed_users);
-            $this->save_persistent_settings([
+
+            $success = $this->save_persistent_settings([
                 "allowed_users" => $allowed_users,
             ]);
-            $this->main_plugin->log_entry(
-                sprintf(
-                    "🗑️ Removed deleted user (ID: %s) from access list",
-                    number_format_i18n($user_id)
-                ),
-                "scheduled"
-            );
+            if ($success) {
+                $this->main_plugin->log_entry(
+                    sprintf(
+                        "🗑️ Removed deleted user (ID: %s) from access list",
+                        number_format_i18n($user_id)
+                    ),
+                    "scheduled"
+                );
+            } else {
+                OPTISTATE_Utils::log_critical_error(
+                    "Failed to remove deleted user from access list",
+                    ["user_id" => $user_id]
+                );
+            }
         }
     }
     public function handle_settings_download(): void
@@ -511,9 +528,11 @@ class OPTISTATE_Settings_Manager
         try {
             $current_settings = $this->get_persistent_settings();
             $old_max_backups = (int) $current_settings["max_backups"];
+
             $max_backups_input = isset($_POST["max_backups"])
                 ? sanitize_text_field(wp_unslash($_POST["max_backups"]))
                 : "3";
+
             if (
                 !is_string($max_backups_input) ||
                 !ctype_digit($max_backups_input)
@@ -523,6 +542,7 @@ class OPTISTATE_Settings_Manager
                 );
                 return;
             }
+
             $max_backups = (int) $max_backups_input;
             if ($max_backups < 1 || $max_backups > 10) {
                 OPTISTATE_Utils::send_json_error(
@@ -533,7 +553,20 @@ class OPTISTATE_Settings_Manager
                 );
                 return;
             }
-            $this->save_persistent_settings(["max_backups" => $max_backups]);
+
+            $success = $this->save_persistent_settings([
+                "max_backups" => $max_backups,
+            ]);
+            if (!$success) {
+                OPTISTATE_Utils::send_json_error(
+                    __(
+                        "Failed to save the setting. Please try again.",
+                        "optistate"
+                    )
+                );
+                return;
+            }
+
             if ($old_max_backups !== $max_backups) {
                 $this->main_plugin->log_entry(
                     "⚙️ " .
@@ -543,6 +576,7 @@ class OPTISTATE_Settings_Manager
                         )
                 );
             }
+
             OPTISTATE_Utils::send_json_success([
                 "message" => __(
                     "Maximum backups setting saved successfully!",
@@ -597,6 +631,7 @@ class OPTISTATE_Settings_Manager
                 );
                 return;
             }
+
             $time_input = isset($_POST["auto_optimize_time"])
                 ? sanitize_text_field(wp_unslash($_POST["auto_optimize_time"]))
                 : "02:00";
@@ -606,12 +641,14 @@ class OPTISTATE_Settings_Manager
                 );
                 return;
             }
+
             $email_notifications =
                 isset($_POST["email_notifications"]) &&
                 $_POST["email_notifications"] === "1";
             $auto_backup_only =
                 isset($_POST["auto_backup_only"]) &&
                 $_POST["auto_backup_only"] === "1";
+
             $max_backups_input = isset($_POST["max_backups"])
                 ? sanitize_text_field(wp_unslash($_POST["max_backups"]))
                 : "3";
@@ -634,6 +671,7 @@ class OPTISTATE_Settings_Manager
                 );
                 return;
             }
+
             if (isset($_POST["disable_restore_security"])) {
                 $disable_restore_security =
                     $_POST["disable_restore_security"] === "1";
@@ -654,7 +692,17 @@ class OPTISTATE_Settings_Manager
                 ] = $disable_restore_security;
             }
 
-            $this->save_persistent_settings($settings_to_save);
+            $success = $this->save_persistent_settings($settings_to_save);
+            if (!$success) {
+                OPTISTATE_Utils::send_json_error(
+                    __(
+                        "Failed to save settings. Please try again.",
+                        "optistate"
+                    )
+                );
+                return;
+            }
+
             $this->main_plugin->update_cron_schedule($days, $time_input);
 
             $disable_restore_changed =
@@ -675,7 +723,6 @@ class OPTISTATE_Settings_Manager
                         )
                 );
             }
-
             if ($disable_restore_changed) {
                 $status = $disable_restore_security
                     ? __("Disabled", "optistate")

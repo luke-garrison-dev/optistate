@@ -10,6 +10,7 @@ class OPTISTATE_Performance_Manager
     private bool $is_revisions_defined = false;
     private bool $is_trash_days_defined = false;
     private bool $runtime_optimizations_applied = false;
+    private ?string $compiled_bot_regex = null;
     private static function _str_starts_with(
         string $haystack,
         string $needle
@@ -62,7 +63,10 @@ class OPTISTATE_Performance_Manager
         if ($definitions === null) {
             $has_persistent_cache = wp_using_ext_object_cache();
             $manual_base =
-                plugin_dir_url(dirname(__FILE__)) . "manual/v" . OPTISTATE::VERSION . ".html";
+                plugin_dir_url(dirname(__FILE__)) .
+                "manual/v" .
+                OPTISTATE::VERSION .
+                ".html";
             $site_url_encoded = rawurlencode(trailingslashit(get_site_url()));
             $manual_link =
                 '<a href="' .
@@ -535,208 +539,237 @@ class OPTISTATE_Performance_Manager
         if (!is_array($features)) {
             return [];
         }
+
         $validated = [];
         $definitions = $this->get_feature_definitions();
-        foreach ($features as $key => $value) {
-            if (!isset($definitions[$key])) {
-                continue;
-            }
-            $feature_def = $definitions[$key];
-            if (
-                isset($feature_def["type"]) &&
-                $feature_def["type"] === "custom_caching" &&
-                $key === "server_caching"
-            ) {
-                if (is_array($value)) {
-                    $allowed_query_modes = [
-                        "ignore_all",
-                        "include_safe",
-                        "unique_cache",
-                    ];
-                    $query_mode = $value["query_string_mode"] ?? "include_safe";
-                    if (!in_array($query_mode, $allowed_query_modes, true)) {
-                        $query_mode = "include_safe";
-                    }
-                    $validated[$key] = [
-                        "enabled" => filter_var(
-                            $value["enabled"] ?? false,
-                            FILTER_VALIDATE_BOOLEAN
-                        ),
-                        "lifetime" => min(
-                            max(
-                                absint($value["lifetime"] ?? 86400),
-                                HOUR_IN_SECONDS
+
+        foreach ($definitions as $key => $def) {
+            $value = $def["default"] ?? false;
+            if (array_key_exists($key, $features)) {
+                $input = $features[$key];
+                if (
+                    isset($def["type"]) &&
+                    $def["type"] === "custom_caching" &&
+                    $key === "server_caching"
+                ) {
+                    if (is_array($input)) {
+                        $allowed_query_modes = [
+                            "ignore_all",
+                            "include_safe",
+                            "unique_cache",
+                        ];
+                        $query_mode =
+                            $input["query_string_mode"] ?? "include_safe";
+                        if (
+                            !in_array($query_mode, $allowed_query_modes, true)
+                        ) {
+                            $query_mode = "include_safe";
+                        }
+                        $validated[$key] = [
+                            "enabled" => filter_var(
+                                $input["enabled"] ?? false,
+                                FILTER_VALIDATE_BOOLEAN
                             ),
-                            6 * MONTH_IN_SECONDS
-                        ),
-                        "query_string_mode" => $query_mode,
-                        "exclude_urls" => sanitize_textarea_field(
-                            $value["exclude_urls"] ?? ""
-                        ),
-                        "mobile_cache" => filter_var(
-                            $value["mobile_cache"] ?? false,
-                            FILTER_VALIDATE_BOOLEAN
-                        ),
-                        "disable_cookie_check" => filter_var(
-                            $value["disable_cookie_check"] ?? false,
-                            FILTER_VALIDATE_BOOLEAN
-                        ),
-                        "custom_consent_cookie" => sanitize_text_field(
-                            $value["custom_consent_cookie"] ?? ""
-                        ),
-                        "auto_preload" => filter_var(
-                            $value["auto_preload"] ?? false,
-                            FILTER_VALIDATE_BOOLEAN
-                        ),
-                        "minify_html" => filter_var(
-                            $value["minify_html"] ?? false,
-                            FILTER_VALIDATE_BOOLEAN
-                        ),
-                    ];
-                } else {
-                    $validated[$key] = $feature_def["default"];
-                }
-            } elseif (
-                isset($feature_def["type"]) &&
-                $feature_def["type"] === "custom_db_caching"
-            ) {
-                if (is_array($value)) {
-                    if (!empty($feature_def["disabled"])) {
-                        $value["enabled"] = false;
+                            "lifetime" => min(
+                                max(
+                                    absint($input["lifetime"] ?? 86400),
+                                    HOUR_IN_SECONDS
+                                ),
+                                6 * MONTH_IN_SECONDS
+                            ),
+                            "query_string_mode" => $query_mode,
+                            "exclude_urls" => sanitize_textarea_field(
+                                $input["exclude_urls"] ?? ""
+                            ),
+                            "mobile_cache" => filter_var(
+                                $input["mobile_cache"] ?? false,
+                                FILTER_VALIDATE_BOOLEAN
+                            ),
+                            "disable_cookie_check" => filter_var(
+                                $input["disable_cookie_check"] ?? false,
+                                FILTER_VALIDATE_BOOLEAN
+                            ),
+                            "custom_consent_cookie" => sanitize_text_field(
+                                $input["custom_consent_cookie"] ?? ""
+                            ),
+                            "auto_preload" => filter_var(
+                                $input["auto_preload"] ?? false,
+                                FILTER_VALIDATE_BOOLEAN
+                            ),
+                            "minify_html" => filter_var(
+                                $input["minify_html"] ?? false,
+                                FILTER_VALIDATE_BOOLEAN
+                            ),
+                        ];
+                    } else {
+                        $validated[$key] = $def["default"];
                     }
-                    $validated[$key] = [
-                        "enabled" => filter_var(
-                            $value["enabled"] ?? false,
-                            FILTER_VALIDATE_BOOLEAN
-                        ),
-                        "ttl_main" => min(
-                            max(absint($value["ttl_main"] ?? 43200), 60),
-                            7 * DAY_IN_SECONDS
-                        ),
-                        "ttl_secondary" => min(
-                            max(absint($value["ttl_secondary"] ?? 86400), 60),
-                            7 * DAY_IN_SECONDS
-                        ),
-                        "exclude_post_types" => sanitize_text_field(
-                            $value["exclude_post_types"] ?? ""
-                        ),
-                        "exclude_ids" => sanitize_text_field(
-                            $value["exclude_ids"] ?? ""
-                        ),
-                        "flush_on_comments" => filter_var(
-                            $value["flush_on_comments"] ?? true,
-                            FILTER_VALIDATE_BOOLEAN
-                        ),
-                        "flush_on_save" => filter_var(
-                            $value["flush_on_save"] ?? true,
-                            FILTER_VALIDATE_BOOLEAN
-                        ),
-                    ];
-                } else {
-                    $validated[$key] = $feature_def["default"];
+                    continue;
                 }
-            } elseif (
-                isset($feature_def["type"]) &&
-                $feature_def["type"] === "custom_bot_blocker"
-            ) {
-                if (is_array($value)) {
-                    $raw_bots = isset($value["user_agents"])
-                        ? (string) $value["user_agents"]
-                        : "";
-                    $bots = array_filter(
-                        array_map("trim", explode("\n", $raw_bots))
-                    );
-                    $bots_array = array_slice(
-                        array_filter(
-                            array_map(
-                                fn(string $bot): string => substr($bot, 0, 150),
-                                $bots
-                            )
-                        ),
-                        0,
-                        50
-                    );
-                    $validated[$key] = [
-                        "enabled" => filter_var(
-                            $value["enabled"] ?? false,
-                            FILTER_VALIDATE_BOOLEAN
-                        ),
-                        "user_agents" => implode("\n", $bots_array),
-                    ];
-                } else {
-                    $validated[$key] = $feature_def["default"];
+                if (
+                    isset($def["type"]) &&
+                    $def["type"] === "custom_db_caching"
+                ) {
+                    if (is_array($input)) {
+                        if (!empty($def["disabled"])) {
+                            $input["enabled"] = false;
+                        }
+                        $validated[$key] = [
+                            "enabled" => filter_var(
+                                $input["enabled"] ?? false,
+                                FILTER_VALIDATE_BOOLEAN
+                            ),
+                            "ttl_main" => min(
+                                max(absint($input["ttl_main"] ?? 43200), 60),
+                                7 * DAY_IN_SECONDS
+                            ),
+                            "ttl_secondary" => min(
+                                max(
+                                    absint($input["ttl_secondary"] ?? 86400),
+                                    60
+                                ),
+                                7 * DAY_IN_SECONDS
+                            ),
+                            "exclude_post_types" => sanitize_text_field(
+                                $input["exclude_post_types"] ?? ""
+                            ),
+                            "exclude_ids" => sanitize_text_field(
+                                $input["exclude_ids"] ?? ""
+                            ),
+                            "flush_on_comments" => filter_var(
+                                $input["flush_on_comments"] ?? true,
+                                FILTER_VALIDATE_BOOLEAN
+                            ),
+                            "flush_on_save" => filter_var(
+                                $input["flush_on_save"] ?? true,
+                                FILTER_VALIDATE_BOOLEAN
+                            ),
+                        ];
+                    } else {
+                        $validated[$key] = $def["default"];
+                    }
+                    continue;
                 }
-            } elseif (
-                isset($feature_def["type"]) &&
-                $feature_def["type"] === "custom_font_optimization"
-            ) {
-                if (is_array($value)) {
-                    $is_removed = filter_var(
-                        $value["remove_google_fonts"] ?? false,
+                if (
+                    isset($def["type"]) &&
+                    $def["type"] === "custom_bot_blocker"
+                ) {
+                    if (is_array($input)) {
+                        $raw_bots = isset($input["user_agents"])
+                            ? (string) $input["user_agents"]
+                            : "";
+                        $bots = array_filter(
+                            array_map("trim", explode("\n", $raw_bots))
+                        );
+                        $bots_array = array_slice(
+                            array_filter(
+                                array_map(
+                                    fn(string $bot): string => substr(
+                                        $bot,
+                                        0,
+                                        150
+                                    ),
+                                    $bots
+                                )
+                            ),
+                            0,
+                            50
+                        );
+                        $validated[$key] = [
+                            "enabled" => filter_var(
+                                $input["enabled"] ?? false,
+                                FILTER_VALIDATE_BOOLEAN
+                            ),
+                            "user_agents" => implode("\n", $bots_array),
+                        ];
+                    } else {
+                        $validated[$key] = $def["default"];
+                    }
+                    continue;
+                }
+                if (
+                    isset($def["type"]) &&
+                    $def["type"] === "custom_font_optimization"
+                ) {
+                    if (is_array($input)) {
+                        $is_removed = filter_var(
+                            $input["remove_google_fonts"] ?? false,
+                            FILTER_VALIDATE_BOOLEAN
+                        );
+                        $validated[$key] = [
+                            "enabled" => filter_var(
+                                $input["enabled"] ?? false,
+                                FILTER_VALIDATE_BOOLEAN
+                            ),
+                            "async_google_fonts" => $is_removed
+                                ? false
+                                : filter_var(
+                                    $input["async_google_fonts"] ?? true,
+                                    FILTER_VALIDATE_BOOLEAN
+                                ),
+                            "display_swap" => $is_removed
+                                ? false
+                                : filter_var(
+                                    $input["display_swap"] ?? true,
+                                    FILTER_VALIDATE_BOOLEAN
+                                ),
+                            "preconnect" => $is_removed
+                                ? false
+                                : filter_var(
+                                    $input["preconnect"] ?? true,
+                                    FILTER_VALIDATE_BOOLEAN
+                                ),
+                            "remove_google_fonts" => $is_removed,
+                        ];
+                    } else {
+                        $validated[$key] = $def["default"];
+                    }
+                    continue;
+                }
+                if (
+                    isset($def["type"]) &&
+                    $def["type"] === "custom_security_headers"
+                ) {
+                    if (is_array($input)) {
+                        $validated[$key] = [
+                            "enabled" => filter_var(
+                                $input["enabled"] ?? false,
+                                FILTER_VALIDATE_BOOLEAN
+                            ),
+                            "optional_headers_enabled" => filter_var(
+                                $input["optional_headers_enabled"] ?? false,
+                                FILTER_VALIDATE_BOOLEAN
+                            ),
+                        ];
+                    } else {
+                        $validated[$key] = $def["default"];
+                    }
+                    continue;
+                }
+                if (isset($def["type"]) && $def["type"] === "toggle") {
+                    $validated[$key] = filter_var(
+                        $input,
                         FILTER_VALIDATE_BOOLEAN
                     );
-                    $validated[$key] = [
-                        "enabled" => filter_var(
-                            $value["enabled"] ?? false,
-                            FILTER_VALIDATE_BOOLEAN
-                        ),
-                        "async_google_fonts" => $is_removed
-                            ? false
-                            : filter_var(
-                                $value["async_google_fonts"] ?? true,
-                                FILTER_VALIDATE_BOOLEAN
-                            ),
-                        "display_swap" => $is_removed
-                            ? false
-                            : filter_var(
-                                $value["display_swap"] ?? true,
-                                FILTER_VALIDATE_BOOLEAN
-                            ),
-                        "preconnect" => $is_removed
-                            ? false
-                            : filter_var(
-                                $value["preconnect"] ?? true,
-                                FILTER_VALIDATE_BOOLEAN
-                            ),
-                        "remove_google_fonts" => $is_removed,
-                    ];
-                } else {
-                    $validated[$key] = $feature_def["default"];
+                    continue;
                 }
-            } elseif (
-                isset($feature_def["type"]) &&
-                $feature_def["type"] === "custom_security_headers"
-            ) {
-                if (is_array($value)) {
-                    $validated[$key] = [
-                        "enabled" => filter_var(
-                            $value["enabled"] ?? false,
-                            FILTER_VALIDATE_BOOLEAN
-                        ),
-                        "optional_headers_enabled" => filter_var(
-                            $value["optional_headers_enabled"] ?? false,
-                            FILTER_VALIDATE_BOOLEAN
-                        ),
-                    ];
-                } else {
-                    $validated[$key] = $feature_def["default"];
+                if (isset($def["options"]) && is_array($def["options"])) {
+                    if (
+                        is_string($input) &&
+                        array_key_exists($input, $def["options"])
+                    ) {
+                        $validated[$key] = sanitize_key($input);
+                    } else {
+                        $validated[$key] = $def["default"];
+                    }
+                    continue;
                 }
-            } elseif (
-                isset($feature_def["type"]) &&
-                $feature_def["type"] === "toggle"
-            ) {
-                $validated[$key] = filter_var($value, FILTER_VALIDATE_BOOLEAN);
-            } elseif (
-                isset($feature_def["options"]) &&
-                is_array($feature_def["options"])
-            ) {
-                if (is_string($value) && array_key_exists($value, $feature_def["options"])) {
-                    $validated[$key] = sanitize_key($value);
-                } else {
-                    $validated[$key] = $feature_def["default"];
-                }
+                $validated[$key] = $input;
+            } else {
+                $validated[$key] = $def["default"] ?? false;
             }
         }
+
         return $validated;
     }
     private function _get_slowdown_multiplier(int $interval): int
@@ -842,13 +875,16 @@ class OPTISTATE_Performance_Manager
     }
     public function register_custom_cron_schedules(array $schedules): array
     {
-       $slowed = get_transient("optistate_cron_slowed_schedules");
+        $slowed = get_transient("optistate_cron_slowed_schedules");
         if (!is_array($slowed)) {
             $slowed = [];
             $state = $this->_cron_manager_get_state();
             foreach ($state as $entry) {
                 if (
-                    isset($entry["slowed_schedule"], $entry["slowed_interval"]) &&
+                    isset(
+                        $entry["slowed_schedule"],
+                        $entry["slowed_interval"]
+                    ) &&
                     (int) $entry["slowed_interval"] > 0
                 ) {
                     $slowed[(string) $entry["slowed_schedule"]] =
@@ -1006,16 +1042,19 @@ class OPTISTATE_Performance_Manager
     {
         check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
         $this->main_plugin->settings_manager->check_user_access();
+
         if (!OPTISTATE_Utils::check_rate_limit("cron_manager_action", 3)) {
             OPTISTATE_Utils::send_rate_limit_error();
             return;
         }
+
         $action = isset($_POST["cron_action"])
             ? sanitize_key($_POST["cron_action"])
             : "";
         $event_id = isset($_POST["event_id"])
             ? sanitize_text_field($_POST["event_id"])
             : "";
+
         if (
             !in_array(
                 $action,
@@ -1029,11 +1068,13 @@ class OPTISTATE_Performance_Manager
             );
             return;
         }
+
         global $wpdb;
-        $lock_name = "optistate_cron_manager_lock";
+        $lock_name = $wpdb->prefix . "optistate_cron_lock";
         $lock_acquired = $wpdb->get_var(
             $wpdb->prepare("SELECT GET_LOCK(%s, 3)", $lock_name)
         );
+
         if (!$lock_acquired) {
             OPTISTATE_Utils::send_json_error(
                 __(
@@ -1044,6 +1085,7 @@ class OPTISTATE_Performance_Manager
             );
             return;
         }
+
         try {
             $jobs = $this->get_cron_jobs(true);
             $state = $this->_cron_manager_get_state();
@@ -1054,11 +1096,13 @@ class OPTISTATE_Performance_Manager
                     break;
                 }
             }
+
             $hook = null;
             $args = [];
             $next_run = 0;
             $schedule = false;
             $interval = 0;
+
             if ($target_job) {
                 $hook = $target_job["hook"];
                 $args = $target_job["args"];
@@ -1075,11 +1119,13 @@ class OPTISTATE_Performance_Manager
                     $next_run = $st["original_next_run"] ?? 0;
                 }
             }
+
             if (!$hook) {
                 throw new Exception(
                     __("Could not identify the cron job.", "optistate")
                 );
             }
+
             if ($this->is_protected_hook($hook)) {
                 throw new Exception(
                     __(
@@ -1088,6 +1134,7 @@ class OPTISTATE_Performance_Manager
                     )
                 );
             }
+
             switch ($action) {
                 case "pause":
                     if (!$target_job) {
@@ -1132,6 +1179,7 @@ class OPTISTATE_Performance_Manager
                         "message" => __("Cron job paused.", "optistate"),
                     ]);
                     return;
+
                 case "slowdown":
                     if (!$target_job) {
                         throw new Exception(__("Job not found.", "optistate"));
@@ -1157,6 +1205,7 @@ class OPTISTATE_Performance_Manager
                             )
                         );
                     }
+
                     $multiplier = $this->_get_slowdown_multiplier($interval);
                     if ($multiplier <= 1) {
                         throw new Exception(
@@ -1166,10 +1215,12 @@ class OPTISTATE_Performance_Manager
                             )
                         );
                     }
+
                     $new_interval = $interval * $multiplier;
                     $new_schedule =
                         "optistate_slowed_" .
                         substr(md5($event_id . $new_interval), 0, 12);
+
                     add_filter("cron_schedules", function (
                         array $schedules
                     ) use ($new_schedule, $new_interval): array {
@@ -1184,6 +1235,7 @@ class OPTISTATE_Performance_Manager
                         }
                         return $schedules;
                     });
+
                     $unscheduled = wp_unschedule_event($next_run, $hook, $args);
                     if ($unscheduled === false) {
                         throw new Exception(
@@ -1193,13 +1245,31 @@ class OPTISTATE_Performance_Manager
                             )
                         );
                     }
+
                     $scheduled = wp_schedule_event(
                         time() + $new_interval,
                         $new_schedule,
                         $hook,
                         $args
                     );
-                    if (!$scheduled) {
+                    if ($scheduled === false) {
+                        if (wp_next_scheduled($hook, $args) !== false) {
+                            OPTISTATE_Utils::log_critical_error(
+                                "Cron slowdown race condition detected: job already scheduled",
+                                [
+                                    "hook" => $hook,
+                                    "event_id" => $event_id,
+                                    "new_schedule" => $new_schedule,
+                                ]
+                            );
+                            throw new Exception(
+                                __(
+                                    "This cron job was modified by another process. Please refresh and try again.",
+                                    "optistate"
+                                )
+                            );
+                        }
+
                         $restored = wp_schedule_event(
                             time() + $interval,
                             $schedule,
@@ -1237,6 +1307,7 @@ class OPTISTATE_Performance_Manager
                             )
                         );
                     }
+
                     $state[$event_id] = [
                         "slowed" => true,
                         "hook" => $hook,
@@ -1260,6 +1331,7 @@ class OPTISTATE_Performance_Manager
                         "message" => __("Cron job slowed down.", "optistate"),
                     ]);
                     return;
+
                 case "resume":
                 case "restore":
                     if (!isset($state[$event_id])) {
@@ -1271,6 +1343,7 @@ class OPTISTATE_Performance_Manager
                     $orig_schedule = $stored["original_schedule"] ?? false;
                     $orig_interval = $stored["original_interval"] ?? 0;
                     $orig_next_run = $stored["original_next_run"] ?? 0;
+
                     wp_clear_scheduled_hook($hook, $args);
                     if ($orig_schedule !== false && $orig_interval > 0) {
                         $scheduled = wp_schedule_event(
@@ -1316,6 +1389,7 @@ class OPTISTATE_Performance_Manager
                         ),
                     ]);
                     return;
+
                 case "run_now":
                     $scheduled = wp_schedule_single_event(
                         time() + 1,
@@ -1452,9 +1526,15 @@ class OPTISTATE_Performance_Manager
                 !(defined("DOING_AJAX") && DOING_AJAX) &&
                 !(defined("WP_CLI") && WP_CLI)
             ) {
-              $this->_performance_block_bad_bots_php();
+                $this->_performance_block_bad_bots_php();
             }
         }
+    }
+    private function is_htaccess_structurally_valid(string $content): bool
+    {
+        $open = substr_count($content, "<IfModule");
+        $close = substr_count($content, "</IfModule>");
+        return $open === $close;
     }
     public function get_htaccess_info(
         bool $force = false,
@@ -1471,8 +1551,14 @@ class OPTISTATE_Performance_Manager
             }
             return $cache;
         }
+
+        if (!function_exists("get_home_path")) {
+            require_once ABSPATH . "wp-admin/includes/file.php";
+        }
+
         $fs = $this->main_plugin->get_filesystem();
         $path = get_home_path() . ".htaccess";
+
         $info = [
             "path" => $path,
             "exists" => false,
@@ -1481,6 +1567,7 @@ class OPTISTATE_Performance_Manager
             "mtime" => 0,
             "message" => "",
         ];
+
         if (!$fs->exists($path)) {
             if ($attempt_create) {
                 $created = $fs->put_contents(
@@ -1505,9 +1592,14 @@ class OPTISTATE_Performance_Manager
                 return $info;
             }
         }
+
         $info["exists"] = true;
-        $info["size"] = $fs->size($path);
-        $info["mtime"] = $fs->mtime($path);
+        $size = $fs->size($path);
+        $info["size"] = is_int($size) ? $size : 0;
+
+        $mtime = $fs->mtime($path);
+        $info["mtime"] = is_int($mtime) ? $mtime : 0;
+
         $info["writable"] = $fs->is_writable($path);
         if (!$info["writable"]) {
             $info["message"] = __(
@@ -1517,9 +1609,11 @@ class OPTISTATE_Performance_Manager
         } else {
             $info["message"] = __(".htaccess file is writable.", "optistate");
         }
+
         if ($include_content) {
             $info["content"] = $fs->get_contents($path);
         }
+
         $cache = $info;
         return $info;
     }
@@ -1598,6 +1692,29 @@ class OPTISTATE_Performance_Manager
             $content
         );
         return preg_replace("/\n{3,}/", "\n\n", trim($content));
+    }
+    private function get_compiled_bot_regex(string $user_agents_string): ?string
+    {
+        if ($this->compiled_bot_regex !== null) {
+            return $this->compiled_bot_regex;
+        }
+
+        $bots = array_filter(
+            array_map("trim", explode("\n", $user_agents_string))
+        );
+        $bots = array_slice($bots, 0, 50);
+
+        if (empty($bots)) {
+            $this->compiled_bot_regex = "";
+            return null;
+        }
+
+        $escaped = array_map(static function (string $bot): string {
+            return preg_quote($bot, "/");
+        }, $bots);
+
+        $this->compiled_bot_regex = "/" . implode("|", $escaped) . "/i";
+        return $this->compiled_bot_regex;
     }
     public function rebuild_htaccess(): bool
     {
@@ -1691,9 +1808,18 @@ class OPTISTATE_Performance_Manager
         $final_content = $top_block . $clean_content;
         $final_content =
             preg_replace("/\n{3,}/", "\n\n", trim($final_content)) . PHP_EOL;
+
         if (trim($current_content) === trim($final_content)) {
             return true;
         }
+        if (!$this->is_htaccess_structurally_valid($final_content)) {
+            OPTISTATE_Utils::log_critical_error(
+                ".htaccess rebuild aborted: unbalanced IfModule tags detected",
+                ["path" => $htaccess_path]
+            );
+            return false;
+        }
+
         $result = $this->main_plugin->settings_manager->secure_file_write_atomic(
             $htaccess_path,
             $final_content,
@@ -1896,18 +2022,23 @@ class OPTISTATE_Performance_Manager
             $settings = $this->get_performance_settings();
             $font_settings = $settings["font_optimization"] ?? [];
         }
+
         if (!self::_str_contains($href, "fonts.googleapis.com")) {
             return $html;
         }
+
         $clean_href = $href;
         if (!empty($font_settings["display_swap"])) {
             $clean_href = remove_query_arg("display", $clean_href);
             $clean_href = add_query_arg(["display" => "swap"], $clean_href);
         }
+
         if (!empty($font_settings["async_google_fonts"])) {
             $escaped_url = esc_url($clean_href);
             $full_html =
-                '<link rel="preload" as="style" href="' . $escaped_url . '" />';
+                '<link rel="preload" as="style" href="' .
+                $escaped_url .
+                '" crossorigin="anonymous" />';
             $full_html .=
                 '<link rel="stylesheet" href="' .
                 $escaped_url .
@@ -1918,6 +2049,7 @@ class OPTISTATE_Performance_Manager
                 '" /></noscript>';
             return $full_html;
         }
+
         if (!empty($font_settings["display_swap"])) {
             $html = preg_replace(
                 '/href=[\'"]([^\'"]+)[\'"]/',
@@ -1926,30 +2058,35 @@ class OPTISTATE_Performance_Manager
                 1
             );
         }
+
         return $html;
     }
-    private function _performance_enable_lazy_load(): void
+    public function _performance_enable_lazy_load(): void
     {
         add_filter("wp_lazy_loading_enabled", "__return_true");
-        if (!is_admin()) {
-            add_filter(
-                "wp_content_img_tag",
-                ["OPTISTATE_Utils", "add_async_decoding"],
-                10,
-                3
-            );
+        if (is_admin()) {
+            return;
         }
+
+        add_filter(
+            "wp_content_img_tag",
+            ["OPTISTATE_Utils", "add_async_decoding"],
+            10,
+            3
+        );
     }
     public function _performance_block_bad_bots_php(): void
     {
         if (wp_doing_cron() || (defined("WP_CLI") && WP_CLI)) {
             return;
         }
+
         $global_settings = $this->main_plugin->settings_manager->get_persistent_settings();
         $ip_blocker_enabled = !empty($global_settings["ip_blocker_enabled"]);
         $whitelist = $global_settings["ip_whitelist"] ?? [];
+
         if ($ip_blocker_enabled && !empty($whitelist)) {
-                $client_ip = OPTISTATE_Utils::get_client_ip(
+            $client_ip = OPTISTATE_Utils::get_client_ip(
                 !empty($global_settings["cloudflare_enabled"]),
                 $global_settings["custom_trusted_proxies"] ?? []
             );
@@ -1959,38 +2096,33 @@ class OPTISTATE_Performance_Manager
                 }
             }
         }
+
         $settings = $this->get_performance_settings();
         if (empty($settings["bad_bot_blocker"]["enabled"])) {
             return;
         }
+
         if (is_admin() || (defined("DOING_AJAX") && DOING_AJAX)) {
             return;
         }
+
         $request_uri = $_SERVER["REQUEST_URI"] ?? "";
         if (self::_str_contains($request_uri, "wp-login.php")) {
             return;
         }
+
         if (empty($_SERVER["HTTP_USER_AGENT"])) {
             return;
         }
+
         $user_agent = $_SERVER["HTTP_USER_AGENT"];
-        static $bot_list = null;
-        if ($bot_list === null) {
-            $raw_bots = $settings["bad_bot_blocker"]["user_agents"] ?? "";
-            $bot_list = array_values(
-                array_filter(
-                    array_map("trim", explode("\n", (string) $raw_bots)),
-                    static fn(string $p): bool => $p !== ""
-                )
-            );
-        }
-        if (!empty($bot_list)) {
-            foreach ($bot_list as $bot) {
-                if (stripos($user_agent, $bot) !== false) {
-                    OPTISTATE_Utils::deny_bot_access($user_agent);
-                    return;
-                }
-            }
+
+        $pattern = $this->get_compiled_bot_regex(
+            $settings["bad_bot_blocker"]["user_agents"] ?? ""
+        );
+        if ($pattern !== null && preg_match($pattern, $user_agent)) {
+            OPTISTATE_Utils::deny_bot_access($user_agent);
+            return;
         }
     }
     public function ajax_check_htaccess_status(): void
@@ -2310,6 +2442,7 @@ class OPTISTATE_Performance_Manager
         if (!defined($constant_name)) {
             return false;
         }
+
         $fs = $this->main_plugin->get_filesystem();
         $config_file = ABSPATH . "wp-config.php";
         if (!$fs->exists($config_file)) {
@@ -2318,18 +2451,30 @@ class OPTISTATE_Performance_Manager
                 return false;
             }
         }
-        $config_content = $fs->get_contents($config_file);
-        if ($config_content === false || empty($config_content)) {
-            OPTISTATE_Utils::log_critical_error(
-                "Failed to read wp-config.php for constant check",
-                ["constant" => $constant_name, "path" => $config_file]
-            );
+
+        $raw = $fs->get_contents($config_file);
+        if ($raw === false || $raw === "") {
             return false;
         }
-        $quoted = preg_quote($constant_name, "/");
-        $define_pattern = '/define\s*\(\s*[\'"]' . $quoted . '[\'"]\s*,/';
-        $const_pattern = "/(?:^|[\s;{}])const\s+" . $quoted . "\s*=/m";
-        return preg_match($define_pattern, $config_content) === 1 ||
-            preg_match($const_pattern, $config_content) === 1;
+        $clean = $raw;
+        $clean = preg_replace('/\/\/.*$/m', "", $clean);
+        $clean = preg_replace('/#.*$/m', "", $clean);
+        $clean = preg_replace("/\/\*.*?\*\//s", "", $clean);
+        $clean = preg_replace(
+            "/'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'/s",
+            "''",
+            $clean
+        );
+        $clean = preg_replace(
+            '/"[^"\\\\]*(?:\\\\.[^"\\\\]*)*"/s',
+            '""',
+            $clean
+        );
+
+        $q = preg_quote($constant_name, "/");
+        return preg_match(
+            '/\bdefine\s*\(\s*[\'"]' . $q . '[\'"]\s*,/',
+            $clean
+        ) === 1 || preg_match("/\bconst\s+" . $q . "\s*=/m", $clean) === 1;
     }
 }

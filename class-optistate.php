@@ -7,7 +7,7 @@ if (!defined("ABSPATH")) {
 final class OPTISTATE
 {
     const PLUGIN_NAME = "WP Optimal State (Pro)";
-    const VERSION = "1.5.0";
+    const VERSION = "1.4.3";
     const OPTION_NAME = "optistate_settings";
     const NONCE_ACTION = "optistate_nonce";
     const BACKUP_NONCE_ACTION = "optistate_backup_nonce";
@@ -794,13 +794,12 @@ final class OPTISTATE
     ): bool {
         try {
             $fs = $this->get_filesystem();
-        } catch (Throwable $e) {
+        } catch (\Throwable $e) {
             OPTISTATE_Utils::log_critical_error(
                 "secure_directory could not obtain a filesystem: " .
                     $e->getMessage(),
                 ["dir" => $dir_path]
             );
-
             return false;
         }
 
@@ -809,47 +808,55 @@ final class OPTISTATE
         }
 
         $dir_path = trailingslashit($dir_path);
-
         $htaccess_file = $dir_path . ".htaccess";
+        $index_file = $dir_path . "index.php";
+        $index_html = $dir_path . "index.html";
 
+        $all_ok = true;
         if (!$fs->exists($htaccess_file)) {
             $written = $fs->put_contents(
                 $htaccess_file,
                 implode(PHP_EOL, $htaccess_rules) . PHP_EOL,
                 FS_CHMOD_FILE
             );
-
             if ($written === false) {
                 OPTISTATE_Utils::log_critical_error(
                     "Failed to write .htaccess in secure_directory",
                     ["file" => $htaccess_file, "dir" => $dir_path]
                 );
-
-                return false;
+                $all_ok = false;
             }
         }
-
-        $index_file = $dir_path . "index.php";
-
         if (!$fs->exists($index_file)) {
-            $fs->put_contents(
+            $written = $fs->put_contents(
                 $index_file,
                 "<?php\n// Silence is golden\n// WP Optimal State Secure Directory\nhttp_response_code(403);\nexit;\n",
                 FS_CHMOD_FILE
             );
+            if ($written === false) {
+                OPTISTATE_Utils::log_critical_error(
+                    "Failed to write index.php in secure_directory",
+                    ["file" => $index_file, "dir" => $dir_path]
+                );
+                $all_ok = false;
+            }
         }
-
-        $index_html = $dir_path . "index.html";
-
         if (!$fs->exists($index_html)) {
-            $fs->put_contents(
+            $written = $fs->put_contents(
                 $index_html,
                 "<!DOCTYPE html><html><head><title>403 Forbidden</title></head><body><h1>Access Denied</h1></body></html>",
                 FS_CHMOD_FILE
             );
+            if ($written === false) {
+                OPTISTATE_Utils::log_critical_error(
+                    "Failed to write index.html in secure_directory",
+                    ["file" => $index_html, "dir" => $dir_path]
+                );
+                $all_ok = false;
+            }
         }
 
-        return true;
+        return $all_ok;
     }
 
     private function check_required_permissions()
@@ -2661,7 +2668,7 @@ final class OPTISTATE
         $this->settings_manager->check_user_access();
 
         if (!OPTISTATE_Utils::check_rate_limit("apply_preset", 5)) {
-           OPTISTATE_Utils::send_rate_limit_error();
+            OPTISTATE_Utils::send_rate_limit_error();
 
             return;
         }

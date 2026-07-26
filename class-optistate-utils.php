@@ -987,7 +987,7 @@ class OPTISTATE_Utils
     {
         self::send_json_error(self::get_rate_limit_message($is_save), 429);
     }
-	
+
     public static function check_rate_limit(
         string $action,
         int $duration_in_seconds = 10
@@ -1808,83 +1808,63 @@ class OPTISTATE_Utils
         return $final;
     }
 
-    public static function get_ip_block_rules(
-        string $raw_ips,
-        bool $include_whitelist_bypass = true
-    ): string {
-        $ips = array_filter(array_map("trim", explode("\n", $raw_ips)));
-        $ips = array_filter($ips, [__CLASS__, "validate_ip_or_cidr"]);
+public static function get_ip_block_rules( string $raw_ips, bool $include_whitelist_bypass = true ): string {
+    $ips = array_filter( array_map( 'trim', explode( "\n", $raw_ips ) ) );
+    $ips = array_filter( $ips, [ __CLASS__, 'validate_ip_or_cidr' ] );
 
-        if (empty($ips)) {
-            return "";
-        }
-
-        $rules = "# BEGIN WP Optimal State IP Blocking" . PHP_EOL;
-        $rules .= "<IfModule mod_setenvif.c>" . PHP_EOL;
-
-        foreach ($ips as $ip) {
-            $safe_ip = str_replace(
-                '"',
-                '\"',
-                preg_quote(sanitize_text_field($ip), "/")
-            );
-
-            $rules .=
-                '  SetEnvIf X-Forwarded-For "^' .
-                $safe_ip .
-                '$" OptiBlockedIP' .
-                PHP_EOL;
-            $rules .=
-                '  SetEnvIf X-Real-IP "^' .
-                $safe_ip .
-                '$" OptiBlockedIP' .
-                PHP_EOL;
-            $rules .=
-                '  SetEnvIf CF-Connecting-IP "^' .
-                $safe_ip .
-                '$" OptiBlockedIP' .
-                PHP_EOL;
-        }
-
-        $rules .= "</IfModule>" . PHP_EOL;
-        $rules .= "<IfModule mod_authz_core.c>" . PHP_EOL;
-        $rules .= "  <RequireAny>" . PHP_EOL;
-
-        if ($include_whitelist_bypass) {
-            $rules .= "    Require env OptiWhitelisted" . PHP_EOL;
-        }
-
-        $rules .= "    <RequireAll>" . PHP_EOL;
-        $rules .= "      Require all granted" . PHP_EOL;
-
-        foreach ($ips as $ip) {
-            $rules .=
-                "      Require not ip " . sanitize_text_field($ip) . PHP_EOL;
-        }
-
-        $rules .= "      Require not env OptiBlockedIP" . PHP_EOL;
-        $rules .= "    </RequireAll>" . PHP_EOL;
-        $rules .= "  </RequireAny>" . PHP_EOL;
-        $rules .= "</IfModule>" . PHP_EOL;
-        $rules .= "<IfModule !mod_authz_core.c>" . PHP_EOL;
-        $rules .= "  Order Deny,Allow" . PHP_EOL;
-
-        if ($include_whitelist_bypass) {
-            $rules .= "  Allow from env=OptiWhitelisted" . PHP_EOL;
-        }
-
-        $rules .= "  Allow from all" . PHP_EOL;
-
-        foreach ($ips as $ip) {
-            $rules .= "  Deny from " . sanitize_text_field($ip) . PHP_EOL;
-        }
-
-        $rules .= "  Deny from env=OptiBlockedIP" . PHP_EOL;
-        $rules .= "</IfModule>" . PHP_EOL;
-        $rules .= "# END WP Optimal State IP Blocking";
-
-        return $rules;
+    if ( empty( $ips ) ) {
+        return '';
     }
+
+    $rules = "# BEGIN WP Optimal State IP Blocking" . PHP_EOL;
+    $rules .= "<IfModule mod_setenvif.c>" . PHP_EOL;
+
+    foreach ( $ips as $ip ) {
+        $safe_ip = preg_quote( $ip, '/' );
+        $safe_ip = str_replace( '"', '\"', $safe_ip );
+
+        $rules .= '  SetEnvIf X-Forwarded-For "^' . $safe_ip . '$" OptiBlockedIP' . PHP_EOL;
+        $rules .= '  SetEnvIf X-Real-IP "^' . $safe_ip . '$" OptiBlockedIP' . PHP_EOL;
+        $rules .= '  SetEnvIf CF-Connecting-IP "^' . $safe_ip . '$" OptiBlockedIP' . PHP_EOL;
+    }
+
+    $rules .= "</IfModule>" . PHP_EOL;
+    $rules .= "<IfModule mod_authz_core.c>" . PHP_EOL;
+    $rules .= "  <RequireAny>" . PHP_EOL;
+
+    if ( $include_whitelist_bypass ) {
+        $rules .= "    Require env OptiWhitelisted" . PHP_EOL;
+    }
+
+    $rules .= "    <RequireAll>" . PHP_EOL;
+    $rules .= "      Require all granted" . PHP_EOL;
+
+    foreach ( $ips as $ip ) {
+        $rules .= "      Require not ip " . $ip . PHP_EOL;
+    }
+
+    $rules .= "      Require not env OptiBlockedIP" . PHP_EOL;
+    $rules .= "    </RequireAll>" . PHP_EOL;
+    $rules .= "  </RequireAny>" . PHP_EOL;
+    $rules .= "</IfModule>" . PHP_EOL;
+    $rules .= "<IfModule !mod_authz_core.c>" . PHP_EOL;
+    $rules .= "  Order Deny,Allow" . PHP_EOL;
+
+    foreach ( $ips as $ip ) {
+        $rules .= "  Deny from " . $ip . PHP_EOL;
+    }
+
+    $rules .= "  Deny from env=OptiBlockedIP" . PHP_EOL;
+
+    if ( $include_whitelist_bypass ) {
+        $rules .= "  Allow from env=OptiWhitelisted" . PHP_EOL;
+    }
+
+    $rules .= "</IfModule>" . PHP_EOL;
+    $rules .= "# END WP Optimal State IP Blocking";
+
+    return $rules;
+}
 
     public static function get_caching_rules(): string
     {
@@ -2524,19 +2504,22 @@ class OPTISTATE_Utils
         ) {
             return false;
         }
-
-        if ($query->get("orderby") === "rand") {
+        $orderby = $query->get("orderby");
+        $is_rand =
+            $orderby === "rand" ||
+            (is_array($orderby) &&
+                (in_array("rand", $orderby, true) ||
+                    array_key_exists("rand", $orderby)));
+        if ($is_rand) {
             return false;
         }
 
         $post_type = $query->get("post_type");
-
         if (
             !empty($post_type) &&
             !empty(self::$query_cache_config["excluded_post_types"])
         ) {
             $excluded = self::$query_cache_config["excluded_post_types"];
-
             if (is_array($post_type)) {
                 foreach ($post_type as $type) {
                     if (is_scalar($type) && isset($excluded[$type])) {
@@ -2549,22 +2532,16 @@ class OPTISTATE_Utils
         }
 
         $excluded_ids = self::$query_cache_config["excluded_ids"] ?? [];
-
         if (!empty($excluded_ids)) {
             $p = $query->get("p");
-
             if ($p && isset($excluded_ids[$p])) {
                 return false;
             }
-
             $page_id = $query->get("page_id");
-
             if ($page_id && isset($excluded_ids[$page_id])) {
                 return false;
             }
-
             $post_in = $query->get("post__in");
-
             if (!empty($post_in) && is_array($post_in)) {
                 foreach ($post_in as $id) {
                     if (isset($excluded_ids[$id])) {

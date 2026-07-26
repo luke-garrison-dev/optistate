@@ -302,9 +302,9 @@ class OPTISTATE_DB_Wrapper
                 : "");
         if (!$this->owns_connection) {
             $vars_to_save = [
-                'sql_mode' => 'SELECT @@sql_mode',
-                'wait_timeout' => 'SELECT @@wait_timeout',
-                'time_zone' => 'SELECT @@time_zone',
+                "sql_mode" => "SELECT @@sql_mode",
+                "wait_timeout" => "SELECT @@wait_timeout",
+                "time_zone" => "SELECT @@time_zone",
             ];
             foreach ($vars_to_save as $var => $query) {
                 $res = $connection->query($query);
@@ -320,7 +320,8 @@ class OPTISTATE_DB_Wrapper
             if ($res && $res instanceof mysqli_result) {
                 $row = $res->fetch_row();
                 if ($row !== null) {
-                    $this->original_session_vars['foreign_key_checks'] = $row[0];
+                    $this->original_session_vars["foreign_key_checks"] =
+                        $row[0];
                 }
                 $res->free();
             }
@@ -328,7 +329,7 @@ class OPTISTATE_DB_Wrapper
             if ($res && $res instanceof mysqli_result) {
                 $row = $res->fetch_row();
                 if ($row !== null) {
-                    $this->original_session_vars['unique_checks'] = $row[0];
+                    $this->original_session_vars["unique_checks"] = $row[0];
                 }
                 $res->free();
             }
@@ -336,7 +337,7 @@ class OPTISTATE_DB_Wrapper
             if ($res && $res instanceof mysqli_result) {
                 $row = $res->fetch_row();
                 if ($row !== null) {
-                    $this->original_session_vars['autocommit'] = $row[0];
+                    $this->original_session_vars["autocommit"] = $row[0];
                 }
                 $res->free();
             }
@@ -424,11 +425,17 @@ class OPTISTATE_DB_Wrapper
                         "MySQL server connection dropped during an active transaction. Batch consistency lost; safe restart required."
                     );
                 }
-                $is_idempotent = (bool) preg_match('/^\s*(SELECT|SHOW|DESCRIBE|EXPLAIN|SET)\s+/i', $query);
+                $is_idempotent = (bool) preg_match(
+                    "/^\s*(SELECT|SHOW|DESCRIBE|EXPLAIN|SET)\s+/i",
+                    $query
+                );
                 if (!$is_idempotent) {
                     throw new Exception(
                         sprintf(
-                            __("Database connection dropped during non-idempotent query. Error: %s", "optistate"),
+                            __(
+                                "Database connection dropped during non-idempotent query. Error: %s",
+                                "optistate"
+                            ),
                             $connection->error
                         )
                     );
@@ -661,20 +668,43 @@ class OPTISTATE_DB_Wrapper
     public function close(): void
     {
         if ($this->connection !== null) {
-            if (!$this->owns_connection && !empty($this->original_session_vars)) {
+            if (
+                !$this->owns_connection &&
+                !empty($this->original_session_vars)
+            ) {
                 foreach ($this->original_session_vars as $var => $value) {
-                    if ($var === 'foreign_key_checks') {
-                        @$this->connection->query("SET SESSION foreign_key_checks = " . (int)$value);
-                    } elseif ($var === 'unique_checks') {
-                        @$this->connection->query("SET SESSION unique_checks = " . (int)$value);
-                    } elseif ($var === 'autocommit') {
-                        @$this->connection->query("SET SESSION autocommit = " . (int)$value);
-                    } elseif ($var === 'sql_mode') {
-                        @$this->connection->query("SET SESSION sql_mode = '" . $this->connection->real_escape_string((string)$value) . "'");
-                    } elseif ($var === 'wait_timeout') {
-                        @$this->connection->query("SET SESSION wait_timeout = " . (int)$value);
-                    } elseif ($var === 'time_zone') {
-                        @$this->connection->query("SET SESSION time_zone = '" . $this->connection->real_escape_string((string)$value) . "'");
+                    if ($var === "foreign_key_checks") {
+                        @$this->connection->query(
+                            "SET SESSION foreign_key_checks = " . (int) $value
+                        );
+                    } elseif ($var === "unique_checks") {
+                        @$this->connection->query(
+                            "SET SESSION unique_checks = " . (int) $value
+                        );
+                    } elseif ($var === "autocommit") {
+                        @$this->connection->query(
+                            "SET SESSION autocommit = " . (int) $value
+                        );
+                    } elseif ($var === "sql_mode") {
+                        @$this->connection->query(
+                            "SET SESSION sql_mode = '" .
+                                $this->connection->real_escape_string(
+                                    (string) $value
+                                ) .
+                                "'"
+                        );
+                    } elseif ($var === "wait_timeout") {
+                        @$this->connection->query(
+                            "SET SESSION wait_timeout = " . (int) $value
+                        );
+                    } elseif ($var === "time_zone") {
+                        @$this->connection->query(
+                            "SET SESSION time_zone = '" .
+                                $this->connection->real_escape_string(
+                                    (string) $value
+                                ) .
+                                "'"
+                        );
                     }
                 }
                 $this->original_session_vars = [];

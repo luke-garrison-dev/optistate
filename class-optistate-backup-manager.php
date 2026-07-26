@@ -153,11 +153,15 @@ class OPTISTATE_Backup_Manager
             "ajax_check_restore_status",
         ]);
     }
-public function display_backup_permission_warning(): void {
-    echo '<div class="notice notice-error"><p>' . 
-         esc_html__('WP Optimal State: Backup directory is not writable. Please check file permissions.', 'optistate') . 
-         '</p></div>';
-}
+    public function display_backup_permission_warning(): void
+    {
+        echo '<div class="notice notice-error"><p>' .
+            esc_html__(
+                "WP Optimal State: Backup directory is not writable. Please check file permissions.",
+                "optistate"
+            ) .
+            "</p></div>";
+    }
     public function get_backups(): array
     {
         $cache_key = "optistate_backup_list_" . DB_NAME;
@@ -668,7 +672,11 @@ public function display_backup_permission_warning(): void {
                         )
                     );
                 }
-                if (OPTISTATE_Backup_Utilities::scan_sql_for_php_threats($sample)) {
+                if (
+                    OPTISTATE_Backup_Utilities::scan_sql_for_php_threats(
+                        $sample
+                    )
+                ) {
                     throw new Exception(
                         __(
                             "Security risk detected. The backup file contains suspicious code.",
@@ -1029,22 +1037,26 @@ public function display_backup_permission_warning(): void {
         }
 
         if ($result["status"] === "skipped") {
-            $state = $result["state"] ?? $this->process_store->get($transient_key);
+            $state =
+                $result["state"] ?? $this->process_store->get($transient_key);
             if (!is_array($state)) {
                 $state = [];
             }
-            $state['skipped_reschedules'] = ($state['skipped_reschedules'] ?? 0) + 1;
-            if ($state['skipped_reschedules'] > 30) {
+            $state["skipped_reschedules"] =
+                ($state["skipped_reschedules"] ?? 0) + 1;
+            if ($state["skipped_reschedules"] > 30) {
                 $this->main_plugin->log_entry(
                     "❌ Backup worker aborted: too many skipped reschedules",
                     "error",
-                    $state['filename'] ?? 'unknown'
+                    $state["filename"] ?? "unknown"
                 );
                 $this->process_store->delete($transient_key);
                 return;
             }
             $this->process_store->set($transient_key, $state, DAY_IN_SECONDS);
-            wp_schedule_single_event(time() + 5, $schedule_hook, [$transient_key]);
+            wp_schedule_single_event(time() + 5, $schedule_hook, [
+                $transient_key,
+            ]);
             OPTISTATE_Utils::safe_set_time_limit($original_time_limit);
             return;
         }
@@ -1059,22 +1071,23 @@ public function display_backup_permission_warning(): void {
             );
             $this->enforce_backup_limit();
 
-            $filepath = $updated_state['filepath'] ?? '';
+            $filepath = $updated_state["filepath"] ?? "";
             if (empty($filepath)) {
                 OPTISTATE_Utils::log_critical_error(
-                    'Backup filepath missing in state when saving metadata',
+                    "Backup filepath missing in state when saving metadata",
                     [
-                        'state_keys' => array_keys($updated_state),
-                        'backup_filename' => $updated_state['filename'] ?? 'unknown'
+                        "state_keys" => array_keys($updated_state),
+                        "backup_filename" =>
+                            $updated_state["filename"] ?? "unknown",
                     ]
                 );
             } else {
                 $this->save_backup_metadata(
                     $filepath,
-                    $updated_state['filename'] ?? '',
-                    $updated_state['start_time'] ?? time(),
-                    $updated_state['all_tables'] ?? [],
-                    $updated_state['uncompressed_size'] ?? 0
+                    $updated_state["filename"] ?? "",
+                    $updated_state["start_time"] ?? time(),
+                    $updated_state["all_tables"] ?? [],
+                    $updated_state["uncompressed_size"] ?? 0
                 );
             }
 
@@ -1204,21 +1217,35 @@ public function display_backup_permission_warning(): void {
             }
 
             if ($result["status"] === "skipped") {
-                $master_state['skipped_reschedules'] = ($master_state['skipped_reschedules'] ?? 0) + 1;
-                if ($master_state['skipped_reschedules'] > 30) {
+                $master_state["skipped_reschedules"] =
+                    ($master_state["skipped_reschedules"] ?? 0) + 1;
+                if ($master_state["skipped_reschedules"] > 30) {
                     $this->main_plugin->log_entry(
                         "❌ Safety backup worker aborted: too many skipped reschedules",
                         "error",
-                        $safety_state['filename'] ?? 'unknown'
+                        $safety_state["filename"] ?? "unknown"
                     );
                     $master_state["status"] = "error";
-                    $master_state["message"] = __("Safety backup skipped too many times.", "optistate");
-                    $this->process_store->set($master_restore_key, $master_state, 10 * MINUTE_IN_SECONDS);
+                    $master_state["message"] = __(
+                        "Safety backup skipped too many times.",
+                        "optistate"
+                    );
+                    $this->process_store->set(
+                        $master_restore_key,
+                        $master_state,
+                        10 * MINUTE_IN_SECONDS
+                    );
                     OPTISTATE_Utils::deactivate_maintenance_mode();
-                    $this->process_store->delete("optistate_restore_in_progress");
+                    $this->process_store->delete(
+                        "optistate_restore_in_progress"
+                    );
                     return;
                 }
-                $this->process_store->set($master_restore_key, $master_state, 2 * HOUR_IN_SECONDS);
+                $this->process_store->set(
+                    $master_restore_key,
+                    $master_state,
+                    2 * HOUR_IN_SECONDS
+                );
                 wp_schedule_single_event(
                     time() + 5,
                     "optistate_run_safety_backup_chunk",
@@ -1305,23 +1332,24 @@ public function display_backup_permission_warning(): void {
                 $this->process_store->delete($safety_backup_key);
                 $this->enforce_backup_limit();
 
-                $safety_state = $result['state'];
-                $filepath = $safety_state['filepath'] ?? '';
+                $safety_state = $result["state"];
+                $filepath = $safety_state["filepath"] ?? "";
                 if (empty($filepath)) {
                     OPTISTATE_Utils::log_critical_error(
-                        'Safety backup filepath missing in state when saving metadata',
+                        "Safety backup filepath missing in state when saving metadata",
                         [
-                            'state_keys' => array_keys($safety_state),
-                            'backup_filename' => $safety_state['filename'] ?? 'unknown'
+                            "state_keys" => array_keys($safety_state),
+                            "backup_filename" =>
+                                $safety_state["filename"] ?? "unknown",
                         ]
                     );
                 } else {
                     $this->save_backup_metadata(
                         $filepath,
-                        $safety_state['filename'] ?? '',
-                        $safety_state['start_time'] ?? time(),
-                        $safety_state['all_tables'] ?? [],
-                        $safety_state['uncompressed_size'] ?? 0
+                        $safety_state["filename"] ?? "",
+                        $safety_state["start_time"] ?? time(),
+                        $safety_state["all_tables"] ?? [],
+                        $safety_state["uncompressed_size"] ?? 0
                     );
                 }
 
@@ -2567,7 +2595,11 @@ public function display_backup_permission_warning(): void {
                         )
                     );
                 }
-                if (OPTISTATE_Backup_Utilities::scan_sql_for_php_threats($sample)) {
+                if (
+                    OPTISTATE_Backup_Utilities::scan_sql_for_php_threats(
+                        $sample
+                    )
+                ) {
                     throw new Exception(
                         __(
                             "Security risk detected. The file contains suspicious code.",

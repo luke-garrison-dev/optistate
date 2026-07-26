@@ -618,7 +618,8 @@ class OPTISTATE_SQL_Parser
                 return true;
             }
         }
-        return strpos($lower_table, strtolower(self::EXCLUDED_TABLE_PREFIX)) === 0;
+        return strpos($lower_table, strtolower(self::EXCLUDED_TABLE_PREFIX)) ===
+            0;
     }
 
     private static function rewrite_foreign_key_references(
@@ -686,7 +687,10 @@ class OPTISTATE_SQL_Parser
                     continue;
                 }
                 if ($char === $quote_char) {
-                    if ($i + 1 < $len && $create_query[$i + 1] === $quote_char) {
+                    if (
+                        $i + 1 < $len &&
+                        $create_query[$i + 1] === $quote_char
+                    ) {
                         $i++;
                         continue;
                     }
@@ -739,21 +743,24 @@ class OPTISTATE_SQL_Parser
             1
         );
         $definitions = [];
-        $current = '';
+        $current = "";
         $depth = 0;
         $in_quote = false;
-        $quote_char = '';
+        $quote_char = "";
         $len_def = strlen($definitions_str);
         for ($i = 0; $i < $len_def; $i++) {
             $char = $definitions_str[$i];
             if ($in_quote) {
-                if ($char === '\\' && $i + 1 < $len_def) {
+                if ($char === "\\" && $i + 1 < $len_def) {
                     $current .= $char . $definitions_str[$i + 1];
                     $i++;
                     continue;
                 }
                 if ($char === $quote_char) {
-                    if ($i + 1 < $len_def && $definitions_str[$i + 1] === $quote_char) {
+                    if (
+                        $i + 1 < $len_def &&
+                        $definitions_str[$i + 1] === $quote_char
+                    ) {
                         $current .= $char . $char;
                         $i++;
                         continue;
@@ -763,37 +770,42 @@ class OPTISTATE_SQL_Parser
                 $current .= $char;
                 continue;
             }
-            if ($char === "'" || $char === '"' || $char === '`') {
+            if ($char === "'" || $char === '"' || $char === "`") {
                 $in_quote = true;
                 $quote_char = $char;
                 $current .= $char;
                 continue;
             }
-            if ($char === '(') {
+            if ($char === "(") {
                 $depth++;
-            } elseif ($char === ')') {
+            } elseif ($char === ")") {
                 $depth--;
-            } elseif ($char === ',' && $depth === 0 && !$in_quote) {
+            } elseif ($char === "," && $depth === 0 && !$in_quote) {
                 $definitions[] = trim($current);
-                $current = '';
+                $current = "";
                 continue;
             }
             $current .= $char;
         }
-        if (trim($current) !== '') {
+        if (trim($current) !== "") {
             $definitions[] = trim($current);
         }
 
         $essential = [];
         $deferrable = [];
         foreach ($definitions as $def) {
-            if (empty($def)) continue;
-            if (preg_match('/^\s*PRIMARY\s+KEY\s*\(/i', $def)
-                || preg_match('/^\s*UNIQUE\s+(KEY|INDEX)\s+/i', $def)
-                || preg_match('/^\s*CONSTRAINT\s+/i', $def)
+            if (empty($def)) {
+                continue;
+            }
+            if (
+                preg_match("/^\s*PRIMARY\s+KEY\s*\(/i", $def) ||
+                preg_match("/^\s*UNIQUE\s+(KEY|INDEX)\s+/i", $def) ||
+                preg_match("/^\s*CONSTRAINT\s+/i", $def)
             ) {
                 $essential[] = $def;
-            } elseif (preg_match('/^\s*(KEY|INDEX|FULLTEXT|SPATIAL)\s+/i', $def)) {
+            } elseif (
+                preg_match("/^\s*(KEY|INDEX|FULLTEXT|SPATIAL)\s+/i", $def)
+            ) {
                 $deferrable[] = $def;
             } else {
                 $essential[] = $def;
@@ -801,17 +813,28 @@ class OPTISTATE_SQL_Parser
         }
         $max_deferred = 50;
         if (count($deferrable) > $max_deferred) {
-            $essential = array_merge($essential, array_slice($deferrable, $max_deferred));
+            $essential = array_merge(
+                $essential,
+                array_slice($deferrable, $max_deferred)
+            );
             $deferrable = array_slice($deferrable, 0, $max_deferred);
         }
 
-        $new_create = $create_header . "\n" . implode(",\n", $essential) . "\n" . $create_footer;
+        $new_create =
+            $create_header .
+            "\n" .
+            implode(",\n", $essential) .
+            "\n" .
+            $create_footer;
 
         if (!empty($deferrable)) {
             $alter_prefix = "ALTER TABLE $quoted_temp ";
-            $chunks = array_chunk(array_map(fn($d) => 'ADD ' . $d, $deferrable), 10);
+            $chunks = array_chunk(
+                array_map(fn($d) => "ADD " . $d, $deferrable),
+                10
+            );
             foreach ($chunks as $chunk) {
-                $alter_queries[] = $alter_prefix . implode(', ', $chunk) . ';';
+                $alter_queries[] = $alter_prefix . implode(", ", $chunk) . ";";
             }
         }
 

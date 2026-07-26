@@ -37,6 +37,7 @@ class OPTISTATE_Activation
     public static function activate(): void
     {
         OPTISTATE_Utils::clear_table_existence_cache();
+
         if (is_multisite()) {
             deactivate_plugins(plugin_basename(OPTISTATE_PLUGIN_FILE));
             wp_die(
@@ -71,23 +72,38 @@ class OPTISTATE_Activation
                 ["back_link" => false]
             );
         }
+
         try {
             self::create_core_data_table();
+
             global $wpdb;
             $core_table = $wpdb->prefix . "optistate_core_data";
+
             $instance = OPTISTATE::instance();
+
             $settings = $instance->settings_manager->get_persistent_settings();
             $settings["ip_blocker_enabled"] = false;
-            $instance->settings_manager->save_persistent_settings($settings);
+            $saved = $instance->settings_manager->save_persistent_settings(
+                $settings
+            );
+            if (!$saved) {
+                OPTISTATE_Utils::log_critical_error(
+                    "Activation: Could not disable IP blocker setting"
+                );
+            }
+
             $instance->clear_directory_existence_cache();
             $instance->performance_manager->apply_performance_optimizations();
             $instance->performance_manager->rebuild_htaccess();
+
             wp_cache_delete("optistate_dirs_checked", "optistate");
             delete_transient("optistate_dirs_checked");
+
             $instance->process_store->create_table();
             if (isset($instance->login_protection)) {
                 $instance->login_protection->create_table();
             }
+
             $upload_dir = wp_upload_dir();
             $wp_filesystem = $instance->get_filesystem();
             if (
@@ -113,13 +129,12 @@ class OPTISTATE_Activation
                     ["basedir" => $upload_dir["basedir"]]
                 );
             }
+
             $saved_settings = $instance->settings_manager->get_persistent_settings();
-            $performance_features = isset(
-                $saved_settings["performance_features"]
-            )
-                ? $saved_settings["performance_features"]
-                : [];
+            $performance_features =
+                $saved_settings["performance_features"] ?? [];
             $reapplied_features = [];
+
             if (
                 isset($performance_features["browser_caching"]) &&
                 $performance_features["browser_caching"] === true
@@ -132,6 +147,7 @@ class OPTISTATE_Activation
             if (!empty($performance_features["security_headers"]["enabled"])) {
                 $reapplied_features[] = "Security Headers";
             }
+
             if (!empty($reapplied_features)) {
                 $features_list = implode(", ", $reapplied_features);
                 $instance->log_entry(
@@ -153,6 +169,7 @@ class OPTISTATE_Activation
                         )
                 );
             }
+
             $metric_default = ["display" => "N/A", "value" => 0];
             $default_cache = [
                 "score" => 0,
@@ -173,6 +190,7 @@ class OPTISTATE_Activation
                 $default_cache,
                 30 * DAY_IN_SECONDS
             );
+
             self::ss_record("activate");
         } catch (Throwable $e) {
             OPTISTATE_Utils::log_critical_error(
@@ -185,13 +203,16 @@ class OPTISTATE_Activation
             );
             deactivate_plugins(plugin_basename(OPTISTATE_PLUGIN_FILE));
             wp_die(
-                '<h1>' .
+                "<h1>" .
                     esc_html__("Activation Failed", "optistate") .
                     "</h1>" .
                     "<p>" .
                     esc_html(
                         sprintf(
-                            __("WP Optimal State could not be activated: %s", "optistate"),
+                            __(
+                                "WP Optimal State could not be activated: %s",
+                                "optistate"
+                            ),
                             $e->getMessage()
                         )
                     ) .

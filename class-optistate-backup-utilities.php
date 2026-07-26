@@ -10,12 +10,20 @@ class OPTISTATE_Backup_Utilities
         OPTISTATE_Process_Store $process_store
     ): void {
         $process_store->cleanup();
-        $restore_in_progress = $process_store->get("optistate_restore_in_progress");
+        $restore_in_progress = $process_store->get(
+            "optistate_restore_in_progress"
+        );
         if ($restore_in_progress) {
-            if (is_array($restore_in_progress) && !empty($restore_in_progress["restore_key"])) {
+            if (
+                is_array($restore_in_progress) &&
+                !empty($restore_in_progress["restore_key"])
+            ) {
                 return;
             }
-            if (is_string($restore_in_progress) && $restore_in_progress !== "") {
+            if (
+                is_string($restore_in_progress) &&
+                $restore_in_progress !== ""
+            ) {
                 return;
             }
         }
@@ -130,7 +138,10 @@ class OPTISTATE_Backup_Utilities
                 $lock_path = $file_path . ".lock";
                 if ($filesystem->exists($lock_path)) {
                     $lock_mtime = $filesystem->mtime($lock_path);
-                    if ($lock_mtime && time() - $lock_mtime < 2 * HOUR_IN_SECONDS) {
+                    if (
+                        $lock_mtime &&
+                        time() - $lock_mtime < 2 * HOUR_IN_SECONDS
+                    ) {
                         continue;
                     }
                 }
@@ -309,7 +320,10 @@ class OPTISTATE_Backup_Utilities
                 return [
                     "valid" => false,
                     "message" => sprintf(
-                        __("Validation failed: Database name mismatch.<br>The backup was created for database '%1\$s', but the current database is '%2\$s'.", "optistate"),
+                        __(
+                            "Validation failed: Database name mismatch.<br>The backup was created for database '%1\$s', but the current database is '%2\$s'.",
+                            "optistate"
+                        ),
                         esc_html($stored_db),
                         esc_html(DB_NAME)
                     ),
@@ -584,55 +598,58 @@ class OPTISTATE_Backup_Utilities
     public static function get_statement_type(string $sql): string
     {
         $sql = ltrim($sql);
-        if ($sql === '') {
-            return 'EMPTY';
+        if ($sql === "") {
+            return "EMPTY";
         }
         $upper = strtoupper(substr($sql, 0, 20));
 
-        if (str_starts_with($upper, 'INSERT')) {
-            return 'INSERT';
+        if (str_starts_with($upper, "INSERT")) {
+            return "INSERT";
         }
-        if (str_starts_with($upper, 'REPLACE')) {
-            return 'REPLACE';
+        if (str_starts_with($upper, "REPLACE")) {
+            return "REPLACE";
         }
-        if (str_starts_with($upper, 'UPDATE')) {
-            return 'UPDATE';
+        if (str_starts_with($upper, "UPDATE")) {
+            return "UPDATE";
         }
-        if (str_starts_with($upper, 'DELETE')) {
-            return 'DELETE';
+        if (str_starts_with($upper, "DELETE")) {
+            return "DELETE";
         }
-        if (str_starts_with($upper, 'TRUNCATE')) {
-            return 'TRUNCATE';
+        if (str_starts_with($upper, "TRUNCATE")) {
+            return "TRUNCATE";
         }
-        if (str_starts_with($upper, 'CREATE')) {
-            return 'CREATE';
+        if (str_starts_with($upper, "CREATE")) {
+            return "CREATE";
         }
-        if (str_starts_with($upper, 'DROP')) {
-            return 'DROP T';
+        if (str_starts_with($upper, "DROP")) {
+            return "DROP T";
         }
-        if (str_starts_with($upper, 'ALTER')) {
-            return 'ALTER ';
+        if (str_starts_with($upper, "ALTER")) {
+            return "ALTER ";
         }
-        if (str_starts_with($upper, 'SET ')) {
-            return 'SET ';
+        if (str_starts_with($upper, "SET ")) {
+            return "SET ";
         }
-        if (str_starts_with($upper, 'START ') || str_starts_with($upper, 'BEGIN')) {
-            return 'START ';
+        if (
+            str_starts_with($upper, "START ") ||
+            str_starts_with($upper, "BEGIN")
+        ) {
+            return "START ";
         }
-        if (str_starts_with($upper, 'COMMIT')) {
-            return 'COMMIT';
+        if (str_starts_with($upper, "COMMIT")) {
+            return "COMMIT";
         }
-        if (str_starts_with($upper, 'LOCK T')) {
-            return 'LOCK T';
+        if (str_starts_with($upper, "LOCK T")) {
+            return "LOCK T";
         }
-        if (str_starts_with($upper, 'UNLOCK')) {
-            return 'UNLOCK';
+        if (str_starts_with($upper, "UNLOCK")) {
+            return "UNLOCK";
         }
-        if (str_starts_with($upper, 'DELIMITER')) {
-            return 'DELIMITER';
+        if (str_starts_with($upper, "DELIMITER")) {
+            return "DELIMITER";
         }
-        if ($sql[0] === '/' || $sql[0] === '-' || $sql[0] === '#') {
-            return 'COMMENT';
+        if ($sql[0] === "/" || $sql[0] === "-" || $sql[0] === "#") {
+            return "COMMENT";
         }
         return strtoupper(substr($sql, 0, 6));
     }
@@ -685,14 +702,22 @@ class OPTISTATE_Backup_Utilities
         $segments = self::split_sql_preserving_literals($create_statement);
         $normalize = function (string $sql) use ($preserve_auto_inc): string {
             if ($preserve_auto_inc) {
-                $sql = preg_replace('/AUTO_INCREMENT\s*=\s*(\d+)/i', 'AUTO_INCREMENT=$1', $sql);
+                $sql = preg_replace(
+                    "/AUTO_INCREMENT\s*=\s*(\d+)/i",
+                    'AUTO_INCREMENT=$1',
+                    $sql
+                );
             } else {
-                $sql = preg_replace('/AUTO_INCREMENT\s*=\s*\d+/i', '', $sql);
+                $sql = preg_replace("/AUTO_INCREMENT\s*=\s*\d+/i", "", $sql);
             }
-            $sql = preg_replace('/ENGINE\s*=\s*(\w+)/i', 'ENGINE=$1', $sql);
-            $sql = preg_replace('/CHARSET\s*=\s*(\w+)/i', 'CHARSET=$1', $sql);
-            $sql = preg_replace('/COLLATE\s*=\s*(\w+)/i', 'COLLATE=$1', $sql);
-            $sql = preg_replace('/ROW_FORMAT\s*=\s*(FIXED|COMPACT|REDUNDANT)/i', '', $sql);
+            $sql = preg_replace("/ENGINE\s*=\s*(\w+)/i", 'ENGINE=$1', $sql);
+            $sql = preg_replace("/CHARSET\s*=\s*(\w+)/i", 'CHARSET=$1', $sql);
+            $sql = preg_replace("/COLLATE\s*=\s*(\w+)/i", 'COLLATE=$1', $sql);
+            $sql = preg_replace(
+                "/ROW_FORMAT\s*=\s*(FIXED|COMPACT|REDUNDANT)/i",
+                "",
+                $sql
+            );
             return $sql;
         };
         foreach ($segments as &$seg) {
@@ -706,15 +731,25 @@ class OPTISTATE_Backup_Utilities
             $out .= $seg["value"];
         }
 
-        if ($add_row_format &&
+        if (
+            $add_row_format &&
             stripos($out, "ENGINE=InnoDB") !== false &&
-            stripos($out, "ROW_FORMAT") === false) {
-            $out = preg_replace('/(ENGINE=InnoDB)/i', '$1 ROW_FORMAT=DYNAMIC', $out);
+            stripos($out, "ROW_FORMAT") === false
+        ) {
+            $out = preg_replace(
+                "/(ENGINE=InnoDB)/i",
+                '$1 ROW_FORMAT=DYNAMIC',
+                $out
+            );
         }
         if ($mysql_version && version_compare($mysql_version, "8.0.0", "<")) {
-            $out = str_replace("utf8mb4_0900_ai_ci", "utf8mb4_unicode_520_ci", $out);
+            $out = str_replace(
+                "utf8mb4_0900_ai_ci",
+                "utf8mb4_unicode_520_ci",
+                $out
+            );
         }
-        $out = preg_replace('/\)\s*ENGINE/', ') ENGINE', $out);
+        $out = preg_replace("/\)\s*ENGINE/", ") ENGINE", $out);
         return trim($out) . ";";
     }
     private static function split_sql_preserving_literals(string $sql): array
@@ -726,7 +761,10 @@ class OPTISTATE_Backup_Utilities
         $buf = "";
         while ($i < $len) {
             $c = $sql[$i];
-            if ($buf_type === "sql" && ($c === "'" || $c === '"' || $c === '`')) {
+            if (
+                $buf_type === "sql" &&
+                ($c === "'" || $c === '"' || $c === "`")
+            ) {
                 if ($buf !== "") {
                     $out[] = ["type" => "sql", "value" => $buf];
                     $buf = "";
@@ -757,13 +795,21 @@ class OPTISTATE_Backup_Utilities
                 $out[] = ["type" => "quoted", "value" => $lit];
                 continue;
             }
-            if ($buf_type === "sql" && $c === "/" && $i + 1 < $len && $sql[$i + 1] === "*") {
+            if (
+                $buf_type === "sql" &&
+                $c === "/" &&
+                $i + 1 < $len &&
+                $sql[$i + 1] === "*"
+            ) {
                 if ($buf !== "") {
                     $out[] = ["type" => "sql", "value" => $buf];
                     $buf = "";
                 }
                 $end = strpos($sql, "*/", $i + 2);
-                $piece = $end === false ? substr($sql, $i) : substr($sql, $i, $end - $i + 2);
+                $piece =
+                    $end === false
+                        ? substr($sql, $i)
+                        : substr($sql, $i, $end - $i + 2);
                 $out[] = ["type" => "quoted", "value" => $piece];
                 $i += strlen($piece);
                 continue;
@@ -898,8 +944,11 @@ class OPTISTATE_Backup_Utilities
         string $path,
         string $session_key
     ): bool {
-        $upload_dir      = wp_upload_dir();
-        $temp_dir        = trailingslashit($upload_dir["basedir"]) . OPTISTATE::TEMP_DIR_NAME . "/";
+        $upload_dir = wp_upload_dir();
+        $temp_dir =
+            trailingslashit($upload_dir["basedir"]) .
+            OPTISTATE::TEMP_DIR_NAME .
+            "/";
         $normalized_path = wp_normalize_path($path);
         $normalized_temp = wp_normalize_path($temp_dir);
 
