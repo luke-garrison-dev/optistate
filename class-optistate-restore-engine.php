@@ -1743,18 +1743,26 @@ class OPTISTATE_Restore_Engine
                         );
                     }
                     $swap_result = $this->swap_temp_tables_to_live(
-                        $db_connection,
-                        $temp_tables_created
-                    );
-                    if (!$swap_result["success"]) {
-                        throw new Exception($swap_result["message"]);
-                    }
-                    if (function_exists("wp_cache_flush")) {
-                        wp_cache_flush();
-                    }
-                    wp_cache_delete("alloptions", "options");
-                    wp_cache_delete("notoptions", "options");
+                    $db_connection,
+                    $temp_tables_created
+                );
+                if (!$swap_result["success"]) {
+                    throw new Exception($swap_result["message"]);
                 }
+                if (function_exists("wp_cache_flush")) {
+                    wp_cache_flush();
+                }
+                wp_cache_delete("alloptions", "options");
+                wp_cache_delete("notoptions", "options");
+                $state["temp_tables_created"] = $temp_tables_created;
+                $state["temp_views_created"]  = $temp_views_created;
+                $state["deferred_views"]      = $deferred_views;
+                $this->process_store->set(
+                    $restore_key_for_deferred,
+                    $state,
+                    DAY_IN_SECONDS
+                );
+
                 if (!empty($deferred_views)) {
                     foreach ($deferred_views as $view_query) {
                         $db_wrapper->query($view_query);
@@ -1768,7 +1776,8 @@ class OPTISTATE_Restore_Engine
                     $index_result = $this->apply_deferred_indexes(
                         $db_connection,
                         $deferred_indexes_map,
-                        $restore_key_for_deferred
+                        $restore_key_for_deferred,
+                        $temp_tables_created
                     );
                     if (
                         isset($index_result["status"]) &&
@@ -1868,6 +1877,7 @@ class OPTISTATE_Restore_Engine
                     "state" => $state,
                     "message" => $message,
                 ];
+              }
             } catch (Exception $e) {
                 $this->cleanup_temp_tables_on_failure(
                     $temp_tables_created ?? [],
@@ -2024,10 +2034,11 @@ class OPTISTATE_Restore_Engine
         }
     }
 
-    private function apply_deferred_indexes(
+        private function apply_deferred_indexes(
         $db,
         array $deferred_indexes,
-        string $restore_key
+        string $restore_key,
+        ?array $temp_tables_created = null
     ): array {
         if (empty($deferred_indexes)) {
             return ["success" => true];
@@ -2037,11 +2048,17 @@ class OPTISTATE_Restore_Engine
         $budget = min(25, (int) (ini_get("max_execution_time") * 0.6));
         $remaining = [];
         global $wpdb;
-        $state = $this->process_store->get($restore_key);
         $temp_to_original_map = [];
-        if ($state && isset($state["temp_tables_created"])) {
-            foreach ($state["temp_tables_created"] as $original => $temp) {
+        if ($temp_tables_created !== null) {
+            foreach ($temp_tables_created as $original => $temp) {
                 $temp_to_original_map[$temp] = $original;
+            }
+        } else {
+            $state = $this->process_store->get($restore_key);
+            if ($state && isset($state["temp_tables_created"])) {
+                foreach ($state["temp_tables_created"] as $original => $temp) {
+                    $temp_to_original_map[$temp] = $original;
+                }
             }
         }
 

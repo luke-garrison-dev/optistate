@@ -1,6 +1,7 @@
 <?php if (!defined("ABSPATH")) {
     exit();
 }
+
 class OPTISTATE_Server_Caching
 {
     private OPTISTATE $main_plugin;
@@ -15,11 +16,14 @@ class OPTISTATE_Server_Caching
     private string $cookie_domain;
     private static ?string $compiled_presence_regex = null;
     private ?bool $caching_enabled_cache = null;
+    private bool $early_check_done = false;
+
     private const CONSENT_PRESENCE_PATTERNS = [
         "cookie_notice_accepted",
         "catAccCookies",
         "cli_user_preference",
     ];
+
     private const CONSENT_VALUE_PATTERNS = [
         "cookieyes-consent" =>
             '/(?:action|consent|analytics|marketing|advertisement|functional|performance|other)\s*[:=]\s*["\']?yes["\']?/i',
@@ -52,6 +56,7 @@ class OPTISTATE_Server_Caching
         "cookie_consent" => '/^accept$/i',
         "cc_cookie" => '/"categories"\s*:\s*\[/i',
     ];
+
     private const ALLOWED_CACHED_HEADERS = [
         "content-security-policy",
         "x-frame-options",
@@ -63,7 +68,9 @@ class OPTISTATE_Server_Caching
         "x-robots-tag",
         "content-language",
     ];
+
     private const DEFAULT_QUERY_MODE = "include_safe";
+
     public function __construct(OPTISTATE $main_plugin)
     {
         $this->main_plugin = $main_plugin;
@@ -76,6 +83,7 @@ class OPTISTATE_Server_Caching
             defined("COOKIEPATH") && COOKIEPATH ? COOKIEPATH : "/";
         $this->cookie_domain = defined("COOKIE_DOMAIN") ? COOKIE_DOMAIN : "";
     }
+
     public function maybe_register_hooks(): void
     {
         if (!$this->is_caching_enabled()) {
@@ -147,8 +155,12 @@ class OPTISTATE_Server_Caching
             add_action("init", [$this, "check_preload_health"]);
         }
     }
+
     public function early_cache_check(): void
     {
+        if ($this->early_check_done) {
+            return;
+        }
         if (wp_doing_ajax() || wp_doing_cron() || is_admin()) {
             return;
         }
@@ -158,6 +170,8 @@ class OPTISTATE_Server_Caching
         ) {
             return;
         }
+        $this->early_check_done = true;
+
         $settings = $this->main_plugin->settings_manager->get_persistent_settings();
         if (
             !is_array($settings) ||
@@ -186,6 +200,7 @@ class OPTISTATE_Server_Caching
             : false;
         $this->maybe_serve_from_cache();
     }
+
     public function detect_mobile(): bool
     {
         if ($this->is_mobile_request !== null) {
@@ -199,6 +214,7 @@ class OPTISTATE_Server_Caching
         $this->is_mobile_request = wp_is_mobile();
         return $this->is_mobile_request;
     }
+
     private function get_server_caching_settings(): array
     {
         if (empty($this->server_caching_settings)) {
@@ -208,6 +224,7 @@ class OPTISTATE_Server_Caching
         }
         return $this->server_caching_settings;
     }
+
     private function get_combined_consent_patterns(): array
     {
         if ($this->combined_consent_patterns !== null) {
@@ -243,6 +260,7 @@ class OPTISTATE_Server_Caching
         self::$compiled_presence_regex = $this->build_presence_regex($presence);
         return $this->combined_consent_patterns;
     }
+
     private function build_presence_regex(array $presence_patterns): string
     {
         if (empty($presence_patterns)) {
@@ -253,6 +271,7 @@ class OPTISTATE_Server_Caching
         }, $presence_patterns);
         return "/(?:^|;\s*)(?:" . implode("|", $escaped) . ")[^=]*=/i";
     }
+
     private function has_any_consent_cookie_fast(): bool
     {
         if (empty($_SERVER["HTTP_COOKIE"])) {
@@ -273,6 +292,7 @@ class OPTISTATE_Server_Caching
         }
         return false;
     }
+
     public function validate_consent_for_session(): void
     {
         $server_caching = $this->get_server_caching_settings();
@@ -311,6 +331,7 @@ class OPTISTATE_Server_Caching
             }
         }
     }
+
     private function set_cookie_compat(
         string $name,
         string $value,
@@ -339,6 +360,7 @@ class OPTISTATE_Server_Caching
             );
         }
     }
+
     public function ensure_directory_and_secure(): bool
     {
         return $this->main_plugin->ensure_directory(
@@ -347,6 +369,7 @@ class OPTISTATE_Server_Caching
             OPTISTATE::HTACCESS_RULES_CACHE
         );
     }
+
     private function get_trusted_host(): string
     {
         static $trusted_host = null;
@@ -372,6 +395,7 @@ class OPTISTATE_Server_Caching
         $trusted_host = strtolower((string) $trusted_host);
         return $trusted_host;
     }
+
     private function has_any_consent_cookie(): bool
     {
         $settings = $this->get_server_caching_settings();
@@ -432,6 +456,7 @@ class OPTISTATE_Server_Caching
         $has_consent_cache = false;
         return false;
     }
+
     private function parse_cookie_header(string $raw): array
     {
         $result = [];
@@ -454,6 +479,7 @@ class OPTISTATE_Server_Caching
         }
         return $result;
     }
+
     private function send_cached_page_headers(
         int $lifetime,
         int $file_time
@@ -481,6 +507,7 @@ class OPTISTATE_Server_Caching
         header("Content-Type: text/html; charset=" . $charset);
         header("Vary: Accept-Encoding, Cookie");
     }
+
     private function normalize_uri_for_key(string $raw_uri): string
     {
         $uri = wp_unslash($raw_uri);
@@ -490,6 +517,7 @@ class OPTISTATE_Server_Caching
         }
         return $uri;
     }
+
     public function maybe_serve_from_cache(): void
     {
         $raw_uri = isset($_SERVER["REQUEST_URI"])
@@ -564,87 +592,164 @@ class OPTISTATE_Server_Caching
             if (time() - $file_time < $lifetime) {
                 $handle = @fopen($cache_file, "rb");
                 if ($handle) {
-                    if (!flock($handle, LOCK_SH)) {
+                    $lock_acquired = false;
+                    $lock_attempts = 0;
+                    $max_lock_attempts = 5;
+                    while ($lock_attempts < $max_lock_attempts) {
+                        if (flock($handle, LOCK_SH | LOCK_NB)) {
+                            $lock_acquired = true;
+                            break;
+                        }
+                        usleep(20000);
+                        $lock_attempts++;
+                    }
+                    if (!$lock_acquired) {
                         fclose($handle);
+                        OPTISTATE_Utils::log_critical_error(
+                            "Cache read lock contention exceeded retries",
+                            ["file" => $cache_file]
+                        );
                         return;
                     }
-                    $header_block = fread($handle, 16384);
-                    if (
-                        $header_block !== false &&
-                        strpos($header_block, "\n\n") !== false
-                    ) {
-                        $parts = explode("\n\n", $header_block, 2);
-                        if (count($parts) === 2) {
-                            $headers_text = $parts[0];
-                            $body_start = $parts[1];
-                            $cached_headers = explode("\n", $headers_text);
-                            $our_headers = [
-                                "cache-control",
-                                "expires",
-                                "last-modified",
-                                "content-type",
-                                "vary",
-                            ];
-                            foreach ($cached_headers as $h) {
-                                $h = trim($h);
-                                if ($h === "") {
-                                    continue;
+
+                    $first_line = fgets($handle);
+                    if ($first_line === "OPTISTATE_CACHE_V2\n") {
+                        $len_line = fgets($handle);
+                        $header_len = (int) trim($len_line);
+                        if ($header_len > 0 && $header_len <= 65535) {
+                            $headers_json = fread($handle, $header_len);
+                            fread($handle, 1);
+                            fgets($handle);
+                            $cached_headers = json_decode($headers_json, true);
+                            if (is_array($cached_headers)) {
+                                $our_headers = [
+                                    "cache-control",
+                                    "expires",
+                                    "last-modified",
+                                    "content-type",
+                                    "vary",
+                                ];
+                                foreach ($cached_headers as $h) {
+                                    $h = trim($h);
+                                    if ($h === "") {
+                                        continue;
+                                    }
+                                    $colon = strpos($h, ":");
+                                    if ($colon === false) {
+                                        continue;
+                                    }
+                                    $name = strtolower(
+                                        trim(substr($h, 0, $colon))
+                                    );
+                                    if (in_array($name, $our_headers, true)) {
+                                        continue;
+                                    }
+                                    if (
+                                        in_array(
+                                            $name,
+                                            self::ALLOWED_CACHED_HEADERS,
+                                            true
+                                        )
+                                    ) {
+                                        header($h, false);
+                                    }
                                 }
-                                $colon = strpos($h, ":");
-                                if ($colon === false) {
-                                    continue;
-                                }
-                                $name = strtolower(trim(substr($h, 0, $colon)));
-                                if (in_array($name, $our_headers, true)) {
-                                    continue;
-                                }
-                                if (
-                                    in_array(
-                                        $name,
-                                        self::ALLOWED_CACHED_HEADERS,
-                                        true
-                                    )
-                                ) {
-                                    header($h, false);
-                                }
+                                $this->send_cached_page_headers(
+                                    $lifetime,
+                                    $file_time
+                                );
+                                fpassthru($handle);
+                                flock($handle, LOCK_UN);
+                                fclose($handle);
+                                exit();
                             }
+                        }
+                        rewind($handle);
+                    } else {
+                        rewind($handle);
+                        $header_block = fread($handle, 16384);
+                        if (
+                            $header_block !== false &&
+                            strpos($header_block, "\n\n") !== false
+                        ) {
+                            $parts = explode("\n\n", $header_block, 2);
+                            if (count($parts) === 2) {
+                                $headers_text = $parts[0];
+                                $body_start = $parts[1];
+                                $cached_headers = explode("\n", $headers_text);
+                                $our_headers = [
+                                    "cache-control",
+                                    "expires",
+                                    "last-modified",
+                                    "content-type",
+                                    "vary",
+                                ];
+                                foreach ($cached_headers as $h) {
+                                    $h = trim($h);
+                                    if ($h === "") {
+                                        continue;
+                                    }
+                                    $colon = strpos($h, ":");
+                                    if ($colon === false) {
+                                        continue;
+                                    }
+                                    $name = strtolower(
+                                        trim(substr($h, 0, $colon))
+                                    );
+                                    if (in_array($name, $our_headers, true)) {
+                                        continue;
+                                    }
+                                    if (
+                                        in_array(
+                                            $name,
+                                            self::ALLOWED_CACHED_HEADERS,
+                                            true
+                                        )
+                                    ) {
+                                        header($h, false);
+                                    }
+                                }
+                                $this->send_cached_page_headers(
+                                    $lifetime,
+                                    $file_time
+                                );
+                                echo $body_start;
+                                fpassthru($handle);
+                                flock($handle, LOCK_UN);
+                                fclose($handle);
+                                exit();
+                            }
+                        }
+                        if (
+                            $header_block !== false &&
+                            strlen($header_block) >= 100 &&
+                            stripos($header_block, "<html") !== false
+                        ) {
                             $this->send_cached_page_headers(
                                 $lifetime,
                                 $file_time
                             );
-                            echo $body_start;
+                            echo $header_block;
                             fpassthru($handle);
                             flock($handle, LOCK_UN);
                             fclose($handle);
                             exit();
+                        } else {
+                            flock($handle, LOCK_UN);
+                            fclose($handle);
+                            try {
+                                $this->main_plugin
+                                    ->get_filesystem()
+                                    ->delete($cache_file);
+                            } catch (Throwable $e) {
+                            }
+                            OPTISTATE_Utils::log_critical_error(
+                                sprintf(
+                                    "Cache file invalid (no <html>), deleted. File: %s",
+                                    $cache_file
+                                )
+                            );
                         }
-                    }
-                    if (
-                        $header_block !== false &&
-                        strlen($header_block) >= 100 &&
-                        stripos($header_block, "<html") !== false
-                    ) {
-                        $this->send_cached_page_headers($lifetime, $file_time);
-                        echo $header_block;
-                        fpassthru($handle);
-                        flock($handle, LOCK_UN);
-                        fclose($handle);
-                        exit();
-                    } else {
-                        flock($handle, LOCK_UN);
-                        fclose($handle);
-                        try {
-                            $this->main_plugin
-                                ->get_filesystem()
-                                ->delete($cache_file);
-                        } catch (Throwable $e) {
-                        }
-                        OPTISTATE_Utils::log_critical_error(
-                            sprintf(
-                                "Cache file invalid (no <html>), deleted. File: %s",
-                                $cache_file
-                            )
-                        );
                     }
                 }
             } else {
@@ -669,6 +774,7 @@ class OPTISTATE_Server_Caching
             }
         });
     }
+
     private function should_not_serve_cache(): bool
     {
         if (is_user_logged_in()) {
@@ -682,6 +788,7 @@ class OPTISTATE_Server_Caching
         }
         return false;
     }
+
     private function get_compiled_exclude_patterns(): array
     {
         $settings = $this->get_server_caching_settings();
@@ -722,6 +829,7 @@ class OPTISTATE_Server_Caching
         $this->compiled_exclude_patterns = $patterns;
         return $patterns;
     }
+
     public function capture_and_cache_output(string $buffer): string
     {
         if (strlen($buffer) < 256 || http_response_code() !== 200) {
@@ -787,8 +895,13 @@ class OPTISTATE_Server_Caching
                     $cached_headers[] = $header_line;
                 }
             }
-            $header_block = implode("\n", $cached_headers);
-            $header_block = rtrim($header_block) . "\n\n";
+            $header_json = wp_json_encode($cached_headers);
+            $meta =
+                "OPTISTATE_CACHE_V2\n" .
+                strlen($header_json) .
+                "\n" .
+                $header_json .
+                "\nBODY_START\n";
             $minify_html = !empty(
                 $this->get_server_caching_settings()["minify_html"]
             );
@@ -799,7 +912,7 @@ class OPTISTATE_Server_Caching
                 header_remove("Content-Length");
             }
             $full_content =
-                $header_block .
+                $meta .
                 $minified_buffer .
                 "\n<!-- Cached by WP Optimal State Plugin -->";
             $this->write_cache_file_atomic($cache_file, $full_content);
@@ -810,6 +923,7 @@ class OPTISTATE_Server_Caching
         }
         return $buffer;
     }
+
     private function write_cache_file_atomic(
         string $cache_file,
         string $full_content
@@ -828,59 +942,56 @@ class OPTISTATE_Server_Caching
             0755,
             $is_shard ? null : OPTISTATE::HTACCESS_RULES_CACHE
         );
-        try {
-            $token = bin2hex(random_bytes(8));
-        } catch (Exception $e) {
-            $token = uniqid("tmp_", true);
-        }
+
+        $token = md5(uniqid((string) wp_rand(), true) . microtime(true));
         $temp_file = $cache_file . ".tmp." . $token;
-        $handle = @fopen($temp_file, "wb");
+        $handle = @fopen($temp_file, "xb");
         if ($handle === false) {
-            OPTISTATE_Utils::log_critical_error(
-                sprintf("Failed to open temp cache file: %s", $temp_file)
-            );
-            return false;
+            $temp_file = $cache_file . ".tmp." . $token . wp_rand(1000, 9999);
+            $handle = @fopen($temp_file, "wb");
+            if ($handle === false) {
+                OPTISTATE_Utils::log_critical_error(
+                    "Failed to open temp cache file",
+                    ["file" => $temp_file]
+                );
+                return false;
+            }
         }
+
         if (!flock($handle, LOCK_EX)) {
             fclose($handle);
             @unlink($temp_file);
-            OPTISTATE_Utils::log_critical_error(
-                sprintf(
-                    "Failed to acquire lock on temp cache file: %s",
-                    $temp_file
-                )
-            );
             return false;
         }
+
         $written = fwrite($handle, $full_content);
         fflush($handle);
         flock($handle, LOCK_UN);
         fclose($handle);
+
         if ($written === false || $written !== strlen($full_content)) {
             @unlink($temp_file);
-            OPTISTATE_Utils::log_critical_error(
-                sprintf(
-                    "Failed to write temp cache file. Temp: %s, Written: %d",
-                    $temp_file,
-                    (int) $written
-                )
-            );
             return false;
         }
+
         if (!@rename($temp_file, $cache_file)) {
+            if (@copy($temp_file, $cache_file)) {
+                @unlink($temp_file);
+                @chmod($cache_file, 0644);
+                return true;
+            }
             @unlink($temp_file);
-            OPTISTATE_Utils::log_critical_error(
-                sprintf(
-                    "Failed to rename cache file. Temp: %s, Target: %s",
-                    $temp_file,
-                    $cache_file
-                )
-            );
+            OPTISTATE_Utils::log_critical_error("Failed to commit cache file", [
+                "temp" => $temp_file,
+                "target" => $cache_file,
+            ]);
             return false;
         }
+
         @chmod($cache_file, 0644);
         return true;
     }
+
     private function get_safe_query_string(string $query_string): string
     {
         if ($query_string === "") {
@@ -953,6 +1064,7 @@ class OPTISTATE_Server_Caching
         ksort($safe_params);
         return http_build_query($safe_params);
     }
+
     private function flatten_cache_dirlist($entries): array
     {
         if (empty($entries) || !is_array($entries)) {
@@ -976,6 +1088,7 @@ class OPTISTATE_Server_Caching
         }
         return $files;
     }
+
     private function get_cache_path(
         string $host,
         string $uri,
@@ -990,7 +1103,7 @@ class OPTISTATE_Server_Caching
         }
         $parsed = wp_parse_url($uri);
         $path = $parsed["path"] ?? "/";
-        if ($path !== "/" && !preg_match('/\.[a-zA-Z0-9]{1,8}$/', $path)) {
+        if ($path !== "/" && !preg_match('/\.[a-zA-Z0-9]{1,8}$/D', $path)) {
             $path = rtrim($path, "/") . "/";
         }
         $query = $parsed["query"] ?? "";
@@ -1015,19 +1128,30 @@ class OPTISTATE_Server_Caching
                 }
             }
         }
-        $cache_key = wp_hash($host . "|" . $cache_key_uri);
-        if ($is_mobile) {
-            $cache_key .= "-mobile";
+        $raw_hash = wp_hash($host . "|" . $cache_key_uri);
+        if (!preg_match('/^[a-f0-9]{32,64}$/i', $raw_hash)) {
+            OPTISTATE_Utils::log_critical_error(
+                "Invalid cache hash generated",
+                ["hash_prefix" => substr((string) $raw_hash, 0, 10)]
+            );
+            return "";
         }
-        $result =
-            $this->cache_dir .
-            substr($cache_key, 0, 2) .
-            "/" .
-            $cache_key .
-            ".html";
+        $hash = strtolower($raw_hash);
+        $shard = substr($hash, 0, 4);
+        $file_name = $hash . ($is_mobile ? "-mobile" : "") . ".html";
+        $result = $this->cache_dir . $shard . "/" . $file_name;
+        if (strpos($result, $this->cache_dir) !== 0) {
+            OPTISTATE_Utils::log_critical_error(
+                "Cache path traversal detected",
+                ["result" => $result]
+            );
+            return "";
+        }
+
         $this->cache_path_cache[$lookup_key] = $result;
         return $result;
     }
+
     public function on_post_updated(
         int $post_id,
         WP_Post $post_after,
@@ -1050,6 +1174,7 @@ class OPTISTATE_Server_Caching
         }
         $this->purge_post_and_related_urls($post_id);
     }
+
     public function on_edited_term(
         int $term_id,
         int $tt_id,
@@ -1067,6 +1192,7 @@ class OPTISTATE_Server_Caching
             $this->purge_cache_for_url($term_link);
         }
     }
+
     public function ajax_purge_page_cache(): void
     {
         check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
@@ -1102,6 +1228,7 @@ class OPTISTATE_Server_Caching
             "trigger_preload" => $auto_preload,
         ]);
     }
+
     public function ajax_get_cache_stats(): void
     {
         check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
@@ -1181,6 +1308,7 @@ class OPTISTATE_Server_Caching
             "oldest_page" => $oldest_page_string,
         ]);
     }
+
     public function purge_cache_for_url(string $url): void
     {
         if (!$this->is_caching_enabled()) {
@@ -1189,7 +1317,7 @@ class OPTISTATE_Server_Caching
         if ($url === "") {
             return;
         }
-                try {
+        try {
             $filesystem = $this->main_plugin->get_filesystem();
         } catch (Throwable $e) {
             OPTISTATE_Utils::log_critical_error(
@@ -1242,52 +1370,22 @@ class OPTISTATE_Server_Caching
         if (!$post) {
             return;
         }
-       try {
-            $filesystem = $this->main_plugin->get_filesystem();
-        } catch (Throwable $e) {
-            OPTISTATE_Utils::log_critical_error(
-                "purge_post_and_related_urls could not obtain a filesystem: " .
-                    $e->getMessage()
-            );
+        $lock_key = "optistate_purge_lock_" . $post_id;
+        $lock_token = wp_generate_password(20, false, false);
+        $acquired = add_transient($lock_key, $lock_token, 15);
+        if (!$acquired) {
             return;
         }
-        if (!$filesystem->is_dir($this->cache_dir)) {
-            return;
-        }
-        $lock_file = $this->cache_dir . ".purge.lock";
-        $lock_handle = @fopen($lock_file, "c");
-        if ($lock_handle === false) {
-            $this->execute_purge_for_post($post);
-            return;
-        }
-        $lock_acquired = false;
-        $lock_attempts = 0;
-        $max_attempts = 10;
-        $start_time = microtime(true);
-        $max_wait = 2.0;
-        while (
-            !$lock_acquired &&
-            $lock_attempts < $max_attempts &&
-            microtime(true) - $start_time < $max_wait
-        ) {
-            $lock_acquired = flock($lock_handle, LOCK_EX | LOCK_NB);
-            if (!$lock_acquired) {
-                usleep(100000);
-                $lock_attempts++;
-            }
-        }
-        if (!$lock_acquired) {
-            fclose($lock_handle);
-            $this->execute_purge_for_post($post);
-            return;
-        }
+
         try {
             $this->execute_purge_for_post($post);
         } finally {
-            flock($lock_handle, LOCK_UN);
-            fclose($lock_handle);
+            if (get_transient($lock_key) === $lock_token) {
+                delete_transient($lock_key);
+            }
         }
     }
+
     private function execute_purge_for_post(WP_Post $post): void
     {
         $permalink = get_permalink($post);
@@ -1336,6 +1434,7 @@ class OPTISTATE_Server_Caching
             }
         }
     }
+
     private function purge_paginated_term_archive(
         WP_Term $term,
         string $taxonomy
@@ -1357,12 +1456,13 @@ class OPTISTATE_Server_Caching
             }
         }
     }
+
     public function purge_entire_cache(): void
     {
         if (!$this->is_caching_enabled()) {
             return;
         }
-                try {
+        try {
             $filesystem = $this->main_plugin->get_filesystem();
         } catch (Throwable $e) {
             OPTISTATE_Utils::log_critical_error(
@@ -1380,7 +1480,9 @@ class OPTISTATE_Server_Caching
         $this->ensure_directory_and_secure();
         $this->reset_preload_state();
         $this->cache_path_cache = [];
+        delete_transient("optistate_sitemap_urls_cache");
     }
+
     private function reset_preload_state(): void
     {
         delete_transient("optistate_preload_running");
@@ -1393,6 +1495,7 @@ class OPTISTATE_Server_Caching
         wp_clear_scheduled_hook("optistate_background_preload_batch");
         $this->release_preload_lock();
     }
+
     private function is_caching_enabled(): bool
     {
         if ($this->caching_enabled_cache !== null) {
@@ -1402,14 +1505,21 @@ class OPTISTATE_Server_Caching
         $this->caching_enabled_cache = !empty($settings["enabled"]);
         return $this->caching_enabled_cache;
     }
+
     private function get_sitemap_urls(): array
     {
+        $cache_key = "optistate_sitemap_urls_cache";
+        $cached = get_transient($cache_key);
+        if (is_array($cached)) {
+            return $cached;
+        }
+
         $found_urls = [];
         $sitemaps_from_robots = [];
         $robots_url = home_url("/robots.txt");
         $ssl_verify = (bool) apply_filters("https_ssl_verify", true);
         $response = wp_safe_remote_get($robots_url, [
-            "timeout" => 20,
+            "timeout" => 5,
             "sslverify" => $ssl_verify,
             "user-agent" => "WP Optimal State Cache Preloader",
         ]);
@@ -1451,7 +1561,7 @@ class OPTISTATE_Server_Caching
         }
         $found_urls = array_unique($found_urls);
         $home_url_check = trailingslashit(home_url());
-        return array_values(
+        $found_urls = array_values(
             array_filter($found_urls, static function ($url) use (
                 $home_url_check
             ) {
@@ -1460,7 +1570,14 @@ class OPTISTATE_Server_Caching
                     strpos($url, $home_url_check) === 0;
             })
         );
+
+        if (!empty($found_urls)) {
+            set_transient($cache_key, $found_urls, HOUR_IN_SECONDS);
+        }
+
+        return $found_urls;
     }
+
     private function parse_sitemap(
         string $initial_sitemap_url,
         int $max_depth = 10
@@ -1579,6 +1696,7 @@ class OPTISTATE_Server_Caching
         }
         return array_keys($all_discovered_urls);
     }
+
     private function parse_sitemaps_from_list(array $sitemap_urls): array
     {
         $found_urls = [];
@@ -1593,6 +1711,7 @@ class OPTISTATE_Server_Caching
         }
         return $found_urls;
     }
+
     private function preload_url(string $url, bool $is_mobile = false): bool
     {
         $parsed = wp_parse_url($url);
@@ -1634,14 +1753,47 @@ class OPTISTATE_Server_Caching
                 ]),
             ],
         ];
-        $response = wp_safe_remote_get($url, $args);
+
+        $attempts = 0;
+        $max_attempts = 2;
+        $response = null;
+
+        while ($attempts < $max_attempts) {
+            $response = wp_safe_remote_get($url, $args);
+            $attempts++;
+
+            if (!is_wp_error($response)) {
+                $code = (int) wp_remote_retrieve_response_code($response);
+                if ($code === 200) {
+                    break;
+                }
+                if ($code >= 500 && $code < 600 && $attempts < $max_attempts) {
+                    usleep(500000);
+                    continue;
+                }
+            } elseif ($attempts < $max_attempts) {
+                $error_code = $response->get_error_code();
+                if (
+                    is_string($error_code) &&
+                    (strpos($error_code, "curl") === 0 ||
+                        strpos($error_code, "http_request_failed") !== false)
+                ) {
+                    usleep(500000);
+                    continue;
+                }
+            }
+            break;
+        }
+
         if (is_wp_error($response)) {
             return false;
         }
+
         $code = (int) wp_remote_retrieve_response_code($response);
         if ($code !== 200) {
             return false;
         }
+
         $content_type = wp_remote_retrieve_header($response, "content-type");
         if (is_array($content_type)) {
             $content_type = reset($content_type);
@@ -1668,16 +1820,19 @@ class OPTISTATE_Server_Caching
                 $cached_headers[] = $header_name . ": " . $header_value;
             }
         }
-        $header_block = implode("\n", $cached_headers);
-        $header_block = rtrim($header_block) . "\n\n";
+        $header_json = wp_json_encode($cached_headers);
+        $meta =
+            "OPTISTATE_CACHE_V2\n" .
+            strlen($header_json) .
+            "\n" .
+            $header_json .
+            "\nBODY_START\n";
         $minify = !empty($settings["minify_html"]);
         if ($minify) {
             $body = $this->minify_html($body);
         }
         $full_content =
-            $header_block .
-            $body .
-            "\n<!-- Cached by WP Optimal State Plugin -->";
+            $meta . $body . "\n<!-- Cached by WP Optimal State Plugin -->";
         $result = $this->write_cache_file_atomic($cache_file, $full_content);
         if (!$result) {
             OPTISTATE_Utils::log_critical_error(
@@ -1690,6 +1845,7 @@ class OPTISTATE_Server_Caching
         }
         return $result;
     }
+
     private function filter_preload_urls(array $urls): array
     {
         if (empty($urls)) {
@@ -1738,6 +1894,7 @@ class OPTISTATE_Server_Caching
         }
         return array_values(array_unique($filtered));
     }
+
     private function try_acquire_preload_lock(): bool
     {
         $lock_name = "optistate_preload_process_lock";
@@ -1759,11 +1916,13 @@ class OPTISTATE_Server_Caching
         }
         return false;
     }
+
     private function release_preload_lock(): void
     {
         delete_transient("optistate_preload_process_lock");
         delete_option("optistate_preload_process_lock");
     }
+
     private function renew_preload_lock(): void
     {
         $lock_name = "optistate_preload_process_lock";
@@ -1779,6 +1938,7 @@ class OPTISTATE_Server_Caching
         update_option($lock_name, $token . "|" . time(), "no");
         set_transient($lock_name, $token, 60);
     }
+
     public function ajax_start_preload(): void
     {
         check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
@@ -1890,11 +2050,27 @@ class OPTISTATE_Server_Caching
             ]);
         }
     }
+
     public function process_background_preload_batch(): void
     {
         if (!get_transient("optistate_preload_running")) {
             return;
         }
+
+        $memory_limit = wp_convert_hr_to_bytes(ini_get("memory_limit"));
+        if (
+            $memory_limit > 0 &&
+            memory_get_usage(true) > $memory_limit * 0.85
+        ) {
+            OPTISTATE_Utils::log_critical_error(
+                "Preload aborted: memory limit proximity"
+            );
+            $this->complete_preload_process(
+                (int) get_transient("optistate_preload_total")
+            );
+            return;
+        }
+
         if (!$this->try_acquire_preload_lock()) {
             if (!wp_next_scheduled("optistate_background_preload_batch")) {
                 wp_schedule_single_event(
@@ -1915,8 +2091,13 @@ class OPTISTATE_Server_Caching
                 $this->complete_preload_process($total);
                 return;
             }
+
             $start_time = microtime(true);
             $target_duration = 6.0;
+            $max_execution = (int) ini_get("max_execution_time");
+            $hard_time_limit =
+                $max_execution > 0 ? min(25.0, $max_execution * 0.8) : 25.0;
+
             $batch = array_slice((array) $urls_remaining, 0, $batch_size);
             $new_urls_remaining = array_slice(
                 (array) $urls_remaining,
@@ -1936,7 +2117,11 @@ class OPTISTATE_Server_Caching
                     $this->renew_preload_lock();
                     $last_lock_renew = microtime(true);
                 }
-                if (microtime(true) - $start_time > $target_duration * 1.5) {
+                $elapsed = microtime(true) - $start_time;
+                if (
+                    $elapsed > $hard_time_limit ||
+                    $elapsed > $target_duration * 1.5
+                ) {
                     $remaining_in_batch = array_slice(
                         $batch,
                         $processed_in_batch
@@ -1983,6 +2168,7 @@ class OPTISTATE_Server_Caching
             $this->release_preload_lock();
         }
     }
+
     private function complete_preload_process(int $total): void
     {
         delete_transient("optistate_preload_urls_remaining");
@@ -2005,6 +2191,7 @@ class OPTISTATE_Server_Caching
             "scheduled"
         );
     }
+
     public function check_preload_health(): void
     {
         if (get_transient("optistate_preload_health_ran")) {
@@ -2037,6 +2224,7 @@ class OPTISTATE_Server_Caching
             );
         }
     }
+
     public function ajax_stop_preload(): void
     {
         check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
@@ -2061,6 +2249,7 @@ class OPTISTATE_Server_Caching
             "total" => $total,
         ]);
     }
+
     public function ajax_get_preload_status(): void
     {
         check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
@@ -2078,6 +2267,7 @@ class OPTISTATE_Server_Caching
                 (int) (get_transient("optistate_preload_batch_size") ?: 10),
         ]);
     }
+
     private function minify_html(string $html): string
     {
         if ($html === "" || strlen($html) > 3 * 1024 * 1024) {
@@ -2093,7 +2283,12 @@ class OPTISTATE_Server_Caching
             $marker_token = uniqid("mkr_", true);
         }
         foreach ($preserve_tags as $tag) {
-            $pattern = "/<" . $tag . "\b[^>]*>.*?<\/" . $tag . ">/is";
+            $pattern =
+                "/<" .
+                preg_quote($tag, "/") .
+                "\b[^>]*>.*?<\/" .
+                preg_quote($tag, "/") .
+                ">/is";
             $html = preg_replace_callback(
                 $pattern,
                 static function ($matches) use (
@@ -2109,6 +2304,10 @@ class OPTISTATE_Server_Caching
                 $html
             );
             if ($html === null) {
+                OPTISTATE_Utils::log_critical_error(
+                    "HTML minification PCRE failure",
+                    ["tag" => $tag]
+                );
                 return $original;
             }
         }
