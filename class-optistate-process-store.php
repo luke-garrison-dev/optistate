@@ -13,15 +13,18 @@ class OPTISTATE_Process_Store
         "optistate_backup_",
         "optistate_master_restore_",
     ];
+
     public function __construct()
     {
         global $wpdb;
         $this->table_name = $wpdb->prefix . "optistate_processes";
     }
+
     public function get_table_name(): string
     {
         return $this->table_name;
     }
+
     public function ensure_table_exists(): void
     {
         if (self::$table_exists_cache === true) {
@@ -38,12 +41,14 @@ class OPTISTATE_Process_Store
             self::$table_exists_cache = true;
         }
     }
+
     public function get_multiple(array $keys): array
     {
         if (empty($keys)) {
             return [];
         }
         $this->ensure_table_exists();
+
         $results = [];
         $missing_keys = [];
         foreach ($keys as $key) {
@@ -56,6 +61,7 @@ class OPTISTATE_Process_Store
         if (empty($missing_keys)) {
             return $results;
         }
+
         $remaining = [];
         foreach ($missing_keys as $key) {
             $cached = wp_cache_get($key, self::CACHE_GROUP);
@@ -69,6 +75,7 @@ class OPTISTATE_Process_Store
         if (empty($remaining)) {
             return $results;
         }
+
         global $wpdb;
         $placeholders = implode(",", array_fill(0, count($remaining), "%s"));
         $sql = $wpdb->prepare(
@@ -78,6 +85,7 @@ class OPTISTATE_Process_Store
         $rows = $this->safe_db_retry(function () use ($wpdb, $sql) {
             return $wpdb->get_results($sql, ARRAY_A);
         });
+
         foreach ($rows as $row) {
             $key = $row["process_key"];
             $value = json_decode($row["process_value"], true);
@@ -90,6 +98,7 @@ class OPTISTATE_Process_Store
                 $results[$key] = false;
             }
         }
+
         $found_keys = array_column($rows, "process_key");
         $not_found = array_diff($remaining, $found_keys);
         foreach ($not_found as $key) {
@@ -104,6 +113,7 @@ class OPTISTATE_Process_Store
         }
         return $results;
     }
+
     public function set(string $key, $value, int $expiration = 0): bool
     {
         $this->ensure_table_exists();
@@ -151,6 +161,7 @@ class OPTISTATE_Process_Store
         wp_cache_set($key, $value, self::CACHE_GROUP, $expiration);
         return true;
     }
+
     private function is_critical_key(string $key): bool
     {
         foreach (self::ATOMIC_KEY_PREFIXES as $prefix) {
@@ -160,6 +171,7 @@ class OPTISTATE_Process_Store
         }
         return false;
     }
+
     public function get(string $key)
     {
         $this->ensure_table_exists();
@@ -173,6 +185,7 @@ class OPTISTATE_Process_Store
             self::$runtime_cache[$key] = $cached;
             return $cached;
         }
+
         global $wpdb;
         $row = $this->safe_db_retry(function () use ($wpdb, $key) {
             return $wpdb->get_row(
@@ -183,6 +196,7 @@ class OPTISTATE_Process_Store
                 )
             );
         });
+
         if (!$row) {
             wp_cache_set($key, false, self::CACHE_GROUP, $cache_ttl);
             return false;
@@ -199,6 +213,24 @@ class OPTISTATE_Process_Store
         wp_cache_set($key, $value, self::CACHE_GROUP, $cache_ttl);
         return $value;
     }
+    private function get_expiration(string $key)
+    {
+        $this->ensure_table_exists();
+        global $wpdb;
+        $row = $this->safe_db_retry(function () use ($wpdb, $key) {
+            return $wpdb->get_row(
+                $wpdb->prepare(
+                    "SELECT expiration FROM {$this->table_name} WHERE process_key = %s",
+                    $key
+                )
+            );
+        });
+        if (!$row) {
+            return false;
+        }
+        return (int) $row->expiration;
+    }
+
     public function delete(string $key): bool
     {
         $this->ensure_table_exists();
@@ -221,6 +253,7 @@ class OPTISTATE_Process_Store
         wp_cache_delete($key, self::CACHE_GROUP);
         return true;
     }
+
     public function touch(string $key, int $expiration = 0): bool
     {
         $this->ensure_table_exists();
@@ -252,6 +285,7 @@ class OPTISTATE_Process_Store
         }
         return true;
     }
+
     public function cleanup(): void
     {
         $this->ensure_table_exists();
@@ -288,6 +322,7 @@ class OPTISTATE_Process_Store
             }
         } while ($deleted === $batch_size);
     }
+
     public function create_table(): void
     {
         $sql =
@@ -299,6 +334,7 @@ class OPTISTATE_Process_Store
         );
         self::$table_exists_cache = true;
     }
+
     public function drop_table(): void
     {
         global $wpdb;
@@ -312,15 +348,24 @@ class OPTISTATE_Process_Store
         self::$runtime_cache = [];
         self::$table_exists_cache = null;
     }
+
     public function atomic_update(string $key, callable $callback)
     {
         $this->ensure_table_exists();
         $needs_lock = $this->is_critical_key($key);
+
         if (!$needs_lock) {
             $current = $this->get($key);
             $new_value = $callback($current);
             if ($new_value !== false) {
-                $this->set($key, $new_value);
+                $existing_exp = $this->get_expiration($key);
+                if ($existing_exp !== false && $existing_exp > 0) {
+                    $remaining = $existing_exp - time();
+                    $ttl = $remaining > 0 ? $remaining : DAY_IN_SECONDS;
+                } else {
+                    $ttl = DAY_IN_SECONDS;
+                }
+                $this->set($key, $new_value, $ttl);
             }
             return $new_value;
         }
@@ -350,6 +395,7 @@ class OPTISTATE_Process_Store
             );
             return false;
         }
+
         try {
             global $wpdb;
             $connection = $db_wrapper->get_connection();
@@ -408,6 +454,7 @@ class OPTISTATE_Process_Store
             $db_wrapper->query("SELECT RELEASE_LOCK('$escaped_lock_name')");
         }
     }
+
     private function safe_db_retry(callable $operation)
     {
         global $wpdb;

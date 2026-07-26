@@ -5,6 +5,7 @@ if (!defined("ABSPATH")) {
 class OPTISTATE_SQL_Parser
 {
     private const EXCLUDED_TABLE_PREFIX = "optistate_";
+
     public static function read_statement(
         $handle,
         string &$buffer,
@@ -323,6 +324,7 @@ class OPTISTATE_SQL_Parser
             }
         }
     }
+
     private static function try_truncate_multirow_insert(
         string &$buffer
     ): ?string {
@@ -331,7 +333,7 @@ class OPTISTATE_SQL_Parser
         }
         if (
             !preg_match(
-                '/^(INSERT\s+(?:IGNORE\s+)?INTO\s+[`\'"]?[a-zA-Z0-9_$.]+[`\'"]?(?:\s*\([^)]+\))?\s+VALUES\s*)/i',
+                '/^(INSERT\s+(?:LOW_PRIORITY\s+|HIGH_PRIORITY\s+|DELAYED\s+|IGNORE\s+)*INTO\s+[`\'"]?[a-zA-Z0-9_$.]+[`\'"]?(?:\s*\([^)]+\))?\s+VALUES\s*)/i',
                 $buffer,
                 $matches
             )
@@ -390,6 +392,7 @@ class OPTISTATE_SQL_Parser
         $buffer = $insert_header . ltrim(substr($data, $last_safe_cut + 1));
         return trim($statement) . ";";
     }
+
     public static function rewrite_ddl(
         string $query,
         string $type,
@@ -470,6 +473,7 @@ class OPTISTATE_SQL_Parser
         }
         return $result;
     }
+
     private static function extract_ddl_table_name(string $query): ?array
     {
         $len = strlen($query);
@@ -608,11 +612,15 @@ class OPTISTATE_SQL_Parser
         string $table_name,
         array $excluded_tables_cache
     ): bool {
-        if (in_array($table_name, $excluded_tables_cache, true)) {
-            return true;
+        $lower_table = strtolower($table_name);
+        foreach ($excluded_tables_cache as $excluded) {
+            if (strtolower($excluded) === $lower_table) {
+                return true;
+            }
         }
-        return strpos($table_name, self::EXCLUDED_TABLE_PREFIX) === 0;
+        return strpos($lower_table, strtolower(self::EXCLUDED_TABLE_PREFIX)) === 0;
     }
+
     private static function rewrite_foreign_key_references(
         string &$query,
         string $current_table,
@@ -649,14 +657,10 @@ class OPTISTATE_SQL_Parser
                 "alter_queries" => [],
             ];
         }
+
         $quoted_temp = "`" . str_replace("`", "``", $temp_table_name) . "`";
         $first_paren = strpos($create_query, "(");
-        $last_paren = strrpos($create_query, ")");
-        if (
-            $first_paren === false ||
-            $last_paren === false ||
-            $last_paren <= $first_paren
-        ) {
+        if ($first_paren === false) {
             $modified_query = preg_replace(
                 '/CREATE\s+TABLE\s+(IF\s+NOT\s+EXISTS\s+)?[`\'"]?([a-zA-Z0-9_]+)[`\'"]?/i',
                 'CREATE TABLE $1' . $quoted_temp,
@@ -668,6 +672,59 @@ class OPTISTATE_SQL_Parser
                 "alter_queries" => [],
             ];
         }
+
+        $len = strlen($create_query);
+        $depth = 1;
+        $in_quote = false;
+        $quote_char = "";
+        $last_paren = false;
+        for ($i = $first_paren + 1; $i < $len; $i++) {
+            $char = $create_query[$i];
+            if ($in_quote) {
+                if ($char === "\\" && $i + 1 < $len) {
+                    $i++;
+                    continue;
+                }
+                if ($char === $quote_char) {
+                    if ($i + 1 < $len && $create_query[$i + 1] === $quote_char) {
+                        $i++;
+                        continue;
+                    }
+                    $in_quote = false;
+                }
+                continue;
+            }
+            if ($char === "'" || $char === '"' || $char === "`") {
+                $in_quote = true;
+                $quote_char = $char;
+                continue;
+            }
+            if ($char === "(") {
+                $depth++;
+            } elseif ($char === ")") {
+                $depth--;
+                if ($depth === 0) {
+                    $last_paren = $i;
+                    break;
+                }
+            }
+        }
+        if ($last_paren === false) {
+            $last_paren = strrpos($create_query, ")");
+        }
+        if ($last_paren === false || $last_paren <= $first_paren) {
+            $modified_query = preg_replace(
+                '/CREATE\s+TABLE\s+(IF\s+NOT\s+EXISTS\s+)?[`\'"]?([a-zA-Z0-9_]+)[`\'"]?/i',
+                'CREATE TABLE $1' . $quoted_temp,
+                $create_query,
+                1
+            );
+            return [
+                "create_table_query" => $modified_query,
+                "alter_queries" => [],
+            ];
+        }
+
         $create_header = substr($create_query, 0, $first_paren + 1);
         $definitions_str = substr(
             $create_query,
@@ -682,115 +739,88 @@ class OPTISTATE_SQL_Parser
             1
         );
         $definitions = [];
-        $len = strlen($definitions_str);
-        $paren_level = 0;
+        $current = '';
+        $depth = 0;
         $in_quote = false;
-        $quote_char = "";
-        $current_def = "";
-        for ($i = 0; $i < $len; $i++) {
+        $quote_char = '';
+        $len_def = strlen($definitions_str);
+        for ($i = 0; $i < $len_def; $i++) {
             $char = $definitions_str[$i];
             if ($in_quote) {
-                if ($char === "\\" && $i + 1 < $len) {
-                    $current_def .= $char . $definitions_str[$i + 1];
+                if ($char === '\\' && $i + 1 < $len_def) {
+                    $current .= $char . $definitions_str[$i + 1];
                     $i++;
                     continue;
                 }
                 if ($char === $quote_char) {
-                    if (
-                        $i + 1 < $len &&
-                        $definitions_str[$i + 1] === $quote_char
-                    ) {
-                        $current_def .= $char . $quote_char;
+                    if ($i + 1 < $len_def && $definitions_str[$i + 1] === $quote_char) {
+                        $current .= $char . $char;
                         $i++;
                         continue;
                     }
                     $in_quote = false;
                 }
-            } elseif ($char === "'" || $char === '"' || $char === "`") {
+                $current .= $char;
+                continue;
+            }
+            if ($char === "'" || $char === '"' || $char === '`') {
                 $in_quote = true;
                 $quote_char = $char;
-            } elseif ($char === "(") {
-                $paren_level++;
-            } elseif ($char === ")") {
-                $paren_level--;
-            } elseif ($char === "," && $paren_level === 0) {
-                $definitions[] = trim($current_def);
-                $current_def = "";
+                $current .= $char;
                 continue;
             }
-            $current_def .= $char;
+            if ($char === '(') {
+                $depth++;
+            } elseif ($char === ')') {
+                $depth--;
+            } elseif ($char === ',' && $depth === 0 && !$in_quote) {
+                $definitions[] = trim($current);
+                $current = '';
+                continue;
+            }
+            $current .= $char;
         }
-        if (!empty(trim($current_def))) {
-            $definitions[] = trim($current_def);
+        if (trim($current) !== '') {
+            $definitions[] = trim($current);
         }
-        $essential_definitions = [];
-        $deferrable_indexes = [];
+
+        $essential = [];
+        $deferrable = [];
         foreach ($definitions as $def) {
-            if (empty($def)) {
-                continue;
-            }
-            if (
-                preg_match("/^\s*PRIMARY\s+KEY\s*\(/i", $def) ||
-                preg_match("/^\s*UNIQUE\s+(KEY|INDEX)\s+/i", $def) ||
-                preg_match("/^\s*CONSTRAINT\s+/i", $def)
+            if (empty($def)) continue;
+            if (preg_match('/^\s*PRIMARY\s+KEY\s*\(/i', $def)
+                || preg_match('/^\s*UNIQUE\s+(KEY|INDEX)\s+/i', $def)
+                || preg_match('/^\s*CONSTRAINT\s+/i', $def)
             ) {
-                $essential_definitions[] = $def;
-            } elseif (
-                preg_match("/^\s*(KEY|INDEX|FULLTEXT|SPATIAL)\s+/i", $def)
-            ) {
-                $deferrable_indexes[] = $def;
+                $essential[] = $def;
+            } elseif (preg_match('/^\s*(KEY|INDEX|FULLTEXT|SPATIAL)\s+/i', $def)) {
+                $deferrable[] = $def;
             } else {
-                $essential_definitions[] = $def;
+                $essential[] = $def;
             }
         }
-        $max_deferred_per_table = 50;
-        if (count($deferrable_indexes) > $max_deferred_per_table) {
-            $spillover_count =
-                count($deferrable_indexes) - $max_deferred_per_table;
-            OPTISTATE_Utils::log_critical_error(
-                "parse_create_table_for_indexes: deferred index limit exceeded. Spilling over safely inline.",
-                [
-                    "temp_table" => $temp_table_name,
-                    "total_deferrable_indexes" => count($deferrable_indexes),
-                    "spillover_inline_count" => $spillover_count,
-                ]
-            );
-            $spillover_indexes = array_slice(
-                $deferrable_indexes,
-                $max_deferred_per_table
-            );
-            $deferrable_indexes = array_slice(
-                $deferrable_indexes,
-                0,
-                $max_deferred_per_table
-            );
-            foreach ($spillover_indexes as $inline_idx) {
-                $essential_definitions[] = $inline_idx;
-            }
+        $max_deferred = 50;
+        if (count($deferrable) > $max_deferred) {
+            $essential = array_merge($essential, array_slice($deferrable, $max_deferred));
+            $deferrable = array_slice($deferrable, 0, $max_deferred);
         }
-        $new_create_query =
-            $create_header .
-            "\n" .
-            implode(",\n", $essential_definitions) .
-            "\n" .
-            $create_footer;
-        if (!empty($deferrable_indexes)) {
+
+        $new_create = $create_header . "\n" . implode(",\n", $essential) . "\n" . $create_footer;
+
+        if (!empty($deferrable)) {
             $alter_prefix = "ALTER TABLE $quoted_temp ";
-            $alter_parts = [];
-            foreach ($deferrable_indexes as $index_line) {
-                $alter_parts[] = "ADD " . $index_line;
-            }
-            $max_indexes_per_alter = 10;
-            $chunks = array_chunk($alter_parts, $max_indexes_per_alter);
+            $chunks = array_chunk(array_map(fn($d) => 'ADD ' . $d, $deferrable), 10);
             foreach ($chunks as $chunk) {
-                $alter_queries[] = $alter_prefix . implode(", ", $chunk) . ";";
+                $alter_queries[] = $alter_prefix . implode(', ', $chunk) . ';';
             }
         }
+
         return [
-            "create_table_query" => $new_create_query,
+            "create_table_query" => $new_create,
             "alter_queries" => $alter_queries,
         ];
     }
+
     public static function clean_create_statement(string $query): string
     {
         $current_query = (string) $query;
@@ -868,13 +898,13 @@ class OPTISTATE_SQL_Parser
         if (!isset($pattern_cache[$original_table])) {
             $quoted_orig = preg_quote($original_table, "/");
             $pattern =
-                "/^(INSERT\s+(?:IGNORE\s+)?INTO\s+|REPLACE\s+INTO\s+)(?:`" .
+                "/^(INSERT\\s+(?:LOW_PRIORITY\\s+|HIGH_PRIORITY\\s+|DELAYED\\s+|IGNORE\\s+)*INTO\\s+|REPLACE\\s+(?:LOW_PRIORITY\\s+|DELAYED\\s+)*INTO\\s+)(?:`" .
                 $quoted_orig .
                 '`|"' .
                 $quoted_orig .
                 '"|(?<![a-zA-Z0-9_$])' .
                 $quoted_orig .
-                '(?![a-zA-Z0-9_$]))(?=\s|\()/i';
+                '(?![a-zA-Z0-9_$]))(?=\\s|\\()/i';
             if (@preg_match($pattern, "") === false) {
                 return $insert_query;
             }
@@ -891,6 +921,7 @@ class OPTISTATE_SQL_Parser
         );
         return $new_query ?? $insert_query;
     }
+
     public static function split_and_retry_insert(
         $db,
         string $query,

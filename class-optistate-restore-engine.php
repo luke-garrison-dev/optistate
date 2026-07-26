@@ -24,6 +24,7 @@ class OPTISTATE_Restore_Engine
         } else {
             $this->wp_filesystem = $this->main_plugin->get_filesystem();
         }
+        add_action('optistate_apply_deferred_indexes', [$this, 'apply_deferred_indexes_worker'], 10, 1);
     }
 
     private function register_lock_cleanup_handler(string $lock_name): void
@@ -104,6 +105,7 @@ class OPTISTATE_Restore_Engine
             }
             $lock_acquired = true;
             $this->register_lock_cleanup_handler($lock_name);
+
             if (!$this->wp_filesystem->exists($sql_filepath)) {
                 throw new Exception(
                     esc_html__("SQL file not found: ", "optistate") .
@@ -120,6 +122,7 @@ class OPTISTATE_Restore_Engine
             if (!$verification["valid"]) {
                 throw new Exception($verification["message"]);
             }
+
             if (empty($uploaded_file_info["skip_space_check"])) {
                 $space_check = OPTISTATE_Backup_Utilities::check_sufficient_disk_space(
                     $this->wp_filesystem,
@@ -130,6 +133,7 @@ class OPTISTATE_Restore_Engine
                     throw new Exception($space_check["message"]);
                 }
             }
+
             OPTISTATE_Utils::activate_maintenance_mode();
             $this->main_plugin->log_entry(
                 "▶ " .
@@ -144,10 +148,9 @@ class OPTISTATE_Restore_Engine
                 $log_filename,
                 ["user_id" => $user_id]
             );
+
             $safety_filename =
                 "SAFETY-RESTORE-" . current_time("Y-m-d") . ".sql.gz";
-            $safety_filepath =
-                trailingslashit($this->backup_dir) . $safety_filename;
             $backup_engine = new OPTISTATE_Backup_Engine(
                 $this->main_plugin,
                 $this->backup_dir,
@@ -158,11 +161,18 @@ class OPTISTATE_Restore_Engine
                 $safety_filename,
                 ["is_safety_backup" => true, "user_id" => $user_id]
             );
+            $safety_state = $this->process_store->get($safety_transient_key);
+            $actual_safety_filename = is_array($safety_state) && !empty($safety_state["filename"])
+                ? $safety_state["filename"]
+                : $safety_filename;
+            $safety_filepath = trailingslashit($this->backup_dir) . $actual_safety_filename;
+
             $this->process_store->set(
                 "optistate_safety_backup",
                 $safety_filepath,
                 2 * HOUR_IN_SECONDS
             );
+
             $master_restore_key =
                 "optistate_master_restore_" . bin2hex(random_bytes(14));
             $temp_filename = basename($sql_filepath);
@@ -199,6 +209,7 @@ class OPTISTATE_Restore_Engine
                 $log_filename,
                 2 * HOUR_IN_SECONDS
             );
+
             $temp_transient_key = "optistate_temp_restore_" . $temp_filename;
             $settings = $this->main_plugin->settings_manager->get_persistent_settings();
             $security_disabled = !empty($settings["disable_restore_security"]);
@@ -238,12 +249,14 @@ class OPTISTATE_Restore_Engine
                 $transient_data,
                 2 * HOUR_IN_SECONDS
             );
+
             $db->query("SELECT RELEASE_LOCK('$lock_name')");
             wp_schedule_single_event(
                 time(),
                 "optistate_run_safety_backup_chunk",
                 [$master_restore_key]
             );
+
             return [
                 "status" => "starting",
                 "master_restore_key" => $master_restore_key,
@@ -258,7 +271,6 @@ class OPTISTATE_Restore_Engine
                 @$db->query("SELECT RELEASE_LOCK('$lock_name')");
             }
             OPTISTATE_Utils::deactivate_maintenance_mode();
-            $this->release_restore_lock();
             $this->process_store->delete("optistate_restore_in_progress");
             OPTISTATE_Utils::log_critical_error(
                 "Master restore initiation failed: " . $e->getMessage(),
@@ -298,6 +310,7 @@ class OPTISTATE_Restore_Engine
                     "optistate_restore_" .
                     md5(uniqid((string) wp_rand(), true) . microtime());
             }
+
             global $wpdb;
             $meta_table = $wpdb->prefix . "optistate_backup_metadata";
             $is_internal = OPTISTATE_Backup_Utilities::is_internal_backup(
@@ -316,6 +329,8 @@ class OPTISTATE_Restore_Engine
                 "file_pointer" => 0,
                 "total_size" => $total_size,
                 "temp_tables_created" => [],
+                "temp_views_created" => [],
+                "deferred_views" => [],
                 "executed_queries" => 0,
                 "start_time" => time(),
                 "status" => "init",
@@ -331,6 +346,8 @@ class OPTISTATE_Restore_Engine
                 "is_internal_backup" => $is_internal,
                 "total_statements_estimate" => $total_statements_estimate,
                 "restore_key" => $transient_key,
+                "estimate_adjusted" => false,
+                "skipped_reschedules" => 0,
             ];
             $this->process_store->set($transient_key, $state, DAY_IN_SECONDS);
             return $transient_key;
@@ -356,6 +373,15 @@ class OPTISTATE_Restore_Engine
         }
         $result = $this->perform_restore_core($restore_state);
         if ($result["status"] === "done") {
+            if (!empty($result["state"]["uploaded_file_info"]["temp_filepath_to_delete"])) {
+                $temp_file = $result["state"]["uploaded_file_info"]["temp_filepath_to_delete"];
+                if ($this->wp_filesystem->exists($temp_file)) {
+                    $this->wp_filesystem->delete($temp_file);
+                }
+            }
+            if (!empty($result["state"]["uploaded_file_info"]["temp_transient_to_delete"])) {
+                $this->process_store->delete($result["state"]["uploaded_file_info"]["temp_transient_to_delete"]);
+            }
             return [
                 "status" => "done",
                 "message" => $result["message"],
@@ -392,69 +418,75 @@ class OPTISTATE_Restore_Engine
             }
             $use_cli = defined("WP_CLI") && WP_CLI && php_sapi_name() === "cli";
             $is_windows = strtoupper(substr(PHP_OS, 0, 3)) === "WIN";
+            $exec_available = OPTISTATE_Backup_Utilities::is_exec_available();
+            $shell_available = OPTISTATE_Backup_Utilities::is_shell_exec_available();
+
             if (
                 !$is_windows &&
-                ($use_cli ||
-                    OPTISTATE_Backup_Utilities::is_shell_exec_available())
+                ($use_cli || ($shell_available && $exec_available))
             ) {
                 $source_path_shell = escapeshellarg($source_gz_path);
                 $dest_path_shell = escapeshellarg($dest_sql_path);
-                $pigz_path = @exec(
-                    "which pigz 2>/dev/null",
-                    $pigz_output,
-                    $pigz_return
-                );
-                if ($pigz_return === 0 && !empty($pigz_path)) {
-                    $timeout_cmd = @is_executable("/usr/bin/timeout")
-                        ? "/usr/bin/timeout 60 "
-                        : "";
-                    $command =
-                        $timeout_cmd .
-                        $pigz_path .
-                        " -d -c " .
-                        $source_path_shell .
-                        " > " .
-                        $dest_path_shell .
-                        " 2>&1";
-                    @exec($command, $output, $return_var);
-                    if (
-                        $return_var === 0 &&
-                        $this->wp_filesystem->exists($dest_sql_path) &&
-                        $this->wp_filesystem->size($dest_sql_path) > 0
-                    ) {
-                        $this->wp_filesystem->chmod($dest_sql_path, 0600);
-                        return true;
+                if ($exec_available) {
+                    $pigz_path = @exec(
+                        "which pigz 2>/dev/null",
+                        $pigz_output,
+                        $pigz_return
+                    );
+                    if ($pigz_return === 0 && !empty($pigz_path)) {
+                        $timeout_cmd = @is_executable("/usr/bin/timeout")
+                            ? "/usr/bin/timeout 60 "
+                            : "";
+                        $command =
+                            $timeout_cmd .
+                            $pigz_path .
+                            " -d -c " .
+                            $source_path_shell .
+                            " > " .
+                            $dest_path_shell .
+                            " 2>&1";
+                        @exec($command, $output, $return_var);
+                        if (
+                            $return_var === 0 &&
+                            $this->wp_filesystem->exists($dest_sql_path) &&
+                            $this->wp_filesystem->size($dest_sql_path) > 0
+                        ) {
+                            $this->wp_filesystem->chmod($dest_sql_path, 0600);
+                            return true;
+                        }
                     }
-                }
-                $gzip_path = OPTISTATE_Backup_Utilities::get_gzip_path();
-                if ($gzip_path !== false) {
-                    $timeout_cmd = @is_executable("/usr/bin/timeout")
-                        ? "/usr/bin/timeout 60 "
-                        : "";
-                    $command =
-                        $timeout_cmd .
-                        $gzip_path .
-                        " -d -c " .
-                        $source_path_shell .
-                        " > " .
-                        $dest_path_shell .
-                        " 2>&1";
-                    @exec($command, $output, $return_var);
-                    if (
-                        $return_var === 0 &&
-                        $this->wp_filesystem->exists($dest_sql_path) &&
-                        $this->wp_filesystem->size($dest_sql_path) > 0
-                    ) {
-                        $this->wp_filesystem->chmod($dest_sql_path, 0600);
-                        return true;
+                    $gzip_path = OPTISTATE_Backup_Utilities::get_gzip_path();
+                    if ($gzip_path !== false) {
+                        $timeout_cmd = @is_executable("/usr/bin/timeout")
+                            ? "/usr/bin/timeout 60 "
+                            : "";
+                        $command =
+                            $timeout_cmd .
+                            $gzip_path .
+                            " -d -c " .
+                            $source_path_shell .
+                            " > " .
+                            $dest_path_shell .
+                            " 2>&1";
+                        @exec($command, $output, $return_var);
+                        if (
+                            $return_var === 0 &&
+                            $this->wp_filesystem->exists($dest_sql_path) &&
+                            $this->wp_filesystem->size($dest_sql_path) > 0
+                        ) {
+                            $this->wp_filesystem->chmod($dest_sql_path, 0600);
+                            return true;
+                        }
                     }
                 }
             }
+
             if (!function_exists("gzopen")) {
                 throw new Exception(
                     esc_html__("GZIP functions not available.", "optistate")
                 );
             }
+
             $progress_key = "optistate_decompress_" . md5($source_gz_path);
             $progress = $this->process_store->get($progress_key);
             $source_size = filesize($source_gz_path);
@@ -478,6 +510,7 @@ class OPTISTATE_Restore_Engine
                     "source_size" => $source_size,
                 ];
             }
+
             $resuming = $progress["dest_bytes_written"] > 0;
             if ($resuming) {
                 if (!$this->wp_filesystem->exists($dest_sql_path)) {
@@ -492,12 +525,14 @@ class OPTISTATE_Restore_Engine
                     }
                 }
             }
+
             $gz_handle = @gzopen($source_gz_path, "rb");
             if (!$gz_handle) {
                 throw new Exception(
                     esc_html__("Cannot open GZIP file.", "optistate")
                 );
             }
+
             $write_mode = $resuming ? "ab" : "wb";
             $sql_handle = @fopen($dest_sql_path, $write_mode);
             if (!$sql_handle) {
@@ -505,6 +540,7 @@ class OPTISTATE_Restore_Engine
                     esc_html__("Cannot open destination file.", "optistate")
                 );
             }
+
             if ($resuming) {
                 $seek_position = $progress["dest_bytes_written"];
                 if (gzseek($gz_handle, $seek_position) === -1) {
@@ -516,6 +552,7 @@ class OPTISTATE_Restore_Engine
                 }
                 fseek($sql_handle, 0, SEEK_END);
             }
+
             $chunk_size = 1024 * 1024;
             $start_time = time();
             $max_chunk_time = 20;
@@ -526,6 +563,7 @@ class OPTISTATE_Restore_Engine
             $max_decompressed_size = $is_unlimited_memory
                 ? 4294967296
                 : $memory_limit * 20;
+
             while (!gzeof($gz_handle)) {
                 if (
                     $bytes_written_this_session > 0 &&
@@ -546,6 +584,7 @@ class OPTISTATE_Restore_Engine
                         return "INCOMPLETE";
                     }
                 }
+
                 $current_memory = memory_get_usage(true);
                 if (
                     !$is_unlimited_memory &&
@@ -562,6 +601,7 @@ class OPTISTATE_Restore_Engine
                         )
                     );
                 }
+
                 $written = @stream_copy_to_stream(
                     $gz_handle,
                     $sql_handle,
@@ -594,10 +634,12 @@ class OPTISTATE_Restore_Engine
                     );
                 }
             }
+
             fclose($sql_handle);
             gzclose($gz_handle);
             $sql_handle = null;
             $gz_handle = null;
+
             if (!$this->wp_filesystem->exists($dest_sql_path)) {
                 throw new Exception(
                     esc_html__(
@@ -771,6 +813,9 @@ class OPTISTATE_Restore_Engine
                         $db->query(
                             "DROP TABLE IF EXISTS " . implode(", ", $tables)
                         );
+                        $db->query(
+                            "DROP VIEW IF EXISTS " . implode(", ", $tables)
+                        );
                     }
                 }, $db);
                 $this->close_restore_db();
@@ -812,6 +857,10 @@ class OPTISTATE_Restore_Engine
                         "DROP TABLE IF EXISTS " .
                             OPTISTATE_Utils::escape_identifier($temp_table)
                     );
+                    $db->query(
+                        "DROP VIEW IF EXISTS " .
+                            OPTISTATE_Utils::escape_identifier($temp_table)
+                    );
                     $old_table = OPTISTATE_Utils::generate_safe_table_name(
                         $original_table,
                         "optistate_old_",
@@ -822,6 +871,10 @@ class OPTISTATE_Restore_Engine
                     }
                     $db->query(
                         "DROP TABLE IF EXISTS " .
+                            OPTISTATE_Utils::escape_identifier($old_table)
+                    );
+                    $db->query(
+                        "DROP VIEW IF EXISTS " .
                             OPTISTATE_Utils::escape_identifier($old_table)
                     );
                 }
@@ -846,54 +899,6 @@ class OPTISTATE_Restore_Engine
         OPTISTATE_DB_Wrapper::get_instance()->close();
         $this->restore_db = null;
     }
-
-    public function acquire_restore_lock(int $timeout = 0): bool
-    {
-        global $wpdb;
-        $lock_name_raw = $wpdb->prefix . "optistate_restore_lock";
-        $lock_name =
-            strlen($lock_name_raw) > 64
-                ? "opt_rest_" . md5($lock_name_raw)
-                : $lock_name_raw;
-        $result = $wpdb->get_var(
-            $wpdb->prepare(
-                "SELECT GET_LOCK(%s, %d)",
-                $lock_name,
-                absint($timeout)
-            )
-        );
-        if ($result === "1") {
-            $this->process_store->set(
-                "optistate_mysql_lock_holder",
-                [
-                    "lock_name" => $lock_name,
-                    "acquired_at" => time(),
-                    "connection_id" => $wpdb->get_var("SELECT CONNECTION_ID()"),
-                    "server_id" => gethostname(),
-                    "process_id" => getmypid(),
-                ],
-                2 * HOUR_IN_SECONDS
-            );
-            return true;
-        }
-        return false;
-    }
-
-    public function release_restore_lock(): bool
-    {
-        global $wpdb;
-        $lock_info = $this->process_store->get("optistate_mysql_lock_holder");
-        if (!$lock_info || empty($lock_info["lock_name"])) {
-            return false;
-        }
-        $lock_name = $lock_info["lock_name"];
-        $result = $wpdb->get_var(
-            $wpdb->prepare("SELECT RELEASE_LOCK(%s)", $lock_name)
-        );
-        $this->process_store->delete("optistate_mysql_lock_holder");
-        return $result === "1";
-    }
-
     private function validate_charset_compatibility(
         ?array $backup_charset_info,
         string $current_db_charset
@@ -1001,6 +1006,7 @@ class OPTISTATE_Restore_Engine
                 : (int) $original_time_limit_raw;
         $needed_time = $max_chunk_time + 90;
         OPTISTATE_Utils::safe_set_time_limit($needed_time);
+
         try {
             $filepath = $state["filepath"];
             if (
@@ -1014,6 +1020,7 @@ class OPTISTATE_Restore_Engine
                     )
                 );
             }
+
             $is_gzipped = substr($filepath, -3) === ".gz";
             if (
                 $is_gzipped &&
@@ -1050,6 +1057,7 @@ class OPTISTATE_Restore_Engine
                     $is_gzipped = false;
                 }
             }
+
             $handle = $is_gzipped
                 ? @gzopen($filepath, "rb")
                 : @fopen($filepath, "rb");
@@ -1061,6 +1069,7 @@ class OPTISTATE_Restore_Engine
                     )
                 );
             }
+
             if ($state["file_pointer"] > 0) {
                 if ($is_gzipped) {
                     if (gzseek($handle, $state["file_pointer"]) === -1) {
@@ -1078,20 +1087,27 @@ class OPTISTATE_Restore_Engine
                     fseek($handle, $state["file_pointer"]);
                 }
             }
+
             $current_transaction_size = $state["current_transaction_size"] ?? 0;
             $temp_tables_created = $state["temp_tables_created"];
+            $temp_views_created = $state["temp_views_created"] ?? [];
+            $deferred_views = $state["deferred_views"] ?? [];
             $state["deferred_indexes"] = $state["deferred_indexes"] ?? [];
             $is_internal_backup = $state["is_internal_backup"] ?? false;
             $restore_key_for_deferred = $state["restore_key"] ?? "restore_deferred";
+
             try {
                 $db = $this->get_restore_db();
                 $db_wrapper = OPTISTATE_DB_Wrapper::get_instance();
                 $db_connection = $db_wrapper->get_connection();
+
                 $executed_queries = $state["executed_queries"];
                 $batch_counter = $state["batch_counter"];
                 $stream_buffer = $state["line_buffer"] ?? "";
                 $current_delimiter = $state["current_delimiter"] ?? ";";
-                $transaction_max_size = 25 * 1024 * 1024;
+                $max_allowed_packet = (int) $wpdb->get_var("SELECT @@max_allowed_packet");
+                $transaction_max_size = $max_allowed_packet > 0 ? (int) ($max_allowed_packet * 0.8) : 25 * 1024 * 1024;
+
                 if (
                     isset($state["exclude_patterns_cache"]) &&
                     is_array($state["exclude_patterns_cache"])
@@ -1113,8 +1129,10 @@ class OPTISTATE_Restore_Engine
                         $exclude_patterns
                     );
                 }
+
                 $backup_has_transactions =
                     $state["backup_has_transactions"] ?? true;
+
                 if ($state["status"] === "init") {
                     $current_db_charset = $wpdb->get_var(
                         "SELECT @@character_set_database"
@@ -1136,6 +1154,7 @@ class OPTISTATE_Restore_Engine
                     $state["status"] = "running";
                     $state["charset_locked"] = true;
                 }
+
                 $security_disabled = false;
                 if (isset($state["uploaded_file_info"]["security_disabled"])) {
                     $security_disabled =
@@ -1143,10 +1162,12 @@ class OPTISTATE_Restore_Engine
                             "security_disabled"
                         ];
                 }
+
                 $chunk_start_pointer = $state["file_pointer"];
                 $queries_at_chunk_start = $state["executed_queries"];
                 $last_stmt_type = $state["last_stmt_type"] ?? null;
                 $loop_counter = 0;
+
                 while (
                     ($sql_statement = OPTISTATE_SQL_Parser::read_statement(
                         $handle,
@@ -1155,6 +1176,9 @@ class OPTISTATE_Restore_Engine
                         $current_delimiter
                     )) !== null
                 ) {
+                    $original_table = null;
+                    $temp_table = null;
+
                     if (++$loop_counter % 50 === 0) {
                         $chunk_elapsed = microtime(true) - $chunk_start_time;
                         if (
@@ -1195,6 +1219,8 @@ class OPTISTATE_Restore_Engine
                             $state[
                                 "temp_tables_created"
                             ] = $temp_tables_created;
+                            $state["temp_views_created"] = $temp_views_created;
+                            $state["deferred_views"] = $deferred_views;
                             $state["executed_queries"] = $executed_queries;
                             $state["batch_counter"] = $batch_counter;
                             $state["last_stmt_type"] = $last_stmt_type;
@@ -1203,6 +1229,11 @@ class OPTISTATE_Restore_Engine
                             ] = $current_transaction_size;
                             $state["total_statements_estimate"] =
                                 $state["total_statements_estimate"] ?? 0;
+                            if (empty($state["estimate_adjusted"])
+                                && $executed_queries > $state["total_statements_estimate"] * 0.95) {
+                                $state["total_statements_estimate"] = (int) ($executed_queries * 1.15);
+                                $state["estimate_adjusted"] = true;
+                            }
                             if ($state["total_statements_estimate"] > 0) {
                                 $state["progress_percent"] = min(
                                     99,
@@ -1215,20 +1246,6 @@ class OPTISTATE_Restore_Engine
                                     99,
                                     (int) (($state["file_pointer"] /
                                         $state["total_size"]) *
-                                        100)
-                                );
-                            }
-                            if (
-                                $executed_queries >
-                                    $state["total_statements_estimate"] * 0.5 &&
-                                $state["file_pointer"] <
-                                    $state["total_size"] * 0.5
-                            ) {
-                                $state["total_statements_estimate"] *= 2;
-                                $state["progress_percent"] = min(
-                                    99,
-                                    (int) (($executed_queries /
-                                        $state["total_statements_estimate"]) *
                                         100)
                                 );
                             }
@@ -1247,10 +1264,20 @@ class OPTISTATE_Restore_Engine
                             ];
                         }
                     }
+
                     $trim_line = trim($sql_statement);
                     if ($trim_line === "") {
                         continue;
                     }
+                    if (preg_match('/^\s*CREATE\s+(?:OR\s+REPLACE\s+)?VIEW\s+/i', $trim_line) ||
+                        preg_match('/^\s*ALTER\s+VIEW\s+/i', $trim_line)) {
+                        $deferred_views[] = $trim_line;
+                        continue;
+                    }
+                    if (preg_match('/^\s*DROP\s+VIEW\s+/i', $trim_line)) {
+                        continue;
+                    }
+
                     if (
                         !$this->should_process_statement(
                             $trim_line,
@@ -1259,10 +1286,12 @@ class OPTISTATE_Restore_Engine
                     ) {
                         continue;
                     }
+
                     $stmt_type = OPTISTATE_Backup_Utilities::get_statement_type(
                         $trim_line
                     );
                     $query_to_run = $trim_line;
+
                     if ($stmt_type === "START " || $stmt_type === "COMMIT") {
                         continue;
                     }
@@ -1281,7 +1310,7 @@ class OPTISTATE_Restore_Engine
                         }
                         if (
                             preg_match(
-                                '/INSERT\s+INTO\s+[`"]?([a-zA-Z0-9_]+)[`"]?/i',
+                                '/INSERT\s+(?:LOW_PRIORITY\s+|HIGH_PRIORITY\s+|DELAYED\s+|IGNORE\s+)*INTO\s+[`"]?([a-zA-Z0-9_]+)[`"]?/i',
                                 $query_to_run,
                                 $table_match
                             )
@@ -1303,6 +1332,35 @@ class OPTISTATE_Restore_Engine
                                     $temp_tables_created[$original_table]
                                 );
                             }
+                        }
+                    } elseif (in_array($stmt_type, ['REPLACE', 'UPDATE', 'DELETE', 'TRUNCATE'], true)) {
+                        $verb_regex = [
+                            'REPLACE'  => '/REPLACE\s+(?:LOW_PRIORITY\s+|DELAYED\s+)*INTO\s+[`"]?([a-zA-Z0-9_]+)[`"]?/i',
+                            'UPDATE'   => '/UPDATE\s+(?:LOW_PRIORITY\s+|IGNORE\s+)*[`"]?([a-zA-Z0-9_]+)[`"]?/i',
+                            'DELETE'   => '/DELETE\s+(?:LOW_PRIORITY\s+|QUICK\s+|IGNORE\s+)*FROM\s+[`"]?([a-zA-Z0-9_]+)[`"]?/i',
+                            'TRUNCATE' => '/TRUNCATE\s+(?:TABLE\s+)?[`"]?([a-zA-Z0-9_]+)[`"]?/i',
+                        ];
+                        if (preg_match($verb_regex[$stmt_type], $query_to_run, $tm)) {
+                            $original_table = $tm[1];
+                            if (isset($exclude_patterns[strtolower($original_table)])) {
+                                continue;
+                            }
+                            if (!isset($temp_tables_created[$original_table])) {
+                                OPTISTATE_Utils::log_critical_error(
+                                    "Skipped DML with no temp target",
+                                    ["type" => $stmt_type, "table" => $original_table]
+                                );
+                                continue;
+                            }
+                            $temp = $temp_tables_created[$original_table];
+                            $query_to_run = preg_replace(
+                                '/(\b)' . preg_quote($original_table, '/') . '(\b)/',
+                                '$1' . $temp . '$2',
+                                $query_to_run,
+                                1
+                            );
+                        } else {
+                            continue;
                         }
                     } elseif (
                         $stmt_type === "CREATE" ||
@@ -1338,15 +1396,18 @@ class OPTISTATE_Restore_Engine
                         $query_to_run = $rewrite_result["query"];
                         $original_table = $rewrite_result["original_table"];
                         $temp_table = $rewrite_result["temp_table"];
+                        if (stripos($trim_line, 'CREATE VIEW') !== false) {
+                            $temp_views_created[] = $temp_table;
+                        }
+
                         if ($stmt_type === "CREATE" && $temp_table) {
-                            if (!$is_internal_backup) {
-                                $query_to_run = OPTISTATE_SQL_Parser::clean_create_statement(
-                                    $query_to_run
-                                );
-                                $query_to_run = $this->normalize_restore_create_statement(
-                                    $query_to_run
-                                );
-                            }
+                            $query_to_run = OPTISTATE_SQL_Parser::clean_create_statement(
+                                $query_to_run
+                            );
+                            $query_to_run = $this->normalize_restore_create_statement(
+                                $query_to_run
+                            );
+
                             $settings = $this->main_plugin->settings_manager->get_persistent_settings();
                             if (empty($settings["skip_index_parsing"])) {
                                 $parsing_result = OPTISTATE_SQL_Parser::parse_create_table_for_indexes(
@@ -1402,7 +1463,7 @@ class OPTISTATE_Restore_Engine
                         $this->last_transaction_commit_queries;
                     $should_commit = false;
                     $requires_immediate_commit = false;
-                    if ($stmt_type === "INSERT") {
+                    if (in_array($stmt_type, ['INSERT', 'REPLACE', 'UPDATE', 'DELETE', 'TRUNCATE'], true)) {
                         if (
                             $current_transaction_size > $transaction_max_size ||
                             $queries_since_last_commit >= 1000
@@ -1416,6 +1477,7 @@ class OPTISTATE_Restore_Engine
                     ) {
                         $requires_immediate_commit = true;
                     }
+
                     if (
                         $requires_immediate_commit &&
                         $db_wrapper->in_transaction()
@@ -1425,13 +1487,15 @@ class OPTISTATE_Restore_Engine
                         $batch_counter = 0;
                         $this->last_transaction_commit_queries = $executed_queries;
                     }
+
                     if (
-                        $stmt_type === "INSERT" &&
+                        in_array($stmt_type, ['INSERT', 'REPLACE', 'UPDATE', 'DELETE', 'TRUNCATE'], true) &&
                         !$db_wrapper->in_transaction() &&
                         $backup_has_transactions
                     ) {
                         $db_wrapper->begin_transaction();
                     }
+
                     if (!$db_wrapper->force_commit_if_needed()) {
                         throw new Exception(
                             __(
@@ -1440,10 +1504,12 @@ class OPTISTATE_Restore_Engine
                             )
                         );
                     }
+
                     $new_connection = $db_wrapper->get_connection();
                     if ($new_connection !== $db_connection) {
                         $db_connection = $new_connection;
                     }
+
                     if (
                         $executed_queries > 0 &&
                         $executed_queries % 100 === 0
@@ -1461,7 +1527,7 @@ class OPTISTATE_Restore_Engine
                             $db_wrapper = OPTISTATE_DB_Wrapper::get_instance();
                             $db_connection = $db_wrapper->get_connection();
                             if (
-                                $stmt_type === "INSERT" &&
+                                in_array($stmt_type, ['INSERT', 'REPLACE', 'UPDATE', 'DELETE', 'TRUNCATE'], true) &&
                                 $backup_has_transactions
                             ) {
                                 $db_wrapper->begin_transaction();
@@ -1469,6 +1535,7 @@ class OPTISTATE_Restore_Engine
                             $chunk_start_time = microtime(true);
                         }
                     }
+
                     $result = $db_wrapper->query($query_to_run);
                     if ($result === false) {
                         $error_msg = $db_wrapper->get_error();
@@ -1484,7 +1551,7 @@ class OPTISTATE_Restore_Engine
                         if (
                             $errno === 1153 &&
                             $stmt_type === "INSERT" &&
-                            isset($original_table) &&
+                            !empty($original_table) &&
                             isset($temp_tables_created[$original_table])
                         ) {
                             if ($db_wrapper->in_transaction()) {
@@ -1533,6 +1600,7 @@ class OPTISTATE_Restore_Engine
                             }
                         }
                     }
+
                     if ($requires_immediate_commit) {
                         if ($backup_has_transactions) {
                             $db_wrapper->begin_transaction();
@@ -1543,26 +1611,18 @@ class OPTISTATE_Restore_Engine
                         $batch_counter = 0;
                         $this->last_transaction_commit_queries = $executed_queries;
                     }
+
                     if ($result !== false) {
                         $executed_queries++;
                         $batch_counter++;
                         $current_transaction_size += strlen($query_to_run);
                     }
+
                     $last_stmt_type = $stmt_type;
                 }
+
                 if ($db_wrapper->in_transaction()) {
                     $db_wrapper->commit();
-                }
-                $deferred_indexes_map = $this->collect_deferred_indexes(
-                    $restore_key_for_deferred
-                );
-                $index_result = ["success" => true];
-                if (!empty($deferred_indexes_map)) {
-                    $index_result = $this->apply_deferred_indexes(
-                        $db_connection,
-                        $deferred_indexes_map,
-                        $restore_key_for_deferred
-                    );
                 }
                 if (!empty($temp_tables_created)) {
                     $verification = $this->verify_temp_tables(
@@ -1583,8 +1643,40 @@ class OPTISTATE_Restore_Engine
                     if (!$swap_result["success"]) {
                         throw new Exception($swap_result["message"]);
                     }
+                    if (function_exists("wp_cache_flush")) {
+                        wp_cache_flush();
+                    }
+                    wp_cache_delete("alloptions", "options");
+                    wp_cache_delete("notoptions", "options");
                 }
-                $this->release_restore_lock();
+                if (!empty($deferred_views)) {
+                    foreach ($deferred_views as $view_query) {
+                        $db_wrapper->query($view_query);
+                    }
+                }
+                $deferred_indexes_map = $this->collect_deferred_indexes(
+                    $restore_key_for_deferred
+                );
+                $index_result = ["success" => true];
+                if (!empty($deferred_indexes_map)) {
+                    $index_result = $this->apply_deferred_indexes(
+                        $db_connection,
+                        $deferred_indexes_map,
+                        $restore_key_for_deferred
+                    );
+                    if (isset($index_result['status']) && $index_result['status'] === 'partial') {
+                        wp_schedule_single_event(time() + 2, 'optistate_apply_deferred_indexes', [$restore_key_for_deferred]);
+                        $state['status'] = 'deferred_indexes_pending';
+                        $state['message'] = __('Restore completed but some indexes are pending. They will be applied shortly.', 'optistate');
+                        $this->process_store->set($restore_key_for_deferred, $state, DAY_IN_SECONDS);
+                        return [
+                            "status" => "running",
+                            "state" => $state,
+                            "message" => $state['message'],
+                        ];
+                    }
+                }
+
                 $this->process_store->delete("optistate_restore_in_progress");
                 $this->main_plugin->log_entry(
                     "🏁 " .
@@ -1596,6 +1688,7 @@ class OPTISTATE_Restore_Engine
                     $state["log_filename"],
                     ["queries_executed" => $executed_queries]
                 );
+
                 if (
                     isset($state["decompressed_temp_file"]) &&
                     $this->wp_filesystem->exists(
@@ -1612,6 +1705,7 @@ class OPTISTATE_Restore_Engine
                 $this->cleanup_old_tables_after_restore();
                 $this->close_restore_db();
                 $this->clear_trash_table_after_restore();
+
                 $total_time = time() - $state["start_time"];
                 $message = sprintf(
                     __(
@@ -1630,6 +1724,7 @@ class OPTISTATE_Restore_Engine
                         $index_result["warnings"]
                     );
                 }
+
                 update_option(
                     "optistate_restore_completed",
                     [
@@ -1641,11 +1736,13 @@ class OPTISTATE_Restore_Engine
                     ],
                     false
                 );
+
                 if ($is_gzipped) {
                     gzclose($handle);
                 } else {
                     fclose($handle);
                 }
+
                 return [
                     "status" => "done",
                     "state" => $state,
@@ -1653,13 +1750,15 @@ class OPTISTATE_Restore_Engine
                 ];
             } catch (Exception $e) {
                 $this->cleanup_temp_tables_on_failure(
-                    $temp_tables_created ?? []
+                    $temp_tables_created ?? [],
+                    $temp_views_created ?? []
                 );
                 $db_wrapper_cleanup = OPTISTATE_DB_Wrapper::get_instance();
                 if ($db_wrapper_cleanup->in_transaction()) {
                     $db_wrapper_cleanup->rollback();
                 }
                 $state["temp_tables_created"] = $temp_tables_created;
+                $state["temp_views_created"] = $temp_views_created;
                 $this->close_restore_db();
                 throw $e;
             }
@@ -1678,7 +1777,8 @@ class OPTISTATE_Restore_Engine
     }
 
     private function cleanup_temp_tables_on_failure(
-        array $temp_tables_created
+        array $temp_tables_created,
+        array $temp_views_created = []
     ): void {
         try {
             global $wpdb;
@@ -1690,7 +1790,8 @@ class OPTISTATE_Restore_Engine
             $db = OPTISTATE_DB_Wrapper::get_instance()->get_connection();
             OPTISTATE_Utils::without_foreign_key_checks(function () use (
                 $db,
-                $stray_tables
+                $stray_tables,
+                $temp_views_created
             ) {
                 $tables_to_drop = [];
                 if ($stray_tables && count($stray_tables) > 0) {
@@ -1709,6 +1810,17 @@ class OPTISTATE_Restore_Engine
                         $db->query(
                             "DROP TABLE IF EXISTS " . implode(", ", $batch)
                         );
+                        $db->query(
+                            "DROP VIEW IF EXISTS " . implode(", ", $batch)
+                        );
+                    }
+                }
+                if (!empty($temp_views_created)) {
+                    foreach (array_chunk($temp_views_created, 10) as $batch) {
+                        $views = array_map(function ($v) {
+                            return OPTISTATE_Utils::escape_identifier($v);
+                        }, $batch);
+                        $db->query("DROP VIEW IF EXISTS " . implode(", ", $views));
                     }
                 }
             }, $db);
@@ -1750,62 +1862,135 @@ class OPTISTATE_Restore_Engine
         return $deferred_indexes;
     }
 
-private function apply_deferred_indexes(
-        $db,
-        array $deferred_indexes,
-        string $restore_key
-    ): array {
-        if (empty($deferred_indexes)) {
-            return ["success" => true];
+    public function apply_deferred_indexes_worker(string $restore_key): void
+    {
+        $state = $this->process_store->get($restore_key);
+        if (!$state) {
+            return;
         }
-        $failed_indexes = [];
-        foreach ($deferred_indexes as $temp_table => $queries) {
-            foreach ($queries as $query) {
-                $result = $db->query($query);
-                if ($result === false) {
-                    $error = $db->error;
-                    $is_ignorable =
-                        strpos($error, "Duplicate key name") !== false ||
-                        strpos($error, "already exists") !== false;
-                    if (!$is_ignorable) {
-                        $failed_indexes[] = [
-                            "table" => $temp_table,
-                            "query" => $query,
+        $remaining_key = $restore_key . "_deferred_remaining";
+        $remaining_data = $this->process_store->get($remaining_key);
+        if (!$remaining_data) {
+            $deferred_indexes_map = $this->collect_deferred_indexes($restore_key);
+            if (empty($deferred_indexes_map)) {
+                return;
+            }
+        } else {
+            $deferred_indexes_map = $remaining_data;
+            $this->process_store->delete($remaining_key);
+        }
+
+        $db = $this->get_restore_db();
+        $result = $this->apply_deferred_indexes($db, $deferred_indexes_map, $restore_key);
+        if (isset($result['status']) && $result['status'] === 'partial') {
+            wp_schedule_single_event(time() + 2, 'optistate_apply_deferred_indexes', [$restore_key]);
+        } else {
+            $this->process_store->delete($restore_key);
+            $this->main_plugin->log_entry("✅ All deferred indexes applied.");
+        }
+    }
+
+private function apply_deferred_indexes(
+    $db,
+    array $deferred_indexes,
+    string $restore_key
+): array {
+    if (empty($deferred_indexes)) {
+        return ["success" => true];
+    }
+    $failed_indexes = [];
+    $start = microtime(true);
+    $budget = min(25, (int) (ini_get("max_execution_time") * 0.6));
+    $remaining = [];
+    global $wpdb;
+    $state = $this->process_store->get($restore_key);
+    $temp_to_original_map = [];
+    if ($state && isset($state["temp_tables_created"])) {
+        foreach ($state["temp_tables_created"] as $original => $temp) {
+            $temp_to_original_map[$temp] = $original;
+        }
+    }
+
+    foreach ($deferred_indexes as $temp_table => $queries) {
+        $live_table = isset($temp_to_original_map[$temp_table]) 
+            ? $temp_to_original_map[$temp_table] 
+            : $temp_table;
+        
+        $quoted_live_table = '`' . str_replace('`', '``', $live_table) . '`';
+        
+        foreach ($queries as $idx => $query) {
+            if (microtime(true) - $start > $budget) {
+                $remaining_queries = array_slice($queries, $idx);
+                if (!empty($remaining_queries)) {
+                    $this->process_store->set(
+                        $restore_key . "_deferred_remaining",
+                        [$temp_table => $remaining_queries],
+                        DAY_IN_SECONDS
+                    );
+                }
+                return [
+                    "success" => true,
+                    "status" => "partial",
+                    "warnings" => __("Some indexes were deferred to the next chunk due to time limits.", "optistate"),
+                ];
+            }
+            $fixed_query = str_replace(
+                'ALTER TABLE `' . $temp_table . '`',
+                'ALTER TABLE ' . $quoted_live_table,
+                $query
+            );
+            $fixed_query = str_replace(
+                'ALTER TABLE "' . $temp_table . '"',
+                'ALTER TABLE ' . $quoted_live_table,
+                $fixed_query
+            );
+            
+            $result = $db->query($fixed_query);
+            if ($result === false) {
+                $error = $db->error;
+                $is_ignorable =
+                    strpos($error, "Duplicate key name") !== false ||
+                    strpos($error, "already exists") !== false;
+                if (!$is_ignorable) {
+                    $failed_indexes[] = [
+                        "table" => $live_table,
+                        "query" => $fixed_query,
+                        "error" => $error,
+                    ];
+                    OPTISTATE_Utils::log_critical_error(
+                        "Failed to apply deferred index",
+                        [
+                            "table" => $live_table,
                             "error" => $error,
-                        ];
-                        OPTISTATE_Utils::log_critical_error(
-                            "Failed to apply deferred index",
-                            [
-                                "table" => $temp_table,
-                                "error" => $error,
-                                "query" => substr($query, 0, 200),
-                            ]
-                        );
-                    }
+                            "query" => substr($fixed_query, 0, 200),
+                        ]
+                    );
                 }
             }
         }
-        if (!empty($failed_indexes)) {
-            $this->process_store->set(
-                $restore_key . "_failed_indexes",
-                $failed_indexes,
-                DAY_IN_SECONDS
-            );
-            return [
-                "success" => true,
-                "warnings" => sprintf(
-                    _n(
-                        "%s deferred index failed to apply",
-                        "%s deferred indexes failed to apply",
-                        count($failed_indexes),
-                        "optistate"
-                    ),
-                    number_format_i18n(count($failed_indexes))
-                ),
-            ];
-        }
-        return ["success" => true];
     }
+
+    if (!empty($failed_indexes)) {
+        $this->process_store->set(
+            $restore_key . "_failed_indexes",
+            $failed_indexes,
+            DAY_IN_SECONDS
+        );
+        return [
+            "success" => true,
+            "warnings" => sprintf(
+                _n(
+                    "%s deferred index failed to apply",
+                    "%s deferred indexes failed to apply",
+                    count($failed_indexes),
+                    "optistate"
+                ),
+                number_format_i18n(count($failed_indexes))
+            ),
+        ];
+    }
+    return ["success" => true];
+}
 
     private function should_process_statement(
         string $trim_line,
@@ -2185,6 +2370,9 @@ private function apply_deferred_indexes(
                 global $wpdb;
                 $old_prefix = "optistate_old_";
                 $old_table_map = [];
+                $instant_rollback_tables = [];
+                $rename_parts = [];
+
                 foreach (
                     $temp_tables_created
                     as $original_table => $temp_table_name
@@ -2223,6 +2411,7 @@ private function apply_deferred_indexes(
                     }
                     $old_table_map[$original_table] = $old_table;
                 }
+
                 $original_tables = array_keys($temp_tables_created);
                 $placeholders = implode(
                     ",",
@@ -2247,9 +2436,6 @@ private function apply_deferred_indexes(
                 $existing_temp_tables = array_flip(
                     (array) $wpdb->get_col($temp_existence_query)
                 );
-                $all_renames = [];
-                $tables_to_cleanup = [];
-                $instant_rollback_tables = [];
                 foreach (
                     $temp_tables_created
                     as $original_table => $temp_table_name
@@ -2260,21 +2446,21 @@ private function apply_deferred_indexes(
                     $live_table = $original_table;
                     $old_table = $old_table_map[$original_table];
                     if (isset($existing_tables[$live_table])) {
-                        $all_renames[] = sprintf(
+                        $rename_parts[] = sprintf(
                             "%s TO %s",
                             OPTISTATE_Utils::escape_identifier($live_table),
                             OPTISTATE_Utils::escape_identifier($old_table)
                         );
-                        $tables_to_cleanup[] = $old_table;
                         $instant_rollback_tables[$original_table] = $old_table;
                     }
-                    $all_renames[] = sprintf(
+                    $rename_parts[] = sprintf(
                         "%s TO %s",
                         OPTISTATE_Utils::escape_identifier($temp_table_name),
                         OPTISTATE_Utils::escape_identifier($live_table)
                     );
                 }
-                if (empty($all_renames)) {
+
+                if (empty($rename_parts)) {
                     return [
                         "success" => false,
                         "message" => __(
@@ -2283,13 +2469,8 @@ private function apply_deferred_indexes(
                         ),
                     ];
                 }
-                $this->process_store->set(
-                    "optistate_instant_rollback_tables",
-                    $instant_rollback_tables,
-                    2 * HOUR_IN_SECONDS
-                );
                 $this->ensure_connection_alive();
-                $rename_query = "RENAME TABLE " . implode(", ", $all_renames);
+                $rename_query = "RENAME TABLE " . implode(", ", $rename_parts);
                 $result = $db->query($rename_query);
                 if ($result === false) {
                     throw new Exception(
@@ -2299,9 +2480,16 @@ private function apply_deferred_indexes(
                                 : $db->error)
                     );
                 }
+                $this->process_store->set(
+                    "optistate_instant_rollback_tables",
+                    $instant_rollback_tables,
+                    2 * HOUR_IN_SECONDS
+                );
+
                 if (class_exists("OPTISTATE_Utils")) {
                     OPTISTATE_Utils::invalidate_table_cache();
                 }
+
                 $this->ensure_connection_alive();
                 $fk_check = $this->verify_foreign_keys_after_swap(
                     $db,
@@ -2315,6 +2503,7 @@ private function apply_deferred_indexes(
                         ) . $fk_check["message"]
                     );
                 }
+
                 return [
                     "success" => true,
                     "message" => sprintf(
@@ -2406,81 +2595,103 @@ private function apply_deferred_indexes(
         );
     }
 
-    private function configure_db_session(
-        $db,
-        ?array $charset_check = null,
-        ?array $backup_charset_info = null
-    ): void {
-        $db_wrapper = OPTISTATE_DB_Wrapper::get_instance();
-        if ($charset_check && isset($charset_check["action"])) {
-            if (
-                $charset_check["action"] === "use_backup_charset" &&
-                $backup_charset_info
-            ) {
-                $charset = $backup_charset_info["charset"];
-            } else {
-                global $wpdb;
-                $charset = $wpdb->get_var("SELECT @@character_set_database");
-            }
-        } else {
-            $charset = defined("DB_CHARSET") ? DB_CHARSET : "utf8mb4";
-        }
-        $collate = defined("DB_COLLATE") ? DB_COLLATE : "";
-        if (!preg_match('/^[a-zA-Z0-9_]+$/', (string) $charset)) {
-            throw new Exception(
-                sprintf(
-                    __(
-                        'Invalid charset value detected during restore session setup: "%s". Restore aborted.',
-                        "optistate"
-                    ),
-                    esc_html($charset)
-                )
-            );
-        }
+private function configure_db_session(
+    $db,
+    ?array $charset_check = null,
+    ?array $backup_charset_info = null
+): void {
+    $db_wrapper = OPTISTATE_DB_Wrapper::get_instance();
+    if ($charset_check && isset($charset_check["action"])) {
         if (
-            !empty($collate) &&
-            !preg_match('/^[a-zA-Z0-9_]+$/', (string) $collate)
+            $charset_check["action"] === "use_backup_charset" &&
+            $backup_charset_info
         ) {
-            throw new Exception(
-                sprintf(
-                    __(
-                        'Invalid collation value detected during restore session setup: "%s". Restore aborted.',
-                        "optistate"
-                    ),
-                    esc_html($collate)
-                )
-            );
-        }
-        if ($collate) {
-            $db_wrapper->set_session_state(
-                "SET NAMES '{$charset}' COLLATE '{$collate}'"
-            );
+            $charset = $backup_charset_info["charset"];
         } else {
-            $db_wrapper->set_session_state("SET NAMES '{$charset}'");
+            global $wpdb;
+            $charset = $wpdb->get_var("SELECT @@character_set_database");
         }
-        $db_wrapper->set_session_state(
-            "SET character_set_client = '{$charset}'"
-        );
-        $db_wrapper->set_session_state(
-            "SET character_set_connection = '{$charset}'"
-        );
-        $db_wrapper->set_session_state(
-            "SET character_set_results = '{$charset}'"
-        );
-        $db_wrapper->set_session_state(
-            "SET character_set_server = '{$charset}'"
-        );
-        $db_wrapper->set_session_state(
-            "SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED"
-        );
-        $db_wrapper->set_session_state(
-            "SET SESSION SQL_MODE = 'NO_AUTO_VALUE_ON_ZERO'"
-        );
-        $db_wrapper->set_session_state("SET SESSION time_zone = '+00:00'");
-        $db_wrapper->set_session_state("SET SESSION AUTOCOMMIT = 0");
-        $db_wrapper->set_session_state("SET SESSION FOREIGN_KEY_CHECKS = 0");
-        $db_wrapper->set_session_state("SET SESSION UNIQUE_CHECKS = 0");
+    } else {
+        $charset = defined("DB_CHARSET") ? DB_CHARSET : "utf8mb4";
     }
+    $collate = defined("DB_COLLATE") ? DB_COLLATE : "";
+    if (!preg_match('/^[a-zA-Z0-9_]+$/', (string) $charset)) {
+        throw new Exception(
+            sprintf(
+                __(
+                    'Invalid charset value detected during restore session setup: "%s". Restore aborted.',
+                    "optistate"
+                ),
+                esc_html($charset)
+            )
+        );
+    }
+    if (
+        !empty($collate) &&
+        !preg_match('/^[a-zA-Z0-9_]+$/', (string) $collate)
+    ) {
+        throw new Exception(
+            sprintf(
+                __(
+                    'Invalid collation value detected during restore session setup: "%s". Restore aborted.',
+                    "optistate"
+                ),
+                esc_html($collate)
+            )
+        );
+    }
+    if ($collate) {
+        $db_wrapper->set_session_state(
+            'names',
+            "SET NAMES '{$charset}' COLLATE '{$collate}'"
+        );
+    } else {
+        $db_wrapper->set_session_state(
+            'names',
+            "SET NAMES '{$charset}'"
+        );
+    }
+    $db_wrapper->set_session_state(
+        'charset_client',
+        "SET character_set_client = '{$charset}'"
+    );
+    $db_wrapper->set_session_state(
+        'charset_connection',
+        "SET character_set_connection = '{$charset}'"
+    );
+    $db_wrapper->set_session_state(
+        'charset_results',
+        "SET character_set_results = '{$charset}'"
+    );
+    $db_wrapper->set_session_state(
+        'charset_server',
+        "SET character_set_server = '{$charset}'"
+    );
+    $db_wrapper->set_session_state(
+        'isolation',
+        "SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED"
+    );
+    $db_wrapper->set_session_state(
+        'sql_mode',
+        "SET SESSION SQL_MODE = 'NO_AUTO_VALUE_ON_ZERO'"
+    );
+    $db_wrapper->set_session_state(
+        'time_zone',
+        "SET SESSION time_zone = '+00:00'"
+    );
+    $db_wrapper->set_session_state(
+        'autocommit',
+        "SET SESSION AUTOCOMMIT = 0"
+    );
+    $db_wrapper->set_session_state(
+        'foreign_key_checks',
+        "SET SESSION FOREIGN_KEY_CHECKS = 0"
+    );
+    $db_wrapper->set_session_state(
+        'unique_checks',
+        "SET SESSION UNIQUE_CHECKS = 0"
+    );
+}
 
     private function should_decompress_before_restore(string $filepath): bool
     {
@@ -2488,7 +2699,7 @@ private function apply_deferred_indexes(
         $estimated_decompressed_size = $file_size * 5;
         $free_space = @disk_free_space(dirname($filepath));
         if ($free_space === false) {
-            return false;
+            return true;
         }
         $required_space = $estimated_decompressed_size * 1.2;
         return $free_space >= $required_space;

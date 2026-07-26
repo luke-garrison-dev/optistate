@@ -17,6 +17,7 @@ class OPTISTATE_Backup_Engine
     private const MAX_ROW_LENGTH_CACHE_SIZE = 400;
     private static string $binary_pattern = "/\b(blob|binary|varbinary|tinyblob|mediumblob|longblob|bit|geometry|point|linestring|polygon|multipoint|multilinestring|multipolygon|geometrycollection)\b/i";
     private static string $unsortable_pattern = "/\b(tinytext|text|mediumtext|longtext|json|tinyblob|blob|mediumblob|longblob|geometry|point|linestring|polygon|multipoint|multilinestring|multipolygon|geometrycollection)\b/i";
+
     public function __construct(
         OPTISTATE $main_plugin,
         string $backup_dir,
@@ -31,6 +32,17 @@ class OPTISTATE_Backup_Engine
         }
         $this->wp_filesystem = $wp_filesystem;
     }
+    private function get_effective_batch_size(mysqli $conn): int {
+        static $cached = null;
+        if ($cached !== null) return $cached;
+        $res = @$conn->query("SHOW SESSION VARIABLES LIKE 'max_allowed_packet'");
+        $row = $res ? $res->fetch_assoc() : null;
+        if ($res) $res->free();
+        $server = isset($row["Value"]) ? (int) $row["Value"] : 4 * 1024 * 1024;
+        $cached = max(512 * 1024, min(self::TARGET_BATCH_SIZE, (int) ($server * 0.75)));
+        return $cached;
+    }
+
     public function initiate_chunked_backup(
         string $filename,
         array $extra_data = []
@@ -156,6 +168,7 @@ class OPTISTATE_Backup_Engine
             );
         }
     }
+
     public function process_chunk(
         string $transient_key,
         bool $is_silent_worker = false
@@ -284,6 +297,7 @@ class OPTISTATE_Backup_Engine
             OPTISTATE_Utils::safe_set_time_limit($original_time_limit);
         }
     }
+
     private function perform_backup_chunk(
         array $state,
         int $max_chunk_time,
@@ -337,12 +351,12 @@ class OPTISTATE_Backup_Engine
                             );
                         }
                         $state["uncompressed_size"] += $header_len;
-                        $trans_start = "START TRANSACTION;\n\n";
-                        $trans_len = strlen($trans_start);
-                        if (gzwrite($handle, $trans_start) !== $trans_len) {
+                        $trans_note = "-- NOTE: This dump is chunked; consistency is per-batch, not per-file.\n\n";
+                        $trans_len = strlen($trans_note);
+                        if (gzwrite($handle, $trans_note) !== $trans_len) {
                             throw new Exception(
                                 __(
-                                    "Failed to write transaction start.",
+                                    "Failed to write transaction note.",
                                     "optistate"
                                 )
                             );
@@ -388,7 +402,7 @@ class OPTISTATE_Backup_Engine
                                 $table_status = $wpdb->get_row(
                                     $wpdb->prepare(
                                         "SHOW TABLE STATUS LIKE %s",
-                                        $table_name
+                                        $wpdb->esc_like($table_name)
                                     ),
                                     ARRAY_A
                                 );
@@ -512,59 +526,59 @@ class OPTISTATE_Backup_Engine
                             }
                         }
                         if (!$can_use_keyset_pagination) {
-$unique_candidates = $wpdb->get_results(
-    $wpdb->prepare(
-        "SELECT s.INDEX_NAME AS Key_name, s.COLUMN_NAME AS Column_name,
-                c.IS_NULLABLE AS Is_nullable, c.DATA_TYPE AS Data_type
-         FROM information_schema.STATISTICS s
-         LEFT JOIN information_schema.COLUMNS c
-           ON c.TABLE_SCHEMA = s.TABLE_SCHEMA
-          AND c.TABLE_NAME  = s.TABLE_NAME
-          AND c.COLUMN_NAME = s.COLUMN_NAME
-         WHERE s.TABLE_SCHEMA = DATABASE()
-           AND s.TABLE_NAME = %s
-           AND s.NON_UNIQUE = 0
-         ORDER BY (s.INDEX_NAME = 'PRIMARY') DESC, s.INDEX_NAME, s.SEQ_IN_INDEX",
-        $table_name
-    )
-);
-    $index_groups = [];
-    foreach ((array) $unique_candidates as $row) {
-        $index_groups[$row->Key_name][] = $row;
-    }
-    foreach ($index_groups as $key_name => $cols) {
-        if (count($cols) !== 1) {
-            continue;
-        }
-$col = $cols[0];
-        if ($col->Column_name === null || $col->Data_type === null) {
-            continue;
-        }
-        if (strtoupper((string) $col->Is_nullable) === "YES") {
-            continue;
-        }
-        $col_name = $col->Column_name;
-        $col_type = strtolower((string) $col->Data_type);
-        $can_use_keyset_pagination = true;
-        $selected_primary_key = $col_name;
-        $state["primary_key_type"] = in_array(
-            $col_type,
-            [
-                "tinyint", "smallint", "mediumint",
-                "int", "bigint", "decimal", "numeric",
-                "float", "double", "real",
-            ],
-            true
-        )
-            ? "numeric"
-            : "string";
-        $fallback_reason =
-            "Using unique index $col_name (" .
-            $state["primary_key_type"] .
-            ")";
-        break;
-    }
-}
+                            $unique_candidates = $wpdb->get_results(
+                                $wpdb->prepare(
+                                    "SELECT s.INDEX_NAME AS Key_name, s.COLUMN_NAME AS Column_name,
+                                            c.IS_NULLABLE AS Is_nullable, c.DATA_TYPE AS Data_type
+                                     FROM information_schema.STATISTICS s
+                                     LEFT JOIN information_schema.COLUMNS c
+                                       ON c.TABLE_SCHEMA = s.TABLE_SCHEMA
+                                      AND c.TABLE_NAME  = s.TABLE_NAME
+                                      AND c.COLUMN_NAME = s.COLUMN_NAME
+                                     WHERE s.TABLE_SCHEMA = DATABASE()
+                                       AND s.TABLE_NAME = %s
+                                       AND s.NON_UNIQUE = 0
+                                     ORDER BY (s.INDEX_NAME = 'PRIMARY') DESC, s.INDEX_NAME, s.SEQ_IN_INDEX",
+                                    $table_name
+                                )
+                            );
+                            $index_groups = [];
+                            foreach ((array) $unique_candidates as $row) {
+                                $index_groups[$row->Key_name][] = $row;
+                            }
+                            foreach ($index_groups as $key_name => $cols) {
+                                if (count($cols) !== 1) {
+                                    continue;
+                                }
+                                $col = $cols[0];
+                                if ($col->Column_name === null || $col->Data_type === null) {
+                                    continue;
+                                }
+                                if (strtoupper((string) $col->Is_nullable) === "YES") {
+                                    continue;
+                                }
+                                $col_name = $col->Column_name;
+                                $col_type = strtolower((string) $col->Data_type);
+                                $can_use_keyset_pagination = true;
+                                $selected_primary_key = $col_name;
+                                $state["primary_key_type"] = in_array(
+                                    $col_type,
+                                    [
+                                        "tinyint", "smallint", "mediumint",
+                                        "int", "bigint", "decimal", "numeric",
+                                        "float", "double", "real",
+                                    ],
+                                    true
+                                )
+                                    ? "numeric"
+                                    : "string";
+                                $fallback_reason =
+                                    "Using unique index $col_name (" .
+                                    $state["primary_key_type"] .
+                                    ")";
+                                break;
+                            }
+                        }
                         if ($can_use_keyset_pagination) {
                             $state["primary_key"] = $selected_primary_key;
                             $state["pagination_method"] = "keyset";
@@ -655,7 +669,7 @@ $col = $cols[0];
                         break;
                     case "footer":
                         $footer =
-                            "COMMIT;\n\n/*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;\n/*!40101 SET CHARACTER_SET_RESULTS=@OLD_CHARACTER_SET_RESULTS */;\n/*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;\n";
+                            "-- End of WP Optimal State backup\n\n/*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;\n/*!40101 SET CHARACTER_SET_RESULTS=@OLD_CHARACTER_SET_RESULTS */;\n/*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;\n";
                         $footer_len = strlen($footer);
                         if (gzwrite($handle, $footer) !== $footer_len) {
                             throw new Exception(
@@ -701,6 +715,7 @@ $col = $cols[0];
             OPTISTATE_Utils::safe_set_time_limit($original_time_limit);
         }
     }
+
     private function backup_table_data_chunked(
         string $table_name,
         $primary_key,
@@ -756,7 +771,8 @@ $col = $cols[0];
             $exclude_trash_condition = " AND `option_name` NOT LIKE %s";
             $exclude_trash_value = $wpdb->esc_like("_optistate_trash_") . "%";
         }
-$order_by_clause = "";
+
+        $order_by_clause = "";
         if (!$primary_key) {
             $quote_col = function ($col) {
                 return "`" . str_replace("`", "``", $col) . "`";
@@ -792,17 +808,27 @@ $order_by_clause = "";
                 }
             }
         }
-        $wrapper = OPTISTATE_DB_Wrapper::get_instance();
-        static $backup_session_registered = false;
-        if (!$backup_session_registered) {
-            $wrapper->set_session_state("SET SESSION net_read_timeout = 120");
-            $wrapper->set_session_state("SET SESSION wait_timeout = 600");
-            $wrapper->set_session_state("SET SESSION SQL_BIG_SELECTS=1");
-            $wrapper->set_session_state(
-                "SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ"
+        if ($order_by_clause === "") {
+            return $this->backup_table_data_unbuffered(
+                $table_name,
+                $file_handle,
+                $column_types,
+                $binary_columns,
+                $column_list,
+                $state,
+                $transient_key
             );
-            $backup_session_registered = true;
         }
+
+        $wrapper = OPTISTATE_DB_Wrapper::get_instance();
+static $backup_session_registered = false;
+if (!$backup_session_registered) {
+    $wrapper->set_session_state('net_read_timeout', "SET SESSION net_read_timeout = 120");
+    $wrapper->set_session_state('wait_timeout', "SET SESSION wait_timeout = 600");
+    $wrapper->set_session_state('sql_big_selects', "SET SESSION SQL_BIG_SELECTS=1");
+    $wrapper->set_session_state('isolation', "SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ");
+    $backup_session_registered = true;
+}
         if (!$wrapper->begin_transaction()) {
             throw new Exception(
                 __(
@@ -855,8 +881,7 @@ $order_by_clause = "";
                         : [$offset_batch_size, $offset]
                 );
             }
-
-            $result = $wrapper->query($query);
+            $result = $wrapper->get_connection()->query($query, MYSQLI_USE_RESULT);
             if (!$result) {
                 $db_error = $wrapper->get_error();
                 $wrapper->rollback();
@@ -876,7 +901,8 @@ $order_by_clause = "";
                 : "INSERT INTO {$safe_table} VALUES ";
             $row_buffer = [];
             $buffer_size = 0;
-            $target_bytes = self::TARGET_BATCH_SIZE;
+            $conn = $wrapper->get_connection();
+            $target_bytes = $this->get_effective_batch_size($conn);
             $max_rows_per_flush = 5000;
             $flush_count = 0;
             $last_pk_value = $offset === null ? 0 : $offset;
@@ -1000,32 +1026,88 @@ $order_by_clause = "";
             throw $e;
         }
     }
+    private function backup_table_data_unbuffered(
+        string $table_name,
+        $file_handle,
+        array $column_types,
+        array $binary_columns,
+        string $column_list,
+        array &$state,
+        string $transient_key
+    ): array {
+        global $wpdb;
+        $safe_table = OPTISTATE_Utils::escape_identifier($table_name);
+        $query = "SELECT $column_list FROM $safe_table";
+        $wrapper = OPTISTATE_DB_Wrapper::get_instance();
+        $conn = $wrapper->get_connection();
+        $result = $conn->query($query, MYSQLI_USE_RESULT);
+        if (!$result) {
+            throw new Exception("Unbuffered query failed: " . $wrapper->get_error());
+        }
+        $insert_header = "INSERT INTO {$safe_table} ({$column_list}) VALUES ";
+        $row_buffer = [];
+        $buffer_size = 0;
+        $target_bytes = $this->get_effective_batch_size($conn);
+        $row_count = 0;
+        $total_rows = 0;
+        while ($row = mysqli_fetch_assoc($result)) {
+            $row_string = OPTISTATE_Backup_Utilities::format_row_for_sql(
+                $row,
+                $conn,
+                $binary_columns
+            );
+            $row_buffer[] = $row_string;
+            $buffer_size += strlen($row_string);
+            $row_count++;
+            $total_rows++;
+            if ($buffer_size >= $target_bytes || $row_count >= 5000) {
+                $written = self::flush_buffer($row_buffer, $insert_header, $file_handle);
+                if (!empty($state)) {
+                    $state["uncompressed_size"] += $written;
+                }
+                $row_buffer = [];
+                $buffer_size = 0;
+                $row_count = 0;
+                if ($total_rows % 5000 === 0) {
+                    $this->process_store->touch($transient_key, DAY_IN_SECONDS);
+                }
+            }
+        }
+        mysqli_free_result($result);
+        if (!empty($row_buffer)) {
+            $written = self::flush_buffer($row_buffer, $insert_header, $file_handle);
+            if (!empty($state)) {
+                $state["uncompressed_size"] += $written;
+            }
+        }
+        return ['status' => 'done', 'offset' => 0];
+    }
 
-private static function flush_buffer(
-    array &$buffer,
-    string $header,
-    $file_handle
-): int {
-    if (empty($buffer)) {
-        return 0;
+    private static function flush_buffer(
+        array &$buffer,
+        string $header,
+        $file_handle
+    ): int {
+        if (empty($buffer)) {
+            return 0;
+        }
+        $header_len = strlen($header);
+        if (gzwrite($file_handle, $header) !== $header_len) {
+            throw new Exception(
+                __("Failed to write backup header to disk.", "optistate")
+            );
+        }
+        $rows = implode(",", $buffer);
+        $rows_data = $rows . ";\n";
+        $rows_data_len = strlen($rows_data);
+        if (gzwrite($file_handle, $rows_data) !== $rows_data_len) {
+            throw new Exception(
+                __("Failed to write row data to disk.", "optistate")
+            );
+        }
+        $buffer = [];
+        return $header_len + $rows_data_len;
     }
-    $header_len = strlen($header);
-    if (gzwrite($file_handle, $header) !== $header_len) {
-        throw new Exception(
-            __("Failed to write backup header to disk.", "optistate")
-        );
-    }
-    $rows = implode(",", $buffer);
-    $rows_data = $rows . ";\n";
-    $rows_data_len = strlen($rows_data);
-    if (gzwrite($file_handle, $rows_data) !== $rows_data_len) {
-        throw new Exception(
-            __("Failed to write row data to disk.", "optistate")
-        );
-    }
-    $buffer = [];
-    return $header_len + $rows_data_len;
-}
 
     private function get_adaptive_batch_limit(
         string $table_name,
@@ -1119,6 +1201,7 @@ private static function flush_buffer(
         }
         return $limit;
     }
+
     private function generate_phpmyadmin_header(): string
     {
         global $wpdb;
@@ -1158,6 +1241,7 @@ private static function flush_buffer(
             "/*!40103 SET @OLD_TIME_ZONE=@@TIME_ZONE */;\n/*!40103 SET TIME_ZONE='+00:00' */;\n/*!40014 SET @OLD_UNIQUE_CHECKS=@@UNIQUE_CHECKS, UNIQUE_CHECKS=0 */;\n/*!40014 SET @OLD_FOREIGN_KEY_CHECKS=@@FOREIGN_KEY_CHECKS, FOREIGN_KEY_CHECKS=0 */;\n/*!40101 SET @OLD_SQL_MODE=@@SQL_MODE, SQL_MODE='NO_AUTO_VALUE_ON_ZERO' */;\n/*!40111 SET @OLD_SQL_NOTES=@@SQL_NOTES, SQL_NOTES=0 */;\n\n";
         return $header;
     }
+
     private function optimize_memory(): void
     {
         if (function_exists("gc_collect_cycles")) {
@@ -1172,6 +1256,7 @@ private static function flush_buffer(
             );
         }
     }
+
     public function handle_backup_worker_error(
         string $transient_key,
         array $state,

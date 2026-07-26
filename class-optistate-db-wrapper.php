@@ -20,30 +20,33 @@ class OPTISTATE_DB_Wrapper
     private ?int $last_ping = null;
     private ?string $cached_wp_timezone = null;
     private bool $timezone_cache_populated = false;
+    private bool $owns_connection = true;
+    private array $original_session_vars = [];
+
     private function __construct()
     {
         register_shutdown_function([$this, "emergency_cleanup"]);
     }
-    public function set_session_state(string $query): bool
+    public function set_session_state(string $family, string $sql): bool
     {
-        $result = $this->query($query);
-        if (
-            $result !== false &&
-            !in_array($query, $this->init_commands, true)
-        ) {
-            $this->init_commands[] = $query;
+        $this->init_commands[$family] = $sql;
+        if ($this->connection) {
+            $result = @$this->connection->query($sql);
+            return $result !== false;
         }
-        return $result !== false;
+        return true;
     }
+
     private function replay_init_commands(): void
     {
         if ($this->connection === null || empty($this->init_commands)) {
             return;
         }
-        foreach ($this->init_commands as $cmd) {
-            @$this->connection->query($cmd);
+        foreach ($this->init_commands as $sql) {
+            @$this->connection->query($sql);
         }
     }
+
     public static function get_instance(): self
     {
         if (self::$instance === null) {
@@ -54,12 +57,14 @@ class OPTISTATE_DB_Wrapper
         }
         return self::$instance;
     }
+
     public static function close_if_instantiated(): void
     {
         if (self::$instance !== null) {
             self::$instance->close();
         }
     }
+
     private function should_refresh_connection(): bool
     {
         if ($this->connection === null) {
@@ -85,6 +90,7 @@ class OPTISTATE_DB_Wrapper
         }
         return false;
     }
+
     private function is_connection_alive(): bool
     {
         if ($this->connection === null) {
@@ -103,18 +109,22 @@ class OPTISTATE_DB_Wrapper
             return false;
         }
     }
+
     private function refresh_connection(): void
     {
         $this->close();
         $this->get_connection();
     }
+
     public function get_connection(): mysqli
     {
         if ($this->connection !== null) {
             return $this->connection;
         }
+
         mysqli_report(MYSQLI_REPORT_OFF);
         global $wpdb;
+
         if (
             (class_exists("HyperDB") && is_a($wpdb, "HyperDB")) ||
             (class_exists("LudicrousDB") && is_a($wpdb, "LudicrousDB")) ||
@@ -130,11 +140,13 @@ class OPTISTATE_DB_Wrapper
                 $this->connection_created_at = time();
                 $this->query_count = 0;
                 $this->last_ping = time();
+                $this->owns_connection = false;
                 $this->apply_default_session_settings();
                 $this->replay_init_commands();
                 return $this->connection;
             }
         }
+
         if ($this->db_config_cache === null) {
             $db_host = !empty($wpdb->dbhost) ? $wpdb->dbhost : DB_HOST;
             $db_user = !empty($wpdb->dbuser) ? $wpdb->dbuser : DB_USER;
@@ -161,6 +173,7 @@ class OPTISTATE_DB_Wrapper
                 "socket" => $socket,
             ];
         }
+
         $db_host = $this->db_config_cache["host"];
         $port = $this->db_config_cache["port"];
         $socket = $this->db_config_cache["socket"];
@@ -168,6 +181,7 @@ class OPTISTATE_DB_Wrapper
         $attempts = 0;
         $last_error = "";
         $connection_start = microtime(true);
+
         while ($attempts < $this->max_retries) {
             try {
                 $mysqli = mysqli_init();
@@ -213,6 +227,7 @@ class OPTISTATE_DB_Wrapper
                     $this->connection_created_at = time();
                     $this->query_count = 0;
                     $this->last_ping = time();
+                    $this->owns_connection = true;
                     $this->replay_init_commands();
                     return $this->connection;
                 } else {
@@ -241,6 +256,7 @@ class OPTISTATE_DB_Wrapper
                 }
             }
         }
+
         OPTISTATE_Utils::log_critical_error(
             "Failed to connect to database after " .
                 $this->max_retries .
@@ -264,6 +280,7 @@ class OPTISTATE_DB_Wrapper
             )
         );
     }
+
     private function apply_default_session_settings(
         ?\mysqli $connection = null
     ): void {
@@ -271,6 +288,7 @@ class OPTISTATE_DB_Wrapper
         if (!$connection) {
             return;
         }
+
         global $wpdb;
         $charset = !empty($wpdb->charset)
             ? $wpdb->charset
@@ -282,10 +300,53 @@ class OPTISTATE_DB_Wrapper
             : (defined("DB_COLLATE")
                 ? DB_COLLATE
                 : "");
+        if (!$this->owns_connection) {
+            $vars_to_save = [
+                'sql_mode' => 'SELECT @@sql_mode',
+                'wait_timeout' => 'SELECT @@wait_timeout',
+                'time_zone' => 'SELECT @@time_zone',
+            ];
+            foreach ($vars_to_save as $var => $query) {
+                $res = $connection->query($query);
+                if ($res && $res instanceof mysqli_result) {
+                    $row = $res->fetch_row();
+                    if ($row !== null) {
+                        $this->original_session_vars[$var] = $row[0];
+                    }
+                    $res->free();
+                }
+            }
+            $res = $connection->query("SELECT @@foreign_key_checks");
+            if ($res && $res instanceof mysqli_result) {
+                $row = $res->fetch_row();
+                if ($row !== null) {
+                    $this->original_session_vars['foreign_key_checks'] = $row[0];
+                }
+                $res->free();
+            }
+            $res = $connection->query("SELECT @@unique_checks");
+            if ($res && $res instanceof mysqli_result) {
+                $row = $res->fetch_row();
+                if ($row !== null) {
+                    $this->original_session_vars['unique_checks'] = $row[0];
+                }
+                $res->free();
+            }
+            $res = $connection->query("SELECT @@autocommit");
+            if ($res && $res instanceof mysqli_result) {
+                $row = $res->fetch_row();
+                if ($row !== null) {
+                    $this->original_session_vars['autocommit'] = $row[0];
+                }
+                $res->free();
+            }
+        }
+
         $connection->set_charset($charset);
         if ($collate !== "") {
             $connection->query("SET collation_connection = '$collate'");
         }
+
         $wp_timezone = $this->get_wp_timezone();
         if ($wp_timezone) {
             $connection->query(
@@ -298,6 +359,7 @@ class OPTISTATE_DB_Wrapper
         $connection->query("SET SESSION wait_timeout=300");
         $connection->query("SET SESSION interactive_timeout=300");
     }
+
     private function get_wp_timezone(): ?string
     {
         if ($this->timezone_cache_populated) {
@@ -310,6 +372,7 @@ class OPTISTATE_DB_Wrapper
         $this->timezone_cache_populated = true;
         return $this->cached_wp_timezone;
     }
+
     public function force_commit_if_needed(): bool
     {
         if (
@@ -333,6 +396,7 @@ class OPTISTATE_DB_Wrapper
         }
         return true;
     }
+
     public function query(string $query)
     {
         $connection = $this->get_connection();
@@ -346,6 +410,7 @@ class OPTISTATE_DB_Wrapper
         $this->query_count++;
         $this->total_queries_executed++;
         $result = $connection->query($query);
+
         if ($result === false) {
             $errno = $connection->errno;
             if (
@@ -357,6 +422,15 @@ class OPTISTATE_DB_Wrapper
                     $this->transaction_start_time = null;
                     throw new Exception(
                         "MySQL server connection dropped during an active transaction. Batch consistency lost; safe restart required."
+                    );
+                }
+                $is_idempotent = (bool) preg_match('/^\s*(SELECT|SHOW|DESCRIBE|EXPLAIN|SET)\s+/i', $query);
+                if (!$is_idempotent) {
+                    throw new Exception(
+                        sprintf(
+                            __("Database connection dropped during non-idempotent query. Error: %s", "optistate"),
+                            $connection->error
+                        )
                     );
                 }
                 $this->query_count--;
@@ -392,16 +466,19 @@ class OPTISTATE_DB_Wrapper
                 ]);
             }
         }
+
         if ($is_lock_query) {
             $this->update_lock_status($query, $result);
         }
         return $result;
     }
+
     public function is_lock_held(string $lock_name): bool
     {
         return isset($this->active_locks[$lock_name]) &&
             ($this->active_locks[$lock_name]["lock_result"] ?? null) === 1;
     }
+
     private function track_lock_operation(string $query): void
     {
         if (stripos($query, "LOCK") === false) {
@@ -435,6 +512,7 @@ class OPTISTATE_DB_Wrapper
             }
         }
     }
+
     private function update_lock_status(string $query, $result): void
     {
         if (stripos($query, "LOCK") === false) {
@@ -492,6 +570,7 @@ class OPTISTATE_DB_Wrapper
             }
         }
     }
+
     public function begin_transaction()
     {
         if ($this->transaction_active) {
@@ -510,6 +589,7 @@ class OPTISTATE_DB_Wrapper
         ]);
         return false;
     }
+
     public function commit(): bool
     {
         if (!$this->transaction_active) {
@@ -521,6 +601,7 @@ class OPTISTATE_DB_Wrapper
             $this->transaction_active = false;
             $this->transaction_start_time = null;
             $connection->autocommit(true);
+            $this->init_commands["autocommit"] = "SET autocommit = 1";
             return true;
         }
         OPTISTATE_Utils::log_critical_error("Failed to commit transaction", [
@@ -529,6 +610,7 @@ class OPTISTATE_DB_Wrapper
         ]);
         return false;
     }
+
     public function rollback($savepoint = null): bool
     {
         if (!$this->transaction_active) {
@@ -551,6 +633,7 @@ class OPTISTATE_DB_Wrapper
             $this->transaction_active = false;
             $this->transaction_start_time = null;
             $connection->autocommit(true);
+            $this->init_commands["autocommit"] = "SET autocommit = 1";
             return true;
         }
         OPTISTATE_Utils::log_critical_error("Failed to rollback transaction", [
@@ -558,16 +641,19 @@ class OPTISTATE_DB_Wrapper
         ]);
         return false;
     }
+
     public function in_transaction(): bool
     {
         return $this->transaction_active;
     }
+
     public function get_error(): string
     {
         return $this->connection
             ? $this->connection->error
             : __("No active database connection.", "optistate");
     }
+
     public function get_errno(): int
     {
         return $this->connection ? $this->connection->errno : 0;
@@ -575,6 +661,25 @@ class OPTISTATE_DB_Wrapper
     public function close(): void
     {
         if ($this->connection !== null) {
+            if (!$this->owns_connection && !empty($this->original_session_vars)) {
+                foreach ($this->original_session_vars as $var => $value) {
+                    if ($var === 'foreign_key_checks') {
+                        @$this->connection->query("SET SESSION foreign_key_checks = " . (int)$value);
+                    } elseif ($var === 'unique_checks') {
+                        @$this->connection->query("SET SESSION unique_checks = " . (int)$value);
+                    } elseif ($var === 'autocommit') {
+                        @$this->connection->query("SET SESSION autocommit = " . (int)$value);
+                    } elseif ($var === 'sql_mode') {
+                        @$this->connection->query("SET SESSION sql_mode = '" . $this->connection->real_escape_string((string)$value) . "'");
+                    } elseif ($var === 'wait_timeout') {
+                        @$this->connection->query("SET SESSION wait_timeout = " . (int)$value);
+                    } elseif ($var === 'time_zone') {
+                        @$this->connection->query("SET SESSION time_zone = '" . $this->connection->real_escape_string((string)$value) . "'");
+                    }
+                }
+                $this->original_session_vars = [];
+            }
+
             if (!empty($this->active_locks)) {
                 foreach (array_keys($this->active_locks) as $lock_name) {
                     $release_query = sprintf(
@@ -591,19 +696,23 @@ class OPTISTATE_DB_Wrapper
                 }
                 $this->active_locks = [];
             }
+
             if ($this->transaction_active) {
                 @$this->connection->rollback();
                 @$this->connection->autocommit(true);
                 $this->transaction_active = false;
                 $this->transaction_start_time = null;
             }
-            @$this->connection->close();
+            if ($this->owns_connection) {
+                @$this->connection->close();
+            }
             $this->connection = null;
             $this->connection_created_at = null;
             $this->query_count = 0;
             $this->last_ping = null;
         }
     }
+
     public function emergency_cleanup(): void
     {
         if ($this->transaction_active || !empty($this->active_locks)) {
@@ -633,7 +742,9 @@ class OPTISTATE_DB_Wrapper
                         }
                     } else {
                         $this->active_locks = [];
-                        @$this->connection->close();
+                        if ($this->owns_connection) {
+                            @$this->connection->close();
+                        }
                         $this->connection = null;
                     }
                 }
@@ -643,14 +754,16 @@ class OPTISTATE_DB_Wrapper
                     ["message" => $e->getMessage()]
                 );
                 $this->active_locks = [];
-                if ($this->connection !== null) {
-                    $this->connection = null;
+                if ($this->connection !== null && $this->owns_connection) {
+                    @$this->connection->close();
                 }
+                $this->connection = null;
             } finally {
                 $this->transaction_active = false;
                 $this->transaction_start_time = null;
             }
         }
+
         if ($this->connection !== null && $this->is_connection_alive()) {
             try {
                 @$this->connection->query("SET FOREIGN_KEY_CHECKS = 1");
@@ -658,7 +771,11 @@ class OPTISTATE_DB_Wrapper
             } catch (\Throwable $e) {
             }
         }
-        $this->close();
+        if ($this->connection !== null && $this->owns_connection) {
+            @$this->connection->close();
+        }
+        $this->connection = null;
+
         if (function_exists("gc_collect_cycles")) {
             gc_collect_cycles();
         }

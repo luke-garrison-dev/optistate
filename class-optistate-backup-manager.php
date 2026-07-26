@@ -11,6 +11,7 @@ class OPTISTATE_Backup_Manager
     private ?OPTISTATE_Backup_Engine $backup_engine = null;
     private ?OPTISTATE_Restore_Engine $restore_engine = null;
     private static ?bool $metadata_columns_checked = null;
+
     public function __construct(
         OPTISTATE $main_plugin,
         int $max_backups_setting = 3,
@@ -28,6 +29,7 @@ class OPTISTATE_Backup_Manager
             trailingslashit($upload_dir["basedir"]) .
             OPTISTATE::BACKUP_DIR_NAME .
             "/";
+
         if (false === get_transient("optistate_backup_table_check")) {
             $this->create_backup_metadata_table();
             $this->ensure_metadata_table_columns();
@@ -43,21 +45,26 @@ class OPTISTATE_Backup_Manager
                 OPTISTATE::DIR_CHECK_TIME
             );
         }
+
         $this->max_backups = max(1, min(10, intval($max_backups_setting)));
+
         $this->backup_engine = new OPTISTATE_Backup_Engine(
             $this->main_plugin,
             $this->backup_dir,
             $this->process_store,
             $this->wp_filesystem
         );
+
         $this->restore_engine = new OPTISTATE_Restore_Engine(
             $this->main_plugin,
             $this->backup_dir,
             $this->process_store,
             $this->wp_filesystem
         );
+
         $this->register_hooks();
     }
+
     private function register_hooks(): void
     {
         add_action("wp_ajax_optistate_create_backup", [
@@ -146,6 +153,11 @@ class OPTISTATE_Backup_Manager
             "ajax_check_restore_status",
         ]);
     }
+public function display_backup_permission_warning(): void {
+    echo '<div class="notice notice-error"><p>' . 
+         esc_html__('WP Optimal State: Backup directory is not writable. Please check file permissions.', 'optistate') . 
+         '</p></div>';
+}
     public function get_backups(): array
     {
         $cache_key = "optistate_backup_list_" . DB_NAME;
@@ -259,10 +271,12 @@ class OPTISTATE_Backup_Manager
         wp_cache_set($cache_key, $backup_list, 5 * MINUTE_IN_SECONDS);
         return $backup_list;
     }
+
     private function invalidate_backup_cache(): void
     {
         wp_cache_delete("optistate_backup_list_" . DB_NAME);
     }
+
     public function create_backup_silent(bool $is_scheduled = false): bool
     {
         $this->main_plugin->get_filesystem();
@@ -317,6 +331,7 @@ class OPTISTATE_Backup_Manager
             return false;
         }
     }
+
     public function ajax_create_backup(): void
     {
         try {
@@ -386,6 +401,7 @@ class OPTISTATE_Backup_Manager
             );
         }
     }
+
     public function ajax_check_backup_status(): void
     {
         check_ajax_referer("optistate_backup_nonce", "nonce");
@@ -465,6 +481,7 @@ class OPTISTATE_Backup_Manager
             );
         }
     }
+
     public function ajax_restore_backup(): void
     {
         try {
@@ -502,26 +519,15 @@ class OPTISTATE_Backup_Manager
                     )
                 ) {
                     OPTISTATE_Utils::deactivate_maintenance_mode();
-                    $class_instance->restore_engine->release_restore_lock();
                     $class_instance->process_store->delete(
                         "optistate_restore_in_progress"
                     );
                 }
             });
-            if (!$this->restore_engine->acquire_restore_lock(0)) {
-                OPTISTATE_Utils::send_json_error(
-                    __(
-                        "A restore process is already in progress (Lock Active). Please wait.",
-                        "optistate"
-                    )
-                );
-                return;
-            }
             $existing_process = $this->process_store->get(
                 "optistate_restore_in_progress"
             );
             if ($existing_process !== false) {
-                $this->restore_engine->release_restore_lock();
                 OPTISTATE_Utils::send_json_error(
                     __(
                         "A restore process is already running. Please wait for it to complete.",
@@ -530,15 +536,12 @@ class OPTISTATE_Backup_Manager
                 );
                 return;
             }
-            $this->process_store->set(
-                "optistate_restore_in_progress",
-                ["status" => "init", "start_time" => time()],
-                2 * HOUR_IN_SECONDS
-            );
+
             $filename = isset($_POST["filename"])
                 ? basename(sanitize_text_field(wp_unslash($_POST["filename"])))
                 : "";
             $filepath = trailingslashit($this->backup_dir) . $filename;
+
             if (!$this->wp_filesystem->exists($filepath)) {
                 throw new Exception(
                     __("Backup file not found: ", "optistate") .
@@ -551,6 +554,7 @@ class OPTISTATE_Backup_Manager
                     __("Backup file is too small or empty.", "optistate")
                 );
             }
+
             $verification = OPTISTATE_Backup_Utilities::verify_backup_file(
                 $this->wp_filesystem,
                 $filepath,
@@ -564,18 +568,22 @@ class OPTISTATE_Backup_Manager
                     )
                 );
             }
+
             if (!OPTISTATE_Utils::check_rate_limit("restore_backup", 60)) {
                 throw new Exception(
                     OPTISTATE_Utils::get_rate_limit_message(false)
                 );
             }
+
             $normalized_path = wp_normalize_path($filepath);
             $normalized_dir = wp_normalize_path($this->backup_dir);
             if (strpos($normalized_path, $normalized_dir) !== 0) {
                 throw new Exception(__("Invalid file path.", "optistate"));
             }
+
             $button_selector =
                 '.restore-backup[data-file="' . esc_attr($filename) . '"]';
+
             if (preg_match('/\.sql\.gz$/i', $filepath)) {
                 $upload_dir = wp_upload_dir();
                 $temp_dir =
@@ -636,6 +644,7 @@ class OPTISTATE_Backup_Manager
                 ]);
                 return;
             }
+
             $final_sql_path = $filepath;
             $settings = $this->main_plugin->settings_manager->get_persistent_settings();
             $security_active = empty($settings["disable_restore_security"]);
@@ -668,6 +677,7 @@ class OPTISTATE_Backup_Manager
                     );
                 }
             }
+
             $uploaded_file_info = ["security_disabled" => !$security_active];
             $response = $this->restore_engine->initiate_master_restore(
                 $final_sql_path,
@@ -676,10 +686,10 @@ class OPTISTATE_Backup_Manager
                 $uploaded_file_info,
                 get_current_user_id()
             );
+
             OPTISTATE_Utils::send_json_success($response);
         } catch (Throwable $e) {
             OPTISTATE_Utils::deactivate_maintenance_mode();
-            $this->restore_engine->release_restore_lock();
             $this->process_store->delete("optistate_restore_in_progress");
             $this->process_store->delete("optistate_last_restore_filename");
             if (
@@ -712,6 +722,7 @@ class OPTISTATE_Backup_Manager
             );
         }
     }
+
     public function ajax_delete_backup(): void
     {
         check_ajax_referer("optistate_backup_nonce", "nonce");
@@ -755,6 +766,7 @@ class OPTISTATE_Backup_Manager
             $table_name = $wpdb->prefix . "optistate_backup_metadata";
             $wpdb->delete($table_name, ["filename" => $filename], ["%s"]);
             delete_transient("optistate_backup_integrity_" . md5($filename));
+
             $files_to_delete = [$filepath];
             $success = true;
             $errors = [];
@@ -808,6 +820,7 @@ class OPTISTATE_Backup_Manager
             );
         }
     }
+
     public function ajax_check_restore_status(): void
     {
         check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
@@ -904,6 +917,7 @@ class OPTISTATE_Backup_Manager
             );
         }
     }
+
     public function ajax_check_manual_backup_on_load(): void
     {
         check_ajax_referer("optistate_backup_nonce", "nonce");
@@ -944,6 +958,7 @@ class OPTISTATE_Backup_Manager
             OPTISTATE_Utils::send_json_success(["status" => "error"]);
         }
     }
+
     public function run_manual_backup_chunk_worker(string $transient_key): void
     {
         $this->execute_backup_worker(
@@ -955,6 +970,7 @@ class OPTISTATE_Backup_Manager
             $transient_key . "_complete"
         );
     }
+
     public function run_silent_backup_chunk_worker(string $transient_key): void
     {
         $this->execute_backup_worker(
@@ -966,6 +982,7 @@ class OPTISTATE_Backup_Manager
             ""
         );
     }
+
     private function execute_backup_worker(
         string $transient_key,
         bool $is_silent,
@@ -977,40 +994,61 @@ class OPTISTATE_Backup_Manager
         wp_raise_memory_limit("admin");
         $original_time_limit = (int) ini_get("max_execution_time");
         OPTISTATE_Utils::safe_set_time_limit(240);
+
         if (
             empty($transient_key) ||
             strpos($transient_key, "optistate_backup_") !== 0
         ) {
             return;
         }
+
         if (connection_aborted()) {
             $this->cleanup_failed_backup($transient_key, "Connection aborted");
             return;
         }
+
         $initial_state = $this->process_store->get($transient_key);
         if ($initial_state === false) {
             return;
         }
+
         if (
             isset($initial_state["log_type"]) &&
             !empty($initial_state["log_type"])
         ) {
             $log_type = $initial_state["log_type"];
         }
+
         $result = $this->backup_engine->process_chunk(
             $transient_key,
             $is_silent
         );
+
         if ($result["status"] === "error") {
             return;
         }
+
         if ($result["status"] === "skipped") {
-            wp_schedule_single_event(time() + 5, $schedule_hook, [
-                $transient_key,
-            ]);
+            $state = $result["state"] ?? $this->process_store->get($transient_key);
+            if (!is_array($state)) {
+                $state = [];
+            }
+            $state['skipped_reschedules'] = ($state['skipped_reschedules'] ?? 0) + 1;
+            if ($state['skipped_reschedules'] > 30) {
+                $this->main_plugin->log_entry(
+                    "❌ Backup worker aborted: too many skipped reschedules",
+                    "error",
+                    $state['filename'] ?? 'unknown'
+                );
+                $this->process_store->delete($transient_key);
+                return;
+            }
+            $this->process_store->set($transient_key, $state, DAY_IN_SECONDS);
+            wp_schedule_single_event(time() + 5, $schedule_hook, [$transient_key]);
             OPTISTATE_Utils::safe_set_time_limit($original_time_limit);
             return;
         }
+
         if ($result["status"] === "done") {
             $updated_state = $result["state"];
             $updated_state["status"] = "compressing";
@@ -1020,24 +1058,26 @@ class OPTISTATE_Backup_Manager
                 DAY_IN_SECONDS
             );
             $this->enforce_backup_limit();
+
             $filepath = $updated_state['filepath'] ?? '';
-if (empty($filepath)) {
-    OPTISTATE_Utils::log_critical_error(
-        'Backup filepath missing in state when saving metadata',
-        [
-            'state_keys' => array_keys($updated_state),
-            'backup_filename' => $updated_state['filename'] ?? 'unknown'
-        ]
-    );
-} else {
-    $this->save_backup_metadata(
-        $filepath,
-        $updated_state['filename'] ?? '',
-        $updated_state['start_time'] ?? time(),
-        $updated_state['all_tables'] ?? [],
-        $updated_state['uncompressed_size'] ?? 0
-    );
-}
+            if (empty($filepath)) {
+                OPTISTATE_Utils::log_critical_error(
+                    'Backup filepath missing in state when saving metadata',
+                    [
+                        'state_keys' => array_keys($updated_state),
+                        'backup_filename' => $updated_state['filename'] ?? 'unknown'
+                    ]
+                );
+            } else {
+                $this->save_backup_metadata(
+                    $filepath,
+                    $updated_state['filename'] ?? '',
+                    $updated_state['start_time'] ?? time(),
+                    $updated_state['all_tables'] ?? [],
+                    $updated_state['uncompressed_size'] ?? 0
+                );
+            }
+
             $operation_text = $is_scheduled
                 ? sprintf(
                     __("Scheduled Backup Created (%s)", "optistate"),
@@ -1053,12 +1093,14 @@ if (empty($filepath)) {
                 $updated_state["filename"],
                 ["user_id" => $updated_state["user_id"] ?? null]
             );
+
             $this->process_store->delete($transient_key);
             if (!empty($updated_state["user_id"])) {
                 $this->process_store->delete(
                     "optistate_manual_backup_user_" . $updated_state["user_id"]
                 );
             }
+
             if ($is_scheduled) {
                 do_action(
                     "optistate_async_backup_complete",
@@ -1092,22 +1134,15 @@ if (empty($filepath)) {
                 [$transient_key]
             );
         }
+
         OPTISTATE_Utils::safe_set_time_limit($original_time_limit);
     }
+
     public function run_safety_backup_chunk_worker(
         string $master_restore_key
     ): void {
         $original_time_limit = (int) ini_get("max_execution_time");
         OPTISTATE_Utils::safe_set_time_limit(240);
-        if (!$this->restore_engine->acquire_restore_lock(5)) {
-            wp_schedule_single_event(
-                time() + 5,
-                "optistate_run_safety_backup_chunk",
-                [$master_restore_key]
-            );
-            return;
-        }
-        $lock_acquired = true;
         try {
             if (
                 empty($master_restore_key) ||
@@ -1115,17 +1150,17 @@ if (empty($filepath)) {
             ) {
                 return;
             }
+
             $master_state = $this->process_store->get($master_restore_key);
             if (
                 $master_state === false ||
                 !isset($master_state["safety_backup_key"])
             ) {
                 OPTISTATE_Utils::deactivate_maintenance_mode();
-                $this->restore_engine->release_restore_lock();
                 $this->process_store->delete("optistate_restore_in_progress");
-                $lock_acquired = false;
                 return;
             }
+
             $safety_backup_key = $master_state["safety_backup_key"];
             $safety_state = $this->process_store->get($safety_backup_key);
             if ($safety_state === false) {
@@ -1140,15 +1175,17 @@ if (empty($filepath)) {
                     10 * MINUTE_IN_SECONDS
                 );
                 OPTISTATE_Utils::deactivate_maintenance_mode();
-                $this->restore_engine->release_restore_lock();
                 $this->process_store->delete("optistate_restore_in_progress");
-                $lock_acquired = false;
+                $this->process_store->delete("optistate_last_restore_filename");
+                $this->process_store->delete("optistate_safety_backup");
                 return;
             }
+
             $result = $this->backup_engine->process_chunk(
                 $safety_backup_key,
                 true
             );
+
             if ($result["status"] === "error") {
                 $master_state["status"] = "error";
                 $master_state["message"] =
@@ -1160,13 +1197,36 @@ if (empty($filepath)) {
                     10 * MINUTE_IN_SECONDS
                 );
                 OPTISTATE_Utils::deactivate_maintenance_mode();
-                $this->restore_engine->release_restore_lock();
                 $this->process_store->delete("optistate_restore_in_progress");
                 $this->process_store->delete("optistate_last_restore_filename");
                 $this->process_store->delete("optistate_safety_backup");
-                $lock_acquired = false;
                 return;
             }
+
+            if ($result["status"] === "skipped") {
+                $master_state['skipped_reschedules'] = ($master_state['skipped_reschedules'] ?? 0) + 1;
+                if ($master_state['skipped_reschedules'] > 30) {
+                    $this->main_plugin->log_entry(
+                        "❌ Safety backup worker aborted: too many skipped reschedules",
+                        "error",
+                        $safety_state['filename'] ?? 'unknown'
+                    );
+                    $master_state["status"] = "error";
+                    $master_state["message"] = __("Safety backup skipped too many times.", "optistate");
+                    $this->process_store->set($master_restore_key, $master_state, 10 * MINUTE_IN_SECONDS);
+                    OPTISTATE_Utils::deactivate_maintenance_mode();
+                    $this->process_store->delete("optistate_restore_in_progress");
+                    return;
+                }
+                $this->process_store->set($master_restore_key, $master_state, 2 * HOUR_IN_SECONDS);
+                wp_schedule_single_event(
+                    time() + 5,
+                    "optistate_run_safety_backup_chunk",
+                    [$master_restore_key]
+                );
+                return;
+            }
+
             if ($result["status"] === "done") {
                 $safety_filepath = $result["state"]["filepath"] ?? "";
                 $safety_filename =
@@ -1174,10 +1234,11 @@ if (empty($filepath)) {
                 $verification = OPTISTATE_Backup_Utilities::verify_backup_file(
                     $this->wp_filesystem,
                     $safety_filepath,
-                    true,
+                    false,
                     true,
                     true
                 );
+
                 if (empty($verification["valid"])) {
                     $reason =
                         isset($verification["message"]) &&
@@ -1231,7 +1292,6 @@ if (empty($filepath)) {
                         10 * MINUTE_IN_SECONDS
                     );
                     OPTISTATE_Utils::deactivate_maintenance_mode();
-                    $this->restore_engine->release_restore_lock();
                     $this->process_store->delete(
                         "optistate_restore_in_progress"
                     );
@@ -1239,30 +1299,32 @@ if (empty($filepath)) {
                         "optistate_last_restore_filename"
                     );
                     $this->process_store->delete("optistate_safety_backup");
-                    $lock_acquired = false;
                     return;
                 }
+
                 $this->process_store->delete($safety_backup_key);
                 $this->enforce_backup_limit();
-$safety_state = $result['state'];
-$filepath = $safety_state['filepath'] ?? '';
-if (empty($filepath)) {
-    OPTISTATE_Utils::log_critical_error(
-        'Safety backup filepath missing in state when saving metadata',
-        [
-            'state_keys' => array_keys($safety_state),
-            'backup_filename' => $safety_state['filename'] ?? 'unknown'
-        ]
-    );
-} else {
-    $this->save_backup_metadata(
-        $filepath,
-        $safety_state['filename'] ?? '',
-        $safety_state['start_time'] ?? time(),
-        $safety_state['all_tables'] ?? [],
-        $safety_state['uncompressed_size'] ?? 0
-    );
-}
+
+                $safety_state = $result['state'];
+                $filepath = $safety_state['filepath'] ?? '';
+                if (empty($filepath)) {
+                    OPTISTATE_Utils::log_critical_error(
+                        'Safety backup filepath missing in state when saving metadata',
+                        [
+                            'state_keys' => array_keys($safety_state),
+                            'backup_filename' => $safety_state['filename'] ?? 'unknown'
+                        ]
+                    );
+                } else {
+                    $this->save_backup_metadata(
+                        $filepath,
+                        $safety_state['filename'] ?? '',
+                        $safety_state['start_time'] ?? time(),
+                        $safety_state['all_tables'] ?? [],
+                        $safety_state['uncompressed_size'] ?? 0
+                    );
+                }
+
                 $this->main_plugin->log_entry(
                     "💾 " .
                         sprintf(
@@ -1278,6 +1340,7 @@ if (empty($filepath)) {
                             $result["state"]["user_id"]
                     );
                 }
+
                 $master_state["status"] = "restore_starting";
                 $master_state["message"] = __(
                     "SAFETY BACKUP COMPLETE ....",
@@ -1311,13 +1374,8 @@ if (empty($filepath)) {
                     "optistate_run_safety_backup_chunk",
                     [$master_restore_key]
                 );
-            } elseif ($result["status"] === "skipped") {
-                wp_schedule_single_event(
-                    time() + 5,
-                    "optistate_run_safety_backup_chunk",
-                    [$master_restore_key]
-                );
             }
+
             $this->invalidate_backup_cache();
         } catch (Throwable $e) {
             $filename_to_log = isset($safety_state["filename"])
@@ -1364,29 +1422,18 @@ if (empty($filepath)) {
                 10 * MINUTE_IN_SECONDS
             );
             OPTISTATE_Utils::deactivate_maintenance_mode();
-            $this->restore_engine->release_restore_lock();
             $this->process_store->delete("optistate_restore_in_progress");
             $this->process_store->delete("optistate_last_restore_filename");
             $this->process_store->delete("optistate_safety_backup");
-            $lock_acquired = false;
         } finally {
             OPTISTATE_Utils::safe_set_time_limit($original_time_limit);
-            if ($lock_acquired) {
-                $this->restore_engine->release_restore_lock();
-            }
         }
     }
+
     public function run_restore_init_worker(string $master_restore_key): void
     {
         $original_time_limit = (int) ini_get("max_execution_time");
         OPTISTATE_Utils::safe_set_time_limit(300);
-        if (!$this->restore_engine->acquire_restore_lock(5)) {
-            wp_schedule_single_event(time() + 5, "optistate_run_restore_init", [
-                $master_restore_key,
-            ]);
-            return;
-        }
-        $lock_acquired = true;
         $class_instance = $this;
         register_shutdown_function(function () use (
             $class_instance,
@@ -1434,9 +1481,9 @@ if (empty($filepath)) {
                         "optistate_restore_in_progress"
                     );
                 }
-                $class_instance->restore_engine->release_restore_lock();
             }
         });
+
         try {
             if (
                 empty($master_restore_key) ||
@@ -1444,6 +1491,7 @@ if (empty($filepath)) {
             ) {
                 return;
             }
+
             $master_state = $this->process_store->get($master_restore_key);
             if (
                 $master_state === false ||
@@ -1451,11 +1499,12 @@ if (empty($filepath)) {
             ) {
                 OPTISTATE_Utils::deactivate_maintenance_mode();
                 $this->process_store->delete("optistate_restore_in_progress");
-                $lock_acquired = false;
                 return;
             }
+
             $target_data = $master_state["restore_target"];
             $log_filename = "unknown_file";
+
             try {
                 if ($target_data["type"] !== "temp_path") {
                     throw new Exception(
@@ -1465,6 +1514,7 @@ if (empty($filepath)) {
                         )
                     );
                 }
+
                 $temp_filename = $target_data["value"];
                 $temp_transient_key =
                     "optistate_temp_restore_" . $temp_filename;
@@ -1476,23 +1526,27 @@ if (empty($filepath)) {
                 }
                 $filepath = $file_info["path"];
                 $log_filename = $file_info["original_name"] ?? $temp_filename;
+
                 if (!$this->wp_filesystem->exists($filepath)) {
                     throw new Exception(
                         __("SQL file not found: ", "optistate") .
                             basename($filepath)
                     );
                 }
+
                 $uploaded_file_info = [
                     "temp_transient_to_delete" => $temp_transient_key,
                 ];
                 if (!empty($file_info["is_decompressed_backup"])) {
                     $uploaded_file_info["temp_filepath_to_delete"] = $filepath;
                 }
+
                 $restore_key = $this->restore_engine->initiate_chunked_restore(
                     $filepath,
                     $log_filename,
                     $uploaded_file_info
                 );
+
                 $master_state["status"] = "restore_running";
                 $master_state["message"] = __(
                     "RESTORING DATABASE ....",
@@ -1557,37 +1611,23 @@ if (empty($filepath)) {
                         "optistate_run_rollback_cron",
                         [$master_restore_key]
                     );
-                    $lock_acquired = false;
                 } else {
                     OPTISTATE_Utils::deactivate_maintenance_mode();
                     $this->process_store->delete(
                         "optistate_restore_in_progress"
                     );
-                    $this->restore_engine->release_restore_lock();
-                    $lock_acquired = false;
                 }
             }
         } finally {
-            if ($lock_acquired) {
-                $this->restore_engine->release_restore_lock();
-            }
             OPTISTATE_Utils::safe_set_time_limit($original_time_limit);
         }
     }
+
     public function run_restore_chunk_worker(string $master_restore_key): void
     {
         wp_raise_memory_limit("admin");
         $original_time_limit = (int) ini_get("max_execution_time");
         OPTISTATE_Utils::safe_set_time_limit(300);
-        if (!$this->restore_engine->acquire_restore_lock(5)) {
-            wp_schedule_single_event(
-                time() + 5,
-                "optistate_run_restore_chunk",
-                [$master_restore_key]
-            );
-            return;
-        }
-        $lock_acquired = true;
         $class_instance = $this;
         register_shutdown_function(function () use (
             $class_instance,
@@ -1651,35 +1691,34 @@ if (empty($filepath)) {
                         "optistate_last_restore_filename"
                     );
                 }
-                $class_instance->restore_engine->release_restore_lock();
             }
         });
+
         $restore_key = null;
         try {
             if (
                 empty($master_restore_key) ||
                 strpos($master_restore_key, "optistate_master_restore_") !== 0
             ) {
-                $this->restore_engine->release_restore_lock();
                 $this->process_store->delete("optistate_restore_in_progress");
-                $lock_acquired = false;
                 return;
             }
+
             $master_state = $this->process_store->get($master_restore_key);
             if (
                 $master_state === false ||
                 !isset($master_state["restore_key"])
             ) {
                 OPTISTATE_Utils::deactivate_maintenance_mode();
-                $this->restore_engine->release_restore_lock();
                 $this->process_store->delete("optistate_restore_in_progress");
-                $lock_acquired = false;
                 return;
             }
+
             $restore_key = $master_state["restore_key"];
             $result = $this->restore_engine->process_restore_chunk(
                 $restore_key
             );
+
             if ($result["status"] === "done") {
                 $this->process_store->delete($restore_key);
                 if (!empty($result["state"]["user_id"])) {
@@ -1688,6 +1727,7 @@ if (empty($filepath)) {
                             $result["state"]["user_id"]
                     );
                 }
+
                 $settings = $this->main_plugin->settings_manager->get_persistent_settings();
                 $two_factor_was_enabled = !empty(
                     $settings["enable_two_factor"]
@@ -1712,6 +1752,7 @@ if (empty($filepath)) {
                             "optistate"
                         );
                 }
+
                 $this->process_store->atomic_update(
                     $master_restore_key,
                     function ($current_master_state) use (
@@ -1729,6 +1770,7 @@ if (empty($filepath)) {
                         return $current_master_state;
                     }
                 );
+
                 $this->process_store->set(
                     "optistate_last_completed_restore",
                     [
@@ -1738,11 +1780,10 @@ if (empty($filepath)) {
                     ],
                     60
                 );
+
                 OPTISTATE_Utils::deactivate_maintenance_mode();
-                $this->restore_engine->release_restore_lock();
                 $this->process_store->delete("optistate_restore_in_progress");
                 $this->invalidate_backup_cache();
-                $lock_acquired = false;
             } else {
                 $this->process_store->set(
                     $restore_key,
@@ -1780,6 +1821,7 @@ if (empty($filepath)) {
                 $restore_state = false;
                 $log_filename = "unknown_restore";
             }
+
             OPTISTATE_Utils::log_critical_error(
                 "Restore chunk failed: " . $error_message,
                 [
@@ -1789,6 +1831,7 @@ if (empty($filepath)) {
                     "backup_file" => $log_filename,
                 ]
             );
+
             if ($restore_state) {
                 if (
                     !empty(
@@ -1818,7 +1861,9 @@ if (empty($filepath)) {
                     );
                 }
             }
+
             $this->cleanup_all_temp_sql_files();
+
             if (
                 $this->process_store->get("optistate_instant_rollback_tables")
             ) {
@@ -1870,7 +1915,6 @@ if (empty($filepath)) {
                     $this->process_store->delete($restore_key);
                 }
                 $this->process_store->delete("optistate_current_restore_key");
-                $lock_acquired = false;
             } else {
                 OPTISTATE_Utils::deactivate_maintenance_mode();
                 if (
@@ -1922,36 +1966,24 @@ if (empty($filepath)) {
                     ["details" => $e->getMessage()]
                 );
                 $this->restore_engine->close_restore_db();
-                $this->restore_engine->release_restore_lock();
                 $this->process_store->delete("optistate_restore_in_progress");
                 $this->process_store->delete("optistate_last_restore_filename");
                 if (isset($restore_key)) {
                     $this->process_store->delete($restore_key);
                 }
                 $this->process_store->delete("optistate_current_restore_key");
-                $lock_acquired = false;
             }
         } finally {
             OPTISTATE_Utils::safe_set_time_limit($original_time_limit);
-            if ($lock_acquired) {
-                $this->restore_engine->release_restore_lock();
-            }
         }
     }
+
     public function run_decompression_chunk_worker(
         string $decompression_key
     ): void {
         $original_time_limit = (int) ini_get("max_execution_time");
         OPTISTATE_Utils::safe_set_time_limit(180);
-        if (!$this->restore_engine->acquire_restore_lock(5)) {
-            wp_schedule_single_event(
-                time() + 5,
-                "optistate_run_decompression_chunk",
-                [$decompression_key]
-            );
-            return;
-        }
-        $lock_acquired = true;
+
         try {
             if (
                 empty($decompression_key) ||
@@ -1959,10 +1991,12 @@ if (empty($filepath)) {
             ) {
                 return;
             }
+
             $task_data = $this->process_store->get($decompression_key);
             if ($task_data === false) {
                 return;
             }
+
             try {
                 if (empty($task_data["space_check_passed"])) {
                     $space_check = OPTISTATE_Backup_Utilities::check_sufficient_disk_space(
@@ -1980,10 +2014,12 @@ if (empty($filepath)) {
                         2 * HOUR_IN_SECONDS
                     );
                 }
+
                 $result = $this->restore_engine->decompress_file(
                     $task_data["source_path"],
                     $task_data["dest_path"]
                 );
+
                 if ($result === "INCOMPLETE") {
                     $progress_key =
                         "optistate_decompress_" .
@@ -2017,6 +2053,7 @@ if (empty($filepath)) {
                     $log_filename = $task_data["log_filename"];
                     $button_selector = $task_data["button_selector"];
                     $uploaded_file_info = $task_data["uploaded_file_info"];
+
                     $settings = $this->main_plugin->settings_manager->get_persistent_settings();
                     $security_active = empty(
                         $settings["disable_restore_security"]
@@ -2055,6 +2092,7 @@ if (empty($filepath)) {
                             );
                         }
                     }
+
                     $user_id = isset($task_data["user_id"])
                         ? absint($task_data["user_id"])
                         : 0;
@@ -2065,6 +2103,7 @@ if (empty($filepath)) {
                         $uploaded_file_info,
                         $user_id
                     );
+
                     if (
                         !empty($task_data["is_upload"]) &&
                         !empty($task_data["uploaded_gz_path"])
@@ -2079,6 +2118,7 @@ if (empty($filepath)) {
                             );
                         }
                     }
+
                     $task_data["status"] = "restore_starting";
                     $task_data["master_restore_key"] =
                         $response["master_restore_key"];
@@ -2141,11 +2181,9 @@ if (empty($filepath)) {
             }
         } finally {
             OPTISTATE_Utils::safe_set_time_limit($original_time_limit);
-            if ($lock_acquired) {
-                $this->restore_engine->release_restore_lock();
-            }
         }
     }
+
     public function run_rollback_cron_job(
         ?string $master_restore_key = null
     ): void {
@@ -2192,11 +2230,11 @@ if (empty($filepath)) {
                         "failed",
                         HOUR_IN_SECONDS
                     );
-                    $class_instance->restore_engine->release_restore_lock();
                 } catch (Throwable $e) {
                 }
             }
         });
+
         try {
             $instant_rollback_tables = $this->process_store->get(
                 "optistate_instant_rollback_tables"
@@ -2207,7 +2245,6 @@ if (empty($filepath)) {
             ) {
                 try {
                     OPTISTATE_Utils::deactivate_maintenance_mode();
-                    $this->restore_engine->release_restore_lock();
                     $this->process_store->delete(
                         "optistate_restore_in_progress"
                     );
@@ -2215,10 +2252,12 @@ if (empty($filepath)) {
                 }
                 return;
             }
+
             OPTISTATE_Utils::log_critical_error(
                 "Attempting INSTANT rollback via cron (Safe Mode)..."
             );
             $result = $this->restore_engine->perform_rollback();
+
             if ($result) {
                 $this->process_store->delete(
                     "optistate_instant_rollback_tables"
@@ -2230,7 +2269,6 @@ if (empty($filepath)) {
                 );
                 OPTISTATE_Utils::deactivate_maintenance_mode();
                 $this->restore_engine->cleanup_old_tables_after_restore();
-                $this->restore_engine->release_restore_lock();
                 $this->process_store->delete("optistate_restore_in_progress");
                 $this->cleanup_all_temp_sql_files();
                 $this->main_plugin->log_entry(
@@ -2291,7 +2329,6 @@ if (empty($filepath)) {
                 );
                 try {
                     OPTISTATE_Utils::deactivate_maintenance_mode();
-                    $this->restore_engine->release_restore_lock();
                 } catch (Throwable $e) {
                 }
             }
@@ -2321,22 +2358,24 @@ if (empty($filepath)) {
             }
             try {
                 OPTISTATE_Utils::deactivate_maintenance_mode();
-                $this->restore_engine->release_restore_lock();
             } catch (Throwable $t) {
             }
         }
     }
+
     private function trigger_async_rollback(string $master_restore_key): void
     {
         wp_schedule_single_event(time(), "optistate_run_rollback_cron", [
             $master_restore_key,
         ]);
     }
+
     public function ajax_restore_from_file(): void
     {
         check_ajax_referer("optistate_backup_nonce", "nonce");
         $this->main_plugin->settings_manager->check_user_access();
         $this->ensure_required_tables_exist();
+
         if (is_multisite()) {
             OPTISTATE_Utils::send_json_error(
                 __(
@@ -2346,6 +2385,7 @@ if (empty($filepath)) {
             );
             return;
         }
+
         $step = isset($_POST["step"]) ? sanitize_key($_POST["step"]) : "init";
         if ($step !== "init") {
             OPTISTATE_Utils::send_json_error(
@@ -2353,6 +2393,7 @@ if (empty($filepath)) {
             );
             return;
         }
+
         $class_instance = $this;
         register_shutdown_function(function () use ($class_instance) {
             $error = error_get_last();
@@ -2365,26 +2406,16 @@ if (empty($filepath)) {
                 )
             ) {
                 OPTISTATE_Utils::deactivate_maintenance_mode();
-                $class_instance->restore_engine->release_restore_lock();
                 $class_instance->process_store->delete(
                     "optistate_restore_in_progress"
                 );
             }
         });
-        if (!$this->restore_engine->acquire_restore_lock(0)) {
-            OPTISTATE_Utils::send_json_error(
-                __(
-                    "A restore process is already in progress (Lock Active). Please wait.",
-                    "optistate"
-                )
-            );
-            return;
-        }
+
         $existing_process = $this->process_store->get(
             "optistate_restore_in_progress"
         );
         if ($existing_process !== false) {
-            $this->restore_engine->release_restore_lock();
             OPTISTATE_Utils::send_json_error(
                 __(
                     "A restore process is already running. Please wait for it to complete.",
@@ -2393,22 +2424,19 @@ if (empty($filepath)) {
             );
             return;
         }
-        $this->process_store->set(
-            "optistate_restore_in_progress",
-            ["status" => "init", "start_time" => time()],
-            2 * HOUR_IN_SECONDS
-        );
+
         try {
             $temp_filename = isset($_POST["temp_path"])
                 ? sanitize_text_field($_POST["temp_path"])
                 : "";
             $temp_filename = basename($temp_filename);
+
             if (!OPTISTATE_Utils::check_rate_limit("restore_backup", 60)) {
-                $this->restore_engine->release_restore_lock();
                 $this->process_store->delete("optistate_restore_in_progress");
                 OPTISTATE_Utils::send_rate_limit_error();
                 return;
             }
+
             if (
                 empty($temp_filename) ||
                 !preg_match(
@@ -2421,6 +2449,7 @@ if (empty($filepath)) {
                         " ($temp_filename)"
                 );
             }
+
             $file_info = $this->process_store->get(
                 "optistate_temp_restore_" . $temp_filename
             );
@@ -2436,17 +2465,20 @@ if (empty($filepath)) {
                     )
                 );
             }
+
             $filepath = $file_info["path"];
             if (!$this->wp_filesystem->exists($filepath)) {
                 throw new Exception(
                     __("Uploaded file not found.", "optistate")
                 );
             }
+
             $log_filename = $file_info["original_name"] ?? $temp_filename;
             $button_selector = "#optistate-restore-file-btn";
             $is_compressed =
                 !empty($file_info["is_compressed"]) ||
                 preg_match('/\.gz$/i', $filepath);
+
             if ($is_compressed) {
                 $upload_dir = wp_upload_dir();
                 $temp_dir =
@@ -2462,6 +2494,7 @@ if (empty($filepath)) {
                     : bin2hex(random_bytes(14));
                 $decompressed_path =
                     $temp_dir . "decompressed-" . $upload_id . ".sql";
+
                 try {
                     $decompression_key =
                         "optistate_decompress_task_" .
@@ -2511,6 +2544,7 @@ if (empty($filepath)) {
                 }
                 return;
             }
+
             $settings = $this->main_plugin->settings_manager->get_persistent_settings();
             $security_active = empty($settings["disable_restore_security"]);
             if ($security_active) {
@@ -2542,6 +2576,7 @@ if (empty($filepath)) {
                     );
                 }
             }
+
             $response = $this->restore_engine->initiate_master_restore(
                 $filepath,
                 $log_filename,
@@ -2553,10 +2588,10 @@ if (empty($filepath)) {
                 ],
                 get_current_user_id()
             );
+
             OPTISTATE_Utils::send_json_success($response);
         } catch (Throwable $e) {
             OPTISTATE_Utils::deactivate_maintenance_mode();
-            $this->restore_engine->release_restore_lock();
             $this->process_store->delete("optistate_restore_in_progress");
             $this->process_store->delete("optistate_last_restore_filename");
             $this->main_plugin->log_entry(
@@ -2584,10 +2619,12 @@ if (empty($filepath)) {
             );
         }
     }
+
     public function ajax_check_decompression_status(): void
     {
         check_ajax_referer("optistate_backup_nonce", "nonce");
         $this->main_plugin->settings_manager->check_user_access();
+
         $decompression_key = isset($_POST["decompression_key"])
             ? sanitize_text_field($_POST["decompression_key"])
             : "";
@@ -2602,6 +2639,7 @@ if (empty($filepath)) {
             );
             return;
         }
+
         try {
             $task_data = $this->process_store->get($decompression_key);
             if ($task_data === false) {
@@ -2615,6 +2653,7 @@ if (empty($filepath)) {
                 );
                 return;
             }
+
             $status = $task_data["status"];
             if ($status === "pending" || $status === "decompressing") {
                 OPTISTATE_Utils::send_json_success([
@@ -2661,10 +2700,12 @@ if (empty($filepath)) {
             );
         }
     }
+
     public function ajax_get_restore_status(): void
     {
         check_ajax_referer("optistate_backup_nonce", "nonce");
         $this->main_plugin->settings_manager->check_user_access();
+
         $master_restore_key = isset($_POST["master_restore_key"])
             ? sanitize_text_field($_POST["master_restore_key"])
             : "";
@@ -2678,6 +2719,7 @@ if (empty($filepath)) {
                 ["status" => "error"]
             );
         }
+
         try {
             $master_state = $this->process_store->get($master_restore_key);
             if ($master_state === false) {
@@ -2702,6 +2744,7 @@ if (empty($filepath)) {
                 }
                 return;
             }
+
             if (
                 $master_state["status"] === "restore_running" ||
                 $master_state["status"] === "rollback_starting"
@@ -2725,6 +2768,7 @@ if (empty($filepath)) {
                     $master_state = $error_state;
                 }
             }
+
             OPTISTATE_Utils::send_json_success([
                 "status" => $master_state["status"],
                 "message" => $master_state["message"],
@@ -2743,6 +2787,7 @@ if (empty($filepath)) {
             );
         }
     }
+
     private function cleanup_failed_backup(
         string $transient_key,
         string $reason = "",
@@ -2772,6 +2817,7 @@ if (empty($filepath)) {
             );
         }
     }
+
     private function cleanup_all_temp_sql_files(
         ?string $specific_file = null
     ): bool {
@@ -2786,6 +2832,7 @@ if (empty($filepath)) {
             $specific_file
         );
     }
+
     private function enforce_backup_limit(): void
     {
         $max_backups = (int) $this->max_backups;
@@ -2860,6 +2907,7 @@ if (empty($filepath)) {
         }
         $this->invalidate_backup_cache();
     }
+
     private function save_backup_metadata(
         string $filepath,
         string $filename,
@@ -2915,6 +2963,7 @@ if (empty($filepath)) {
             return false;
         }
     }
+
     private function quick_verify_backup_status(string $filepath): array
     {
         $filename = basename($filepath);
@@ -2923,6 +2972,7 @@ if (empty($filepath)) {
         if ($cached !== false) {
             return $cached;
         }
+
         $result = OPTISTATE_Backup_Utilities::verify_backup_file(
             $this->wp_filesystem,
             $filepath,
@@ -2930,9 +2980,12 @@ if (empty($filepath)) {
         );
         if ($result["valid"]) {
             set_transient($cache_key, $result, 24 * HOUR_IN_SECONDS);
+        } else {
+            set_transient($cache_key, $result, 10 * MINUTE_IN_SECONDS);
         }
         return $result;
     }
+
     private function clear_all_integrity_caches(): void
     {
         $files = $this->wp_filesystem->dirlist($this->backup_dir);
@@ -2944,6 +2997,7 @@ if (empty($filepath)) {
             }
         }
     }
+
     private function ensure_required_tables_exist(): void
     {
         global $wpdb;
@@ -2957,6 +3011,7 @@ if (empty($filepath)) {
             $this->main_plugin->recreate_core_data_table();
         }
     }
+
     private function ensure_metadata_table_columns(): void
     {
         if (self::$metadata_columns_checked === true) {
@@ -2981,12 +3036,27 @@ if (empty($filepath)) {
         }
         self::$metadata_columns_checked = true;
     }
+
     private function create_backup_metadata_table(): void
     {
         global $wpdb;
         $table_name = $wpdb->prefix . "optistate_backup_metadata";
         $charset_collate = $wpdb->get_charset_collate();
-        $sql = "CREATE TABLE IF NOT EXISTS {$table_name} (id bigint(20) NOT NULL AUTO_INCREMENT, filename varchar(255) NOT NULL, database_name varchar(64) NOT NULL, file_size bigint(20) NOT NULL, created_timestamp bigint(20) NOT NULL, created_at datetime NOT NULL, tables_list longtext DEFAULT NULL, PRIMARY KEY (id), UNIQUE KEY filename (filename), KEY created_timestamp (created_timestamp)) $charset_collate;";
+
+        $sql = "CREATE TABLE IF NOT EXISTS {$table_name} (
+            id bigint(20) NOT NULL AUTO_INCREMENT,
+            filename varchar(255) NOT NULL,
+            database_name varchar(64) NOT NULL,
+            file_size bigint(20) NOT NULL,
+            uncompressed_size bigint(20) DEFAULT NULL,
+            created_timestamp bigint(20) NOT NULL,
+            created_at datetime NOT NULL,
+            tables_list longtext DEFAULT NULL,
+            PRIMARY KEY (id),
+            UNIQUE KEY filename (filename),
+            KEY created_timestamp (created_timestamp)
+        ) $charset_collate;";
+
         if (!OPTISTATE_Utils::table_exists($table_name)) {
             $result = $wpdb->query($sql);
             if ($result === false) {
@@ -2997,6 +3067,7 @@ if (empty($filepath)) {
             }
             return;
         }
+
         if (!function_exists("dbDelta")) {
             require_once ABSPATH . "wp-admin/includes/upgrade.php";
         }
@@ -3009,6 +3080,7 @@ if (empty($filepath)) {
             );
         }
     }
+
     private function ensure_secure_backup_dir(): bool
     {
         $rules = [
@@ -3028,16 +3100,19 @@ if (empty($filepath)) {
             $rules
         );
     }
+
     public function protect_backup_directory(): void
     {
         $this->ensure_secure_backup_dir();
     }
+
     public function schedule_daily_cleanup(): void
     {
         if (!wp_next_scheduled("optistate_hourly_cleanup")) {
             wp_schedule_event(time(), "hourly", "optistate_hourly_cleanup");
         }
     }
+
     public function cleanup_old_temp_files_daily(): void
     {
         try {
@@ -3058,6 +3133,7 @@ if (empty($filepath)) {
             );
         }
     }
+
     public function display_rollback_status_notice(): void
     {
         $status = $this->process_store->get("optistate_rollback_status");
@@ -3065,6 +3141,7 @@ if (empty($filepath)) {
             return;
         }
         $this->process_store->delete("optistate_rollback_status");
+
         if ($status === "success") {
             echo '<div class="notice notice-success is-dismissible">';
             echo "<h3>" .
