@@ -7,7 +7,7 @@ if (!defined("ABSPATH")) {
 final class OPTISTATE
 {
     const PLUGIN_NAME = "WP Optimal State (Pro)";
-    const VERSION = "1.4.3";
+    const VERSION = "1.5.0";
     const OPTION_NAME = "optistate_settings";
     const NONCE_ACTION = "optistate_nonce";
     const BACKUP_NONCE_ACTION = "optistate_backup_nonce";

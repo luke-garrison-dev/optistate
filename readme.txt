@@ -5,7 +5,7 @@ Tags: speed, security, caching, cleanup, backup
 Requires at least: 5.5
 Requires PHP: 7.4
 Tested up to: 7.0
-Stable tag: 1.4.3
+Stable tag: 1.5.0
 License: GPL v2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -340,6 +340,13 @@ No usage statistics, analytics, or telemetry are collected.
 11. User Manual with detailed descriptions and explanations of each feature
 
 == Changelog ==
+
+= 1.5.0 - August 2026 =
+* New Performance Feature: Cron Manager.
+* New admin capability: Reset the 2FA settings of any user.
+* Refactored the Backup Manager class by splitting it into two smaller classes.
+* Refactored the Advanced Tools class by splitting it into two smaller classes.
+* Many bug fixes and improvements across several classes and functions.
 
 = 1.4.3 - July 2026 =
 * New Security Feature: Security Headers (basic + optional).

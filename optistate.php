@@ -3,7 +3,7 @@
  * Plugin Name: Optimal State
  * Plugin URI: https://spiritualseek.com/wp-content/uploads/2025/11/WP_Optimal_State_PRO_User_Manual.html
  * Description: Advanced WordPress optimization suite featuring integrated database cleanup and backup tools, page caching, and diagnostic tools.
- * Version: 1.4.3
+ * Version: 1.5.0
  * Author: Luke Garrison
  * Author URI: https://spiritualseek.com/wp-content/uploads/2025/11/WP_Optimal_State_PRO_User_Manual.html
  * Text Domain: optistate

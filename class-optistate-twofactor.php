@@ -585,9 +585,8 @@ class OPTISTATE_TwoFactor
                         $challenge["attempts"],
                         5 * MINUTE_IN_SECONDS
                     );
-                    $manual_url = esc_url(
-                        OPTISTATE_PLUGIN_URL . "manual/v1-4-3.html#ch-9-6-1"
-                    );
+                    $manual_base = plugin_dir_url(dirname(__FILE__)) . "manual/v" . OPTISTATE::VERSION . ".html";
+                    $manual_url = esc_url($manual_base . "#ch-9-6-1");
                     $error_message = sprintf(
                         __(
                             'Invalid two-factor authentication code.<br>Please try again.<br><br>Auth App unavailable?<br>➝ Enter a backup code.<br><br>Lost access to app and backup codes?<br>➝ <a href="%s" target="_blank">Read the manual</a> for recovery instructions.',
