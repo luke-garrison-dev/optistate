@@ -43,7 +43,6 @@ jQuery(document).ready(function($) {
         statsContainer: '#optistate-stats',
         dbSizeValue: '#optistate-db-size-value',
         cleanupItemsContainer: '#optistate-cleanup-items',
-        perfFeaturesContainer: '#optistate-performance-features-container',
         settingsLogContainer: '#optistate-settings-log',
         healthScoreWrapper: '#optistate-health-score-wrapper',
         healthScoreLoading: '#optistate-health-score-loading',
@@ -258,7 +257,13 @@ jQuery(document).ready(function($) {
             }
         };
     }
-
+    
+    function resetButton() {
+        isProcessing = false;
+        const $btn = $('#run-pagespeed-btn');
+        $btn.prop('disabled', false).html('<span class="dashicons dashicons-performance optst-adt-icn"></span> ' + __('Run Audit', 'optistate'));
+    }
+    
     function pollPageSpeedStatus(taskId) {
         const poller = createPoller({
             action: 'optistate_check_pagespeed_status',
@@ -458,7 +463,6 @@ jQuery(document).ready(function($) {
     const $statsContainer = $(SELECTORS.statsContainer);
     const $dbSizeValue = $(SELECTORS.dbSizeValue);
     const $cleanupItemsContainer = $(SELECTORS.cleanupItemsContainer);
-    const $perfFeaturesContainer = $(SELECTORS.perfFeaturesContainer);
     const $healthScoreWrapper = $(SELECTORS.healthScoreWrapper);
     const $refreshStatsBtn = $('#optistate-refresh-stats');
     const $autoOptimizeDays = $('#auto_optimize_days');
@@ -3250,146 +3254,140 @@ jQuery(document).ready(function($) {
         });
     }
 
-    function initPerformanceFeatures() {
-        loadPerformanceFeatures();
-        $perfFeaturesContainer.on('change', '.optistate-performance-feature .optistate-feature-toggle input', function() {
-            const $toggle = $(this);
-            const $wrapper = $toggle.closest('.optistate-performance-feature');
-            const $panel = $wrapper.find('.server-cache-settings-panel');
-            const $label = $toggle.closest('.optistate-feature-control').find('.optistate-toggle-label');
-            const isChecked = $toggle.is(':checked');
-            const feature = $wrapper.data('feature');
-            $label.text(isChecked ? __('✔ Active', 'optistate') : __('✗ Inactive', 'optistate'));
-            if (['server_caching', 'db_query_caching', 'bad_bot_blocker', 'font_optimization', 'security_headers'].includes(feature)) {
-                isChecked ? $panel.slideDown(300) : $panel.slideUp(300);
+    $(document).on('click', '.optistate-save-perf-btn', function() {
+        if (isProcessing) return;
+        const $btn = $(this);
+        const features = {};
+        const $tab = $btn.closest('.optistate-tab-content');
+        const $features = $tab.find('.optistate-performance-feature');
+
+        $features.each(function() {
+            const $feature = $(this);
+            const featureKey = $feature.data('feature');
+
+            if (featureKey === 'server_caching') {
+                features.server_caching = {
+                    enabled: $feature.find('.optistate-feature-toggle input').is(':checked'),
+                    lifetime: $feature.find('#server-caching-lifetime').val(),
+                    query_string_mode: $feature.find('#server-caching-query-mode').val(),
+                    exclude_urls: $feature.find('#server-caching-exclude-urls').val(),
+                    mobile_cache: $feature.find('#server-caching-mobile-toggle').is(':checked'),
+                    disable_cookie_check: $feature.find('#server-caching-disable-cookie-check').is(':checked'),
+                    custom_consent_cookie: $feature.find('#server-caching-custom-cookie').val(),
+                    auto_preload: $feature.find('#server-caching-auto-preload').is(':checked'),
+                    minify_html: $feature.find('#server-caching-minify-html').is(':checked')
+                };
+            } else if (featureKey === 'db_query_caching') {
+                features.db_query_caching = {
+                    enabled: $feature.find('.optistate-feature-toggle input').is(':checked'),
+                    ttl_main: $feature.find('.db-ttl-main').val(),
+                    ttl_secondary: $feature.find('.db-ttl-secondary').val(),
+                    exclude_post_types: $feature.find('.db-exclude-types').val(),
+                    exclude_ids: $feature.find('.db-exclude-ids').val(),
+                    flush_on_comments: $feature.find('.db-flush-comment').is(':checked'),
+                    flush_on_save: $feature.find('.db-flush-save').is(':checked')
+                };
+            } else if (featureKey === 'font_optimization') {
+                features.font_optimization = {
+                    enabled: $feature.find('.optistate-feature-toggle input').is(':checked'),
+                    async_google_fonts: $feature.find('.font-async-toggle').is(':checked'),
+                    display_swap: $feature.find('.font-swap-toggle').is(':checked'),
+                    preconnect: $feature.find('.font-preconnect-toggle').is(':checked'),
+                    remove_google_fonts: $feature.find('.font-remove-toggle').is(':checked')
+                };
+            } else if (featureKey === 'security_headers') {
+                features.security_headers = {
+                    enabled: $feature.find('.optistate-feature-toggle input').is(':checked'),
+                    optional_headers_enabled: $feature.find('#security-headers-optional').is(':checked')
+                };
+            } else if (featureKey === 'bad_bot_blocker') {
+                features.bad_bot_blocker = {
+                    enabled: $feature.find('.optistate-feature-toggle input').is(':checked'),
+                    user_agents: $feature.find('.bad-bot-list').val()
+                };
+            } else if (featureKey === 'cookie_banner_detection') {
+                features.cookie_banner_detection = $feature.find('.optistate-feature-toggle input').is(':checked');
+            } else {
+                const $select = $feature.find('.optistate-feature-select');
+                features[featureKey] = $select.length ? $select.val() : $feature.find('.optistate-feature-toggle input').is(':checked');
             }
-            if (feature === 'font_optimization' && isChecked) {
-                $panel.find('.font-remove-toggle').trigger('change');
-            }
         });
-        $perfFeaturesContainer.on('change', '.font-remove-toggle', function() {
-            const isRemoveChecked = $(this).is(':checked');
-            const $panel = $(this).closest('.server-cache-settings-panel');
-            const $otherOptions = $panel.find('input[type="checkbox"]').not(this);
-            $otherOptions.prop('disabled', isRemoveChecked).prop('checked', !isRemoveChecked && $otherOptions.prop('checked'));
-            $otherOptions.closest('.optistate-db-setting-row').toggleClass('os-option-disabled', isRemoveChecked);
-        });
-        $perfFeaturesContainer.on('input propertychange', '.bad-bot-list', function() {
-            const val = $(this).val();
-            const lines = val.split('\n');
-            if (lines.some(l => l.length > 150)) {
-                const start = this.selectionStart;
-                $(this).val(lines.map(l => l.substring(0, 150)).join('\n'));
-                this.setSelectionRange(start, start);
-            }
-        });
-        $perfFeaturesContainer.on('click', '.reset-bots-btn', function() {
-            showOPTISTATEModal(__('⟲ Confirm Reset', 'optistate'), __('Are you sure you want to reset the blocked list to defaults?', 'optistate'), function() {
-                $(this).closest('.os-feature-info-box').find('textarea').val(decodeURIComponent($(this).data('default')));
-            }.bind(this));
-        });
-        $('#save-performance-features-btn').on('click', function() {
-            if (isProcessing) return;
-            const $btn = $(this);
-            const features = {};
-            $('.optistate-performance-feature').each(function() {
-                const $feature = $(this);
-                const featureKey = $feature.data('feature');
-                if (featureKey === 'server_caching') {
-                    features.server_caching = {
-                        enabled: $feature.find('.optistate-feature-toggle input').is(':checked'),
-                        lifetime: $feature.find('#server-caching-lifetime').val(),
-                        query_string_mode: $feature.find('#server-caching-query-mode').val(),
-                        exclude_urls: $feature.find('#server-caching-exclude-urls').val(),
-                        mobile_cache: $feature.find('#server-caching-mobile-toggle').is(':checked'),
-                        disable_cookie_check: $feature.find('#server-caching-disable-cookie-check').is(':checked'),
-                        custom_consent_cookie: $feature.find('#server-caching-custom-cookie').val(),
-                        auto_preload: $feature.find('#server-caching-auto-preload').is(':checked'),
-                        minify_html: $feature.find('#server-caching-minify-html').is(':checked')
-                    };
-                } else if (featureKey === 'db_query_caching') {
-                    features.db_query_caching = {
-                        enabled: $feature.find('.optistate-feature-toggle input').is(':checked'),
-                        ttl_main: $feature.find('.db-ttl-main').val(),
-                        ttl_secondary: $feature.find('.db-ttl-secondary').val(),
-                        exclude_post_types: $feature.find('.db-exclude-types').val(),
-                        exclude_ids: $feature.find('.db-exclude-ids').val(),
-                        flush_on_comments: $feature.find('.db-flush-comment').is(':checked'),
-                        flush_on_save: $feature.find('.db-flush-save').is(':checked')
-                    };
-                } else if (featureKey === 'font_optimization') {
-                    features.font_optimization = {
-                        enabled: $feature.find('.optistate-feature-toggle input').is(':checked'),
-                        async_google_fonts: $feature.find('.font-async-toggle').is(':checked'),
-                        display_swap: $feature.find('.font-swap-toggle').is(':checked'),
-                        preconnect: $feature.find('.font-preconnect-toggle').is(':checked'),
-                        remove_google_fonts: $feature.find('.font-remove-toggle').is(':checked')
-                    };
-                } else if (featureKey === 'security_headers') {
-                    features.security_headers = {
-                        enabled: $feature.find('.optistate-feature-toggle input').is(':checked'),
-                        optional_headers_enabled: $feature.find('#security-headers-optional').is(':checked')
-                    };
-                } else if (featureKey === 'bad_bot_blocker') {
-                    features.bad_bot_blocker = {
-                        enabled: $feature.find('.optistate-feature-toggle input').is(':checked'),
-                        user_agents: $feature.find('.bad-bot-list').val()
-                    };
-                } else if (featureKey === 'cookie_banner_detection') {
-                    features.cookie_banner_detection = $feature.find('.optistate-feature-toggle input').is(':checked');
+        const tabId = $tab.attr('id');
+        let successMessage = __('Performance settings have been saved successfully.', 'optistate');
+        if (tabId === 'tab-caching') {
+            successMessage = __('Caching settings saved successfully.', 'optistate');
+        } else if (tabId === 'tab-tweaks') {
+            successMessage = __('Tweaks settings saved successfully.', 'optistate');
+        }
+        const loadingText = `✓ ${__('Saving...', 'optistate')}`;
+
+        isProcessing = true;
+        apiRequest({
+            action: 'optistate_save_performance_features',
+            data: {
+                features: features
+            },
+            $btn: $btn,
+            loadingText: loadingText,
+            errorMsg: __('Failed to save settings.', 'optistate'),
+            isSaveAction: true,
+            onSuccess: function(response) {
+                if (response?.success) {
+                    showToast(successMessage, 'success');
+                    debouncedLoadOptimizationLog();
                 } else {
-                    const $select = $feature.find('.optistate-feature-select');
-                    features[featureKey] = $select.length ? $select.val() : $feature.find('.optistate-feature-toggle input').is(':checked');
+                    showToast(response?.data?.message || __('Failed to save settings.', 'optistate'), 'error');
                 }
-            });
-            isProcessing = true;
-            apiRequest({
-                action: 'optistate_save_performance_features',
-                data: {
-                    features: features
-                },
-                $btn: $btn,
-                loadingText: `✓ ${__('Saving...', 'optistate')}`,
-                errorMsg: __('Failed to save settings.', 'optistate'),
-                isSaveAction: true,
-                onSuccess: function(response) {
-                    if (response?.success) {
-                        showToast(__('Performance settings have been saved successfully.', 'optistate'), 'success');
-                        debouncedLoadOptimizationLog();
-                    } else {
-                        showToast(response?.data?.message || __('Failed to save settings.', 'optistate'), 'error');
-                    }
-                }
-            }).always(() => {
-                isProcessing = false;
-            });
+            }
+        }).always(() => {
+            isProcessing = false;
         });
-    }
+    });
+
 
     function loadPerformanceFeatures() {
-        const $loading = $('#optistate-performance-features-loading');
-        const $actions = $('#optistate-performance-features-actions');
-        $loading.show();
-        $perfFeaturesContainer.hide();
+        const $loadingCaching = $('#optistate-caching-features-loading');
+        const $loadingTweaks = $('#optistate-tweaks-features-loading');
+        const $containerCaching = $('#optistate-caching-features-container');
+        const $containerTweaks = $('#optistate-tweaks-features-container');
+        const $actions = $('.optistate-features-actions');
+
+        $loadingCaching.show();
+        $loadingTweaks.show();
+        $containerCaching.hide();
+        $containerTweaks.hide();
         $actions.hide();
+
         $.post(optistate_Ajax.ajaxurl, {
             action: 'optistate_get_performance_features',
             nonce: optistate_Ajax.nonce
         }).done(function(response) {
             if (response?.success && response.data) {
-                displayPerformanceFeatures(response.data.definitions, response.data.features, response.data.revisions_defined, response.data.trash_days_defined, response.data.current_user_agent, response.data.cron_jobs);
-                $loading.hide();
-                $perfFeaturesContainer.fadeIn(300);
+                displayPerformanceFeatures(
+                    response.data.definitions,
+                    response.data.features,
+                    response.data.revisions_defined,
+                    response.data.trash_days_defined,
+                    response.data.current_user_agent,
+                    response.data.cron_jobs
+                );
+                $loadingCaching.hide();
+                $loadingTweaks.hide();
+                $containerCaching.fadeIn(300);
+                $containerTweaks.fadeIn(300);
                 $actions.fadeIn(300);
+                bindPerformanceEvents();
+
                 if ($('#server-caching-auto-preload').length) {
                     checkPreloadStatus();
                 }
             } else {
                 showToast(__('Failed to load performance features', 'optistate'), 'error');
             }
-        }).fail(() => {
+        }).fail(function() {
             showToast(__('Network error loading performance features', 'optistate'), 'error');
-            $loading.hide();
+            $loadingCaching.hide();
+            $loadingTweaks.hide();
         });
     }
 
@@ -3569,7 +3567,11 @@ jQuery(document).ready(function($) {
     });
 
     function displayPerformanceFeatures(definitions, currentSettings, revisions_defined, trash_days_defined, current_user_agent, cron_jobs) {
-        if (!definitions || !currentSettings) return showToast(__('Failed to load performance features: Invalid data structure', 'optistate'), 'error');
+        if (!definitions || !currentSettings) {
+            showToast(__('Failed to load performance features: Invalid data structure', 'optistate'), 'error');
+            return;
+        }
+
         const categoryMap = {
             'caching': {
                 label: 'Caching',
@@ -3592,6 +3594,7 @@ jQuery(document).ready(function($) {
                 icon: 'dashicons-editor-removeformatting'
             }
         };
+
         const featureCategory = {
             'server_caching': 'caching',
             'browser_caching': 'caching',
@@ -3616,7 +3619,9 @@ jQuery(document).ready(function($) {
             'feed_links': 'header',
             'post_relational_links': 'header'
         };
+
         const orderedCategories = ['caching', 'frontend', 'backend', 'security', 'header'];
+
         const grouped = {};
         orderedCategories.forEach(cat => {
             grouped[cat] = [];
@@ -3625,22 +3630,43 @@ jQuery(document).ready(function($) {
             const cat = featureCategory[key] || 'backend';
             if (grouped[cat]) grouped[cat].push(key);
         });
-        $perfFeaturesContainer.empty();
-        const fragment = document.createDocumentFragment();
+
+        $('#optistate-caching-features-container').empty();
+        $('#optistate-tweaks-features-container').empty();
+
+        const cachingFragment = document.createDocumentFragment();
+        const tweaksFragment = document.createDocumentFragment();
+
         orderedCategories.forEach(cat => {
             const featuresInGroup = grouped[cat] || [];
             if (featuresInGroup.length === 0) return;
-            const categoryInfo = categoryMap[cat];
-            const groupWrapper = document.createElement('div');
-            groupWrapper.className = 'optistate-perf-group os-mt-20';
-            groupWrapper.innerHTML = ` <div class="optistate-prf-hd"> <span class="dashicons ${categoryInfo.icon}" style="font-size:24px; width:24px; height:24px;"></span> <h3 style="margin:0;">${categoryInfo.label}</h3> </div> <div class="optistate-perf-group-body" style="margin-bottom:45px;"></div> `;
-            const body = groupWrapper.querySelector('.optistate-perf-group-body');
+
+            let groupWrapper = null;
+            let container = null;
+
+            if (cat === 'caching') {
+                container = document.createDocumentFragment();
+            } else {
+                const categoryInfo = categoryMap[cat];
+                groupWrapper = document.createElement('div');
+                groupWrapper.className = 'optistate-perf-group os-mt-20';
+                groupWrapper.innerHTML = `
+            <div class="optistate-prf-hd">
+                <span class="dashicons ${categoryInfo.icon}" style="font-size:24px; width:24px; height:24px;"></span>
+                <h3 style="margin:0;">${categoryInfo.label}</h3>
+            </div>
+            <div class="optistate-perf-group-body" style="margin-bottom:45px;"></div>
+        `;
+                container = groupWrapper.querySelector('.optistate-perf-group-body');
+            }
+
             featuresInGroup.forEach(key => {
                 const feature = definitions[key];
                 const currentValue = currentSettings.hasOwnProperty(key) ? currentSettings[key] : feature.default;
                 const impactClass = 'impact-' + (feature.impact || 'low');
                 const impactLabel = feature.impact === 'high' ? __('High Impact', 'optistate') : (feature.impact === 'medium' ? __('Medium Impact', 'optistate') : __('Low Impact', 'optistate'));
                 const warningBadge = !feature.safe ? `<span class="optistate-warning-badge">⚠️ ${__('TEST CAREFULLY', 'optistate')}</span>` : '';
+
                 let controlHTML = '';
                 if (feature.type === 'custom_caching' && key === 'server_caching') {
                     const s = currentSettings.server_caching || feature.default;
@@ -3664,7 +3690,167 @@ jQuery(document).ready(function($) {
                         'unique_cache': __('3. Unique Cache for All Query Strings (Advanced)', 'optistate')
                     };
                     const queryHTML = Object.entries(queryOpts).map(([val, label]) => `<option value="${val}" ${s.query_string_mode === val ? 'selected' : ''}>${label}</option>`).join('');
-                    controlHTML = ` <div class="optistate-feature-control main-toggle"> <label class="optistate-feature-toggle"><input type="checkbox" ${s.enabled ? 'checked' : ''}><span class="optistate-toggle-slider"></span></label> <span class="optistate-toggle-label">${s.enabled ? __('✔ Active', 'optistate') : __('✗ Inactive', 'optistate')}</span> </div> <div class="server-cache-settings-panel ${!s.enabled ? 'os-panel-hidden' : ''}"> <div class="server-cache-panel-grid"> <div class="cache-stats"> <h4 class="optistate-cache-refresh"> <span><span class="dashicons dashicons-chart-bar"></span> ${__('Cache Status', 'optistate')}</span> <button class="button button-small optistate-cache-updt" title="${__('Refresh Cache Stats', 'optistate')}"> <span class="dashicons dashicons-update"></span> </button> </h4> <div class="stat-item"><strong>${__('Cached Pages:', 'optistate')}</strong> <span id="cache-file-count">...</span></div> <div class="stat-item"><strong>${__('Mobile Pages:', 'optistate')}</strong> <span id="cache-mobile-file-count">...</span></div> <div class="stat-item"><strong>${__('Total Size:', 'optistate')}</strong> <span id="cache-total-size">...</span></div> <div class="stat-item"><strong>${__('Avg. Page Size:', 'optistate')}</strong> <span id="cache-average-size">...</span></div> <div class="stat-item"><strong>${__('Last Write:', 'optistate')}</strong> <span id="cache-last-write">...</span></div> <div class="stat-item"><strong>${__('Oldest Page:', 'optistate')}</strong> <span id="cache-oldest-page">...</span></div> <button type="button" class="button button-secondary" id="purge-page-cache-btn">${__('🗑️ Purge All Cache', 'optistate')}</button> <div class="optistate-minify-html-section"> <div class="optistate-auto-preload-section"> <label for="server-caching-minify-html"> <input type="checkbox" id="server-caching-minify-html" ${s.minify_html ? 'checked' : ''}> <strong>${__('🗜 Minify HTML before caching', 'optistate')}</strong> </label> <p class="description">${__('Removes extra whitespace and line breaks from cached HTML files.<br><br>Reduces file size by 10-30%.<br>Recommended for high-traffic sites.', 'optistate')}</p> </div> <div class="optistate-auto-preload-section"> <label for="server-caching-auto-preload"> <input type="checkbox" id="server-caching-auto-preload" ${s.auto_preload ? 'checked' : ''}> <strong>${__('🔋 Automatic Preload', 'optistate')}</strong> </label> <p class="optistate-auto-preload-description"> ${__('Automatically cache all pages from your sitemap after purging the cache.', 'optistate')}<br><br> ${__('⚠️ Disable any cookie consent plugin before launching preload, then reactivate it upon completion.', 'optistate')}<br><br> ${__('ℹ️ This process will take a while and consume storage space.', 'optistate')}<br><br> </p> <div id="preload-progress-wrapper" class="optistate-preload-progress-wrapper"> <div class="optistate-preload-header"> <strong>${__('⌛ Preloading in progress...', 'optistate')}</strong> <button type="button" class="button button-small" id="stop-preload-btn">${__('🟥 Stop', 'optistate')}</button> </div> <div class="optistate-preload-bar-container"><div id="preload-progress-bar" class="optistate-preload-bar">0%</div></div> <div id="preload-status-text" class="optistate-preload-status">${__('Initializing...', 'optistate')}</div> <br>${__('🛈 ︎You can leave this page, processing will continue.', 'optistate')} </div> </div> </div> </div> <div class="cache-settings"> <h4><span class="dashicons dashicons-admin-settings"></span> ${__('Configuration', 'optistate')}</h4> <div class="setting-item"> <label for="server-caching-lifetime">${__('🕒 Cache Lifetime', 'optistate')}</label> <select id="server-caching-lifetime">${lifetimeHTML}</select> ${__('How long a cached page is considered fresh. After this time, a new version will be generated.', 'optistate')} </div> <div class="setting-item"> <label for="server-caching-query-mode">${__('❓ Query String Handling', 'optistate')}</label> <select id="server-caching-query-mode">${queryHTML}</select> <div id="query-mode-descriptions" class="optistate-query-mode-descriptions"> <div class="query-mode-desc" data-mode="ignore_all"> ${__('Serves the same cached page for all query strings.', 'optistate')} <br><strong>${__('Example:', 'optistate')}</strong> <code>/page?utm=123</code> ${__('serves the cache for', 'optistate')} <code>/page</code>. <br><strong>${__('Best for:', 'optistate')}</strong> ${__('Simple websites that do not use pagination (e.g., ?page=2) and search functionality.', 'optistate')} <br><strong>${__('🗑️ ', 'optistate')}</strong> ${__('Changes will trigger a full cache purge.', 'optistate')} </div> <div class="query-mode-desc" data-mode="include_safe"> ${__('Creates unique cache files for "safe" parameters like pagination.', 'optistate')} <br><strong>${__('Example:', 'optistate')}</strong> <code>/blog?page=2</code> ${__('is cached separately from', 'optistate')} <code>/blog</code>. <br><strong>${__('Best for:', 'optistate')}</strong> ${__('Most websites, especially those with pagination, custom archives, search functionality.', 'optistate')} <br><strong>${__('🗑️ ', 'optistate')}</strong> ${__('Changes will trigger a full cache purge.', 'optistate')} </div> <div class="query-mode-desc" data-mode="unique_cache"> ${__('Creates a separate cache file for every unique query string.', 'optistate')} <br><strong>${__('Example:', 'optistate')}</strong> <code>/page?a=1</code> ${__('and', 'optistate')} <code>/page?a=2</code> ${__('are cached as two different files.', 'optistate')} <br><strong class="optistate-critical-warning">${__('⚠️ Warning:', 'optistate')}</strong> ${__('This can use a very large amount of disk space.', 'optistate')} <br><strong>${__('🗑 ', 'optistate')}</strong> ${__('Changes will trigger a full cache purge.', 'optistate')} </div> </div> </div> <div class="setting-item"> <label for="server-caching-exclude-urls">${__('⛔️ Exclude Pages from Cache', 'optistate')}</label> <textarea id="server-caching-exclude-urls" rows="6" placeholder="/cart/*&#10;/forum/*&#10;/my-custom-page/&#10;&#10;">${esc_html(s.exclude_urls || '')}</textarea> <div class="optistate-smart-exclusions-info"> <strong>${__('💡 Smart Exclusions Already Active:', 'optistate')}</strong> <p> ${__('🔸 Logged-in users (never cached)', 'optistate')}<br> ${__('🔸 Cart & checkout pages (auto-detected)', 'optistate')}<br> ${__('🔸 URLs with tracking parameters (utm_*, fbclid, gclid)', 'optistate')}<br> ${__('🔸 Search results & 404 pages', 'optistate')}<br> ${__('🔸 Cookie banners (see "Smart Cookie Detection" below)', 'optistate')} </p> </div> <div class="optistate-exclude-help"> ${__('Enter parts of URLs to exclude, one per line. Use * as a wildcard.', 'optistate')} </div> <div class="cache-examples"> <strong>${__('🎯 Examples:', 'optistate')}</strong>${__('🔹 To exclude the homepage:', 'optistate')} <code>/</code><br> ${__('🔹 To exclude a specific page:', 'optistate')} <code>/contact-us/</code><br> ${__('🔹 To exclude all blog posts:', 'optistate')} <code>/blog/*</code><br> ${__('🔹 To exclude member area:', 'optistate')} <code>/members/*</code><br> ${__('✖ Wrong:', 'optistate')} https://www.yourwebsite.com<code>/contact-us/</code> </div> </div> <div class="setting-item"> <label for="server-caching-mobile-toggle">${__('📲 Mobile-Specific Cache', 'optistate')}</label> <label class="optistate-checkbox-label"> <input type="checkbox" id="server-caching-mobile-toggle" ${s.mobile_cache ? 'checked' : ''}> ${__('Create separate cache files for mobile devices', 'optistate')} </label> ${__('Enable this ONLY if your site uses a different theme or layout for mobile visitors.', 'optistate')} </div> <div class="setting-item"> <label for="server-caching-disable-cookie-check" class="optistate-checkbox-label"> <input type="checkbox" id="server-caching-disable-cookie-check" ${s.disable_cookie_check ? 'checked' : ''}> <strong>${__('🛡️ Disable Cookie Checks (Maximum Performance)', 'optistate')}</strong> </label> ${__('Check this option to serve cached pages to all visitors immediately for maximum performance.', 'optistate')} <div class="optistate-warning-text"> <span class="optistate-warning-label">${__('⚠️ Warning:', 'optistate')}</span> ${__('Only check this option if your site does not have any cookie banner/consent management plugin.', 'optistate')} </div> </div> <div class="optistate-custom-cookie-section"> <label for="server-caching-custom-cookie" class="optistate-custom-cookie-label"> <strong>${__('⤷ Add Custom Consent Cookie', 'optistate')}</strong> </label> <input type="text" id="server-caching-custom-cookie" class="optistate-custom-cookie-input" value="${esc_attr(s.custom_consent_cookie || '')}" placeholder="${esc_attr(__('e.g., my_custom_consent_cookie', 'optistate'))}"> <p class="optistate-custom-cookie-help"> ${__('If your site uses a custom or unsupported cookie banner, add the cookie name here.', 'optistate')}<br> ${__('This will ensure non-cached pages are served until this cookie is present.', 'optistate')} </p> </div> </div> </div> <div class="optistate-feature-info-box"> <h4><span class="dashicons dashicons-shield-alt"></span> ${__('Smart Cookie Detection', 'optistate')}</h4> <p>${__('This caching feature automatically detects consent from major WordPress cookie plugins:', 'optistate')}</p> <ul> <li>${__('✔ Users WITH consent cookies ➝ see cached pages (fast).', 'optistate')}</li> <li>${__('✖ Users WITHOUT consent cookies ➝ see fresh pages (privacy-safe).', 'optistate')}</li> </ul> <p><strong>${__('Supported Plugins:', 'optistate')}</strong> CookieYes, Complianz, Cookie Notice, Borlabs Cookie, Real Cookie Banner, Cookiebot, OneTrust, Termly, Iubenda, GDPR Cookie Consent, and 10+ more.</p> <p class="optistate-tip-box os-mb-15"> <strong>${__('💡 Tip:', 'optistate')}</strong> ${__('If you don\'t use any consent plugin, select "Disable Cookie Checks" above for best performance.', 'optistate')} </p> </div> <div class="optistate-feature-info-box"> <h4><span class="dashicons dashicons-controls-play"></span> ${__('Automatic Cache Purging', 'optistate')}</h4> <p>${__('This feature is smart! You don\'t need to manually purge the cache every time you make a change. The cache for relevant pages is automatically cleared when you:', 'optistate')}</p> <ul> <li>${__('Publish or update a post or page.', 'optistate')}</li> <li>${__('Change a post\'s URL (slug).', 'optistate')}</li> <li>${__('Approve, unapprove, or delete a comment.', 'optistate')}</li> <li>${__('Update a category or tag.', 'optistate')}</li> <li>${__('Update your website menu.', 'optistate')}</li> </ul> </div> </div>`;
+                    controlHTML = `
+                    <div class="optistate-feature-control main-toggle">
+                        <label class="optistate-feature-toggle"><input type="checkbox" ${s.enabled ? 'checked' : ''}><span class="optistate-toggle-slider"></span></label>
+                        <span class="optistate-toggle-label">${s.enabled ? __('✔ Active', 'optistate') : __('✗ Inactive', 'optistate')}</span>
+                    </div>
+                    <div class="server-cache-settings-panel ${!s.enabled ? 'os-panel-hidden' : ''}">
+                        <div class="server-cache-panel-grid">
+                            <div class="cache-stats">
+                                <h4 class="optistate-cache-refresh">
+                                    <span><span class="dashicons dashicons-chart-bar"></span> ${__('Cache Status', 'optistate')}</span>
+                                    <button class="button button-small optistate-cache-updt" title="${__('Refresh Cache Stats', 'optistate')}">
+                                        <span class="dashicons dashicons-update"></span>
+                                    </button>
+                                </h4>
+                                <div class="stat-item"><strong>${__('Cached Pages:', 'optistate')}</strong> <span id="cache-file-count">...</span></div>
+                                <div class="stat-item"><strong>${__('Mobile Pages:', 'optistate')}</strong> <span id="cache-mobile-file-count">...</span></div>
+                                <div class="stat-item"><strong>${__('Total Size:', 'optistate')}</strong> <span id="cache-total-size">...</span></div>
+                                <div class="stat-item"><strong>${__('Avg. Page Size:', 'optistate')}</strong> <span id="cache-average-size">...</span></div>
+                                <div class="stat-item"><strong>${__('Last Write:', 'optistate')}</strong> <span id="cache-last-write">...</span></div>
+                                <div class="stat-item"><strong>${__('Oldest Page:', 'optistate')}</strong> <span id="cache-oldest-page">...</span></div>
+                                <button type="button" class="button button-secondary" id="purge-page-cache-btn">${__('🗑️ Purge All Cache', 'optistate')}</button>
+                                <div class="optistate-minify-html-section">
+                                    <div class="optistate-auto-preload-section">
+                                        <label for="server-caching-minify-html">
+                                            <input type="checkbox" id="server-caching-minify-html" ${s.minify_html ? 'checked' : ''}>
+                                            <strong>${__('🗜 Minify HTML before caching', 'optistate')}</strong>
+                                        </label>
+                                        <p class="description">${__('Removes extra whitespace and line breaks from cached HTML files.<br><br>Reduces file size by 10-30%.<br>Recommended for high-traffic sites.', 'optistate')}</p>
+                                    </div>
+                                    <div class="optistate-auto-preload-section">
+                                        <label for="server-caching-auto-preload">
+                                            <input type="checkbox" id="server-caching-auto-preload" ${s.auto_preload ? 'checked' : ''}>
+                                            <strong>${__('🔋 Automatic Preload', 'optistate')}</strong>
+                                        </label>
+                                        <p class="optistate-auto-preload-description">
+                                            ${__('Automatically cache all pages from your sitemap after purging the cache.', 'optistate')}<br><br>
+                                            ${__('⚠️ Disable any cookie consent plugin before launching preload, then reactivate it upon completion.', 'optistate')}<br><br>
+                                            ${__('ℹ️ This process will take a while and consume storage space.', 'optistate')}<br><br>
+                                        </p>
+                                        <div id="preload-progress-wrapper" class="optistate-preload-progress-wrapper">
+                                            <div class="optistate-preload-header">
+                                                <strong>${__('⌛ Preloading in progress...', 'optistate')}</strong>
+                                                <button type="button" class="button button-small" id="stop-preload-btn">${__('🟥 Stop', 'optistate')}</button>
+                                            </div>
+                                            <div class="optistate-preload-bar-container"><div id="preload-progress-bar" class="optistate-preload-bar">0%</div></div>
+                                            <div id="preload-status-text" class="optistate-preload-status">${__('Initializing...', 'optistate')}</div>
+                                            <br>${__('🛈 ︎You can leave this page, processing will continue.', 'optistate')}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="cache-settings">
+                                <h4><span class="dashicons dashicons-admin-settings"></span> ${__('Configuration', 'optistate')}</h4>
+                                <div class="setting-item">
+                                    <label for="server-caching-lifetime">${__('🕒 Cache Lifetime', 'optistate')}</label>
+                                    <select id="server-caching-lifetime">${lifetimeHTML}</select><div style="margin-top:5px;">
+                                    ${__('How long a cached page is considered fresh. After this time, a new version will be generated.', 'optistate')}</div>
+                                </div>
+                                <div class="setting-item">
+                                    <label for="server-caching-query-mode">${__('❓ Query String Handling', 'optistate')}</label>
+                                    <select id="server-caching-query-mode">${queryHTML}</select>
+<div id="query-mode-descriptions" class="optistate-query-mode-descriptions">
+    <div class="query-mode-desc" data-mode="ignore_all" style="display: ${s.query_string_mode === 'ignore_all' ? 'block' : 'none'};">
+        ${__('Serves the same cached page for all query strings.', 'optistate')}
+        <br><strong>${__('Example:', 'optistate')}</strong> <code>/page?utm=123</code> ${__('serves the cache for', 'optistate')} <code>/page</code>.
+        <br><strong>${__('Best for:', 'optistate')}</strong> ${__('Simple websites that do not use pagination (e.g., ?page=2) and search functionality.', 'optistate')}
+        <br><strong>${__('🗑️ ', 'optistate')}</strong> ${__('Changes will trigger a full cache purge.', 'optistate')}
+    </div>
+    <div class="query-mode-desc" data-mode="include_safe" style="display: ${s.query_string_mode === 'include_safe' ? 'block' : 'none'};">
+        ${__('Creates unique cache files for "safe" parameters like pagination.', 'optistate')}
+        <br><strong>${__('Example:', 'optistate')}</strong> <code>/blog?page=2</code> ${__('is cached separately from', 'optistate')} <code>/blog</code>.
+        <br><strong>${__('Best for:', 'optistate')}</strong> ${__('Most websites, especially those with pagination, custom archives, search functionality.', 'optistate')}
+        <br><strong>${__('🗑️ ', 'optistate')}</strong> ${__('Changes will trigger a full cache purge.', 'optistate')}
+    </div>
+    <div class="query-mode-desc" data-mode="unique_cache" style="display: ${s.query_string_mode === 'unique_cache' ? 'block' : 'none'};">
+        ${__('Creates a separate cache file for every unique query string.', 'optistate')}
+        <br><strong>${__('Example:', 'optistate')}</strong> <code>/page?a=1</code> ${__('and', 'optistate')} <code>/page?a=2</code> ${__('are cached as two different files.', 'optistate')}
+        <br><strong class="optistate-critical-warning">${__('⚠️ Warning:', 'optistate')}</strong> ${__('This can use a very large amount of disk space.', 'optistate')}
+        <br><strong>${__('🗑 ', 'optistate')}</strong> ${__('Changes will trigger a full cache purge.', 'optistate')}
+    </div>
+</div>
+                                </div>
+                                <div class="setting-item">
+                                    <label for="server-caching-exclude-urls">${__('⛔️ Exclude Pages from Cache', 'optistate')}</label>
+                                    <textarea id="server-caching-exclude-urls" rows="6" placeholder="/cart/*&#10;/forum/*&#10;/my-custom-page/&#10;&#10;">${esc_html(s.exclude_urls || '')}</textarea>
+                                    <div class="optistate-smart-exclusions-info">
+                                        <strong>${__('💡 Smart Exclusions Already Active:', 'optistate')}</strong>
+                                        <p>
+                                            ${__('🔸 Logged-in users (never cached)', 'optistate')}<br>
+                                            ${__('🔸 Cart & checkout pages (auto-detected)', 'optistate')}<br>
+                                            ${__('🔸 URLs with tracking parameters (utm_*, fbclid, gclid)', 'optistate')}<br>
+                                            ${__('🔸 Search results & 404 pages', 'optistate')}<br>
+                                            ${__('🔸 Cookie banners (see "Smart Cookie Detection" below)', 'optistate')}
+                                        </p>
+                                    </div>
+                                    <div class="optistate-exclude-help">
+                                        ${__('Enter parts of URLs to exclude, one per line. Use * as a wildcard.', 'optistate')}
+                                    </div>
+                                    <div class="cache-examples">
+                                        <strong>${__('🎯 Examples:', 'optistate')}</strong>${__('🔹 To exclude the homepage:', 'optistate')} <code>/</code><br>
+                                        ${__('🔹 To exclude a specific page:', 'optistate')} <code>/contact-us/</code><br>
+                                        ${__('🔹 To exclude all blog posts:', 'optistate')} <code>/blog/*</code><br>
+                                        ${__('🔹 To exclude member area:', 'optistate')} <code>/members/*</code><br>
+                                        ${__('✖ Wrong:', 'optistate')} https://www.yourwebsite.com<code>/contact-us/</code>
+                                    </div>
+                                </div>
+                                <div class="setting-item">
+                                    <label for="server-caching-mobile-toggle">${__('📲 Mobile-Specific Cache', 'optistate')}</label>
+                                    <label class="optistate-checkbox-label">
+                                        <input type="checkbox" id="server-caching-mobile-toggle" ${s.mobile_cache ? 'checked' : ''}>
+                                        ${__('Create separate cache files for mobile devices', 'optistate')}
+                                    </label>
+                                    ${__('Enable this ONLY if your site uses a different theme or layout for mobile visitors.', 'optistate')}
+                                </div>
+                                <div class="setting-item">
+                                    <label for="server-caching-disable-cookie-check" class="optistate-checkbox-label">
+                                        <input type="checkbox" id="server-caching-disable-cookie-check" ${s.disable_cookie_check ? 'checked' : ''}>
+                                        <strong>${__('🛡️ Disable Cookie Checks (Maximum Performance)', 'optistate')}</strong>
+                                    </label>
+                                    ${__('Check this option to serve cached pages to all visitors immediately for maximum performance.', 'optistate')}
+                                    <div class="optistate-warning-text">
+                                        <span class="optistate-warning-label">${__('⚠️ Warning:', 'optistate')}</span>
+                                        ${__('Only check this option if your site does not have any cookie banner/consent management plugin.', 'optistate')}
+                                    </div>
+                                </div>
+                                <div class="optistate-custom-cookie-section">
+                                    <label for="server-caching-custom-cookie" class="optistate-custom-cookie-label">
+                                        <strong>${__('⤷ Add Custom Consent Cookie', 'optistate')}</strong>
+                                    </label>
+                                    <input type="text" id="server-caching-custom-cookie" class="optistate-custom-cookie-input" value="${esc_attr(s.custom_consent_cookie || '')}" placeholder="${esc_attr(__('e.g., my_custom_consent_cookie', 'optistate'))}">
+                                    <p class="optistate-custom-cookie-help">
+                                        ${__('If your site uses a custom or unsupported cookie banner, add the cookie name here.', 'optistate')}<br>
+                                        ${__('This will ensure non-cached pages are served until this cookie is present.', 'optistate')}
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="optistate-feature-info-box">
+                            <h4><span class="dashicons dashicons-shield-alt"></span> ${__('Smart Cookie Detection', 'optistate')}</h4>
+                            <p>${__('This caching feature automatically detects consent from major WordPress cookie plugins:', 'optistate')}</p>
+                            <ul>
+                                <li>${__('✔ Users WITH consent cookies ➝ see cached pages (fast).', 'optistate')}</li>
+                                <li>${__('✖ Users WITHOUT consent cookies ➝ see fresh pages (privacy-safe).', 'optistate')}</li>
+                            </ul>
+                            <p><strong>${__('Supported Plugins:', 'optistate')}</strong> CookieYes, Complianz, Cookie Notice, Borlabs Cookie, Real Cookie Banner, Cookiebot, OneTrust, Termly, Iubenda, GDPR Cookie Consent, and 10+ more.</p>
+                            <p class="optistate-tip-box os-mb-15">
+                                <strong>${__('💡 Tip:', 'optistate')}</strong> ${__('If you don\'t use any consent plugin, select "Disable Cookie Checks" above for best performance.', 'optistate')}
+                            </p>
+                        </div>
+                        <div class="optistate-feature-info-box">
+                            <h4><span class="dashicons dashicons-controls-play"></span> ${__('Automatic Cache Purging', 'optistate')}</h4>
+                            <p>${__('This feature is smart! You don\'t need to manually purge the cache every time you make a change. The cache for relevant pages is automatically cleared when you:', 'optistate')}</p>
+                            <ul>
+                                <li>${__('Publish or update a post or page.', 'optistate')}</li>
+                                <li>${__('Change a post\'s URL (slug).', 'optistate')}</li>
+                                <li>${__('Approve, unapprove, or delete a comment.', 'optistate')}</li>
+                                <li>${__('Update a category or tag.', 'optistate')}</li>
+                                <li>${__('Update your website menu.', 'optistate')}</li>
+                            </ul>
+                        </div>
+                    </div>`;
                 } else if (feature.type === 'custom_db_caching' && key === 'db_query_caching') {
                     const s = {
                         enabled: false,
@@ -3688,7 +3874,71 @@ jQuery(document).ready(function($) {
                         604800: __('1 Week', 'optistate')
                     };
                     const renderTTL = (val) => Object.entries(ttlOpts).map(([v, l]) => `<option value="${v}" ${String(val) === v ? 'selected' : ''}>${l}</option>`).join('');
-                    controlHTML = ` <div class="optistate-feature-control main-toggle" ${feature.disabled ? 'class="os-opacity-50"' : ''}> <label class="optistate-feature-toggle"><input type="checkbox" ${s.enabled ? 'checked' : ''} ${feature.disabled ? 'disabled' : ''}><span class="optistate-toggle-slider"></span></label> <span class="optistate-toggle-label">${s.enabled ? __('✔ Active', 'optistate') : __('✗ Inactive', 'optistate')}</span> </div> <div class="server-cache-settings-panel ${!s.enabled ? 'os-panel-hidden' : ''}"> <div class="server-cache-panel-grid"> <div class="cache-settings"> <h4><span class="dashicons dashicons-clock"></span> ${__('Cache Lifetimes (TTL)', 'optistate')}</h4> <div class="setting-item"> <label> ${__('Main Query TTL', 'optistate')} <span class="optistate-tooltip" title="${esc_attr(__('Main queries are your homepage, single posts/pages, and archive pages. Longer TTL = better performance, but content updates won\'t appear until cache expires.', 'optistate'))}">ⓘ</span> </label> <select class="db-ttl-main os-mb-10">${renderTTL(s.ttl_main)}</select> <span class="optistate-tip">${__('Tip: Set to 12-24 hours for mostly static sites, 1-4 hours for frequently updated sites.', 'optistate')}</span> </div> <div class="setting-item"> <label> ${__('Secondary Query TTL', 'optistate')} <span class="optistate-tooltip" title="${esc_attr(__('Secondary queries include widgets, recent posts, related posts, and custom queries. These can usually be cached longer as they\'re less critical.', 'optistate'))}">ⓘ</span> </label> <select class="db-ttl-secondary os-mb-10">${renderTTL(s.ttl_secondary)}</select> <span class="optistate-tip">${__('Tip: Secondary queries can typically be cached 2-3x longer than main queries.', 'optistate')}</span> </div> </div> <div class="cache-settings"> <h4><span class="dashicons dashicons-filter"></span> ${__('Exclusions & Triggers', 'optistate')}</h4> <div class="setting-item"> <label>${__('⛔️ Exclude Post Types', 'optistate')}</label> <input type="text" class="db-exclude-types os-input-full-mb" value="${esc_attr(s.exclude_post_types)}" placeholder="e.g., shop_order,ticket,product"><br> <span class="optistate-tip">${__('Post types that should never be cached (comma-separated). Exclude dynamic content like orders, tickets, or forms.<br>Default exclusions: shop_order, ticket, product.', 'optistate')}</span> </div> <div class="setting-item"> <label>${__('⛔️ Exclude Post IDs', 'optistate')}</label> <input type="text" class="db-exclude-ids os-input-full-mb" value="${esc_attr(s.exclude_ids)}" placeholder="e.g., 42,105,207"><br> <span class="optistate-tip">${__('Specific post/page IDs whose queries should never be cached (comma-separated). Useful for highly dynamic single posts, e-commerce product pages, or members-only content.', 'optistate')}</span> </div> <div class="setting-item"> <label class="optistate-checkbox-label"> <input type="checkbox" class="db-flush-save" ${s.flush_on_save ? 'checked' : ''}> ${__('💾 Flush on Post Save/Update', 'optistate')} </label> <span class="optistate-tip os-mt-10">${__('When enabled, the entire query cache clears whenever a post or page is published, updated, or deleted. Ensures visitors always see fresh content. Recommended for most sites. Disable only on very high-traffic sites where post updates are very frequent.', 'optistate')}</span> </div> <div class="setting-item"> <label class="optistate-checkbox-label"> <input type="checkbox" class="db-flush-comment" ${s.flush_on_comments ? 'checked' : ''}> ${__('🗨️ Flush on New Comment', 'optistate')} </label> <span class="optistate-tip os-mt-10">${__('When enabled, the entire query cache clears whenever a comment is posted or moderated. Ensures fresh comment counts and lists.<br>Recommended for blogs and community sites. Disable if you have heavy comment traffic and use AJAX for comments.', 'optistate')}</span> </div> </div> </div> <div class="os-p-15-10-9"> <strong>💡 ${__('How Query Caching Works:', 'optistate')}</strong> <ul class="os-m-8-0-0-15"> <li>${__('Caches database query results in Redis/Memcached, reducing MySQL load.', 'optistate')}</li> <li>${__('Main queries = Primary page content; Secondary queries = Sidebars, widgets, loops.', 'optistate')}</li> <li>${__('Cache automatically clears when posts/pages are updated.', 'optistate')}</li> <li>${__('Requires persistent object cache (Redis/Memcached) to function.', 'optistate')}</li> <li>${__('No caching occurs for logged-in users, admins, or during POST requests', 'optistate')}</li> </ul> </div> </div>`;
+                    controlHTML = `
+                    <div class="optistate-feature-control main-toggle" ${feature.disabled ? 'class="os-opacity-50"' : ''}>
+                        <label class="optistate-feature-toggle"><input type="checkbox" ${s.enabled ? 'checked' : ''} ${feature.disabled ? 'disabled' : ''}><span class="optistate-toggle-slider"></span></label>
+                        <span class="optistate-toggle-label">${s.enabled ? __('✔ Active', 'optistate') : __('✗ Inactive', 'optistate')}</span>
+                    </div>
+                    <div class="server-cache-settings-panel ${!s.enabled ? 'os-panel-hidden' : ''}">
+                        <div class="server-cache-panel-grid">
+                            <div class="cache-settings">
+                                <h4><span class="dashicons dashicons-clock"></span> ${__('Cache Lifetimes (TTL)', 'optistate')}</h4>
+                                <div class="setting-item">
+                                    <label>
+                                        ${__('Main Query TTL', 'optistate')}
+                                        <span class="optistate-tooltip" title="${esc_attr(__('Main queries are your homepage, single posts/pages, and archive pages. Longer TTL = better performance, but content updates won\'t appear until cache expires.', 'optistate'))}">ⓘ</span>
+                                    </label>
+                                    <select class="db-ttl-main os-mb-10">${renderTTL(s.ttl_main)}</select>
+                                    <span class="optistate-tip">${__('Tip: Set to 12-24 hours for mostly static sites, 1-4 hours for frequently updated sites.', 'optistate')}</span>
+                                </div>
+                                <div class="setting-item">
+                                    <label>
+                                        ${__('Secondary Query TTL', 'optistate')}
+                                        <span class="optistate-tooltip" title="${esc_attr(__('Secondary queries include widgets, recent posts, related posts, and custom queries. These can usually be cached longer as they\'re less critical.', 'optistate'))}">ⓘ</span>
+                                    </label>
+                                    <select class="db-ttl-secondary os-mb-10">${renderTTL(s.ttl_secondary)}</select>
+                                    <span class="optistate-tip">${__('Tip: Secondary queries can typically be cached 2-3x longer than main queries.', 'optistate')}</span>
+                                </div>
+                            </div>
+                            <div class="cache-settings">
+                                <h4><span class="dashicons dashicons-filter"></span> ${__('Exclusions & Triggers', 'optistate')}</h4>
+                                <div class="setting-item">
+                                    <label>${__('⛔️ Exclude Post Types', 'optistate')}</label>
+                                    <input type="text" class="db-exclude-types os-input-full-mb" value="${esc_attr(s.exclude_post_types)}" placeholder="e.g., shop_order,ticket,product"><br>
+                                    <span class="optistate-tip">${__('Post types that should never be cached (comma-separated). Exclude dynamic content like orders, tickets, or forms.<br>Default exclusions: shop_order, ticket, product.', 'optistate')}</span>
+                                </div>
+                                <div class="setting-item">
+                                    <label>${__('⛔️ Exclude Post IDs', 'optistate')}</label>
+                                    <input type="text" class="db-exclude-ids os-input-full-mb" value="${esc_attr(s.exclude_ids)}" placeholder="e.g., 42,105,207"><br>
+                                    <span class="optistate-tip">${__('Specific post/page IDs whose queries should never be cached (comma-separated). Useful for highly dynamic single posts, e-commerce product pages, or members-only content.', 'optistate')}</span>
+                                </div>
+                                <div class="setting-item">
+                                    <label class="optistate-checkbox-label">
+                                        <input type="checkbox" class="db-flush-save" ${s.flush_on_save ? 'checked' : ''}>
+                                        ${__('💾 Flush on Post Save/Update', 'optistate')}
+                                    </label>
+                                    <span class="optistate-tip os-mt-10">${__('When enabled, the entire query cache clears whenever a post or page is published, updated, or deleted. Ensures visitors always see fresh content. Recommended for most sites. Disable only on very high-traffic sites where post updates are very frequent.', 'optistate')}</span>
+                                </div>
+                                <div class="setting-item">
+                                    <label class="optistate-checkbox-label">
+                                        <input type="checkbox" class="db-flush-comment" ${s.flush_on_comments ? 'checked' : ''}>
+                                        ${__('🗨️ Flush on New Comment', 'optistate')}
+                                    </label>
+                                    <span class="optistate-tip os-mt-10">${__('When enabled, the entire query cache clears whenever a comment is posted or moderated. Ensures fresh comment counts and lists.<br>Recommended for blogs and community sites. Disable if you have heavy comment traffic and use AJAX for comments.', 'optistate')}</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="os-p-15-10-9">
+                            <strong>💡 ${__('How Query Caching Works:', 'optistate')}</strong>
+                            <ul class="os-m-8-0-0-15">
+                                <li>${__('Caches database query results in Redis/Memcached, reducing MySQL load.', 'optistate')}</li>
+                                <li>${__('Main queries = Primary page content; Secondary queries = Sidebars, widgets, loops.', 'optistate')}</li>
+                                <li>${__('Cache automatically clears when posts/pages are updated.', 'optistate')}</li>
+                                <li>${__('Requires persistent object cache (Redis/Memcached) to function.', 'optistate')}</li>
+                                <li>${__('No caching occurs for logged-in users, admins, or during POST requests', 'optistate')}</li>
+                            </ul>
+                        </div>
+                    </div>`;
                 } else if (feature.type === 'custom_font_optimization' && key === 'font_optimization') {
                     const s = {
                         enabled: false,
@@ -3707,7 +3957,46 @@ jQuery(document).ready(function($) {
                     }
                     const otherDisabled = s.remove_google_fonts ? 'disabled' : '';
                     const otherStyle = s.remove_google_fonts ? 'os-option-disabled' : '';
-                    controlHTML = ` <div class="optistate-feature-control main-toggle"> <label class="optistate-feature-toggle"><input type="checkbox" ${s.enabled ? 'checked' : ''}><span class="optistate-toggle-slider"></span></label> <span class="optistate-toggle-label">${s.enabled ? __('✔ Active', 'optistate') : __('✗ Inactive', 'optistate')}</span> </div> <div class="server-cache-settings-panel ${!s.enabled ? 'os-panel-hidden' : ''}"> <div class="server-cache-panel-grid"> <div class="cache-settings os-full-width"> <h4><span class="dashicons dashicons-editor-textcolor"></span> ${__('Optimization Strategy', 'optistate')}</h4> <div class="setting-item optistate-db-setting-row ${otherStyle}"> <label class="optistate-checkbox-label"> <input type="checkbox" class="font-async-toggle" ${s.async_google_fonts ? 'checked' : ''} ${otherDisabled}> <strong>${__('⚡ Async Google Fonts (Eliminate Render Blocking)', 'optistate')}</strong> </label> <span class="optistate-tip os-mt-10">${__('Loads fonts in the background so they don\'t stop the page from rendering. This significantly improves "First Contentful Paint" (FCP) and PageSpeed scores.', 'optistate')}</span> </div> <div class="setting-item optistate-db-setting-row ${otherStyle}"> <label class="optistate-checkbox-label"> <input type="checkbox" class="font-swap-toggle" ${s.display_swap ? 'checked' : ''} ${otherDisabled}> <strong>${__('👁️ Force "display=swap"', 'optistate')}</strong> </label> <span class="optistate-tip os-mt-10">${__('Ensures text is visible immediately using a system font, then swaps to the custom font once loaded. Prevents the "Flash of Invisible Text" (FOIT).', 'optistate')}</span> </div> <div class="setting-item optistate-db-setting-row ${otherStyle}"> <label class="optistate-checkbox-label"> <input type="checkbox" class="font-preconnect-toggle" ${s.preconnect ? 'checked' : ''} ${otherDisabled}> <strong>${__('🔌 Preconnect to Font CDN', 'optistate')}</strong> </label> <span class="optistate-tip os-mt-10">${__('Establishes an early connection to fonts.gstatic.com, reducing the latency when the browser starts downloading fonts.', 'optistate')}</span> </div> <div class="setting-item os-p-15-10-9" style="background: #fff5f5; border-left-color: #d63638;"> <label class="optistate-checkbox-label"> <input type="checkbox" class="font-remove-toggle" ${s.remove_google_fonts ? 'checked' : ''}> <strong class="os-color-danger-bold">${__('🚫 Remove Google Fonts', 'optistate')}</strong> </label> <span class="optistate-tip os-mt-10">${__('Completely stops Google Fonts from loading. Best for privacy and raw performance, but will change your website\'s design to use system fonts.', 'optistate')}</span> </div> </div> </div> </div>`;
+                    controlHTML = `
+                    <div class="optistate-feature-control main-toggle">
+                        <label class="optistate-feature-toggle"><input type="checkbox" ${s.enabled ? 'checked' : ''}><span class="optistate-toggle-slider"></span></label>
+                        <span class="optistate-toggle-label">${s.enabled ? __('✔ Active', 'optistate') : __('✗ Inactive', 'optistate')}</span>
+                    </div>
+                    <div class="server-cache-settings-panel ${!s.enabled ? 'os-panel-hidden' : ''}">
+                        <div class="server-cache-panel-grid">
+                            <div class="cache-settings os-full-width">
+                                <h4><span class="dashicons dashicons-editor-textcolor"></span> ${__('Optimization Strategy', 'optistate')}</h4>
+                                <div class="setting-item optistate-db-setting-row ${otherStyle}">
+                                    <label class="optistate-checkbox-label">
+                                        <input type="checkbox" class="font-async-toggle" ${s.async_google_fonts ? 'checked' : ''} ${otherDisabled}>
+                                        <strong>${__('⚡ Async Google Fonts (Eliminate Render Blocking)', 'optistate')}</strong>
+                                    </label>
+                                    <span class="optistate-tip os-mt-10">${__('Loads fonts in the background so they don\'t stop the page from rendering. This significantly improves "First Contentful Paint" (FCP) and PageSpeed scores.', 'optistate')}</span>
+                                </div>
+                                <div class="setting-item optistate-db-setting-row ${otherStyle}">
+                                    <label class="optistate-checkbox-label">
+                                        <input type="checkbox" class="font-swap-toggle" ${s.display_swap ? 'checked' : ''} ${otherDisabled}>
+                                        <strong>${__('👁️ Force "display=swap"', 'optistate')}</strong>
+                                    </label>
+                                    <span class="optistate-tip os-mt-10">${__('Ensures text is visible immediately using a system font, then swaps to the custom font once loaded. Prevents the "Flash of Invisible Text" (FOIT).', 'optistate')}</span>
+                                </div>
+                                <div class="setting-item optistate-db-setting-row ${otherStyle}">
+                                    <label class="optistate-checkbox-label">
+                                        <input type="checkbox" class="font-preconnect-toggle" ${s.preconnect ? 'checked' : ''} ${otherDisabled}>
+                                        <strong>${__('🔌 Preconnect to Font CDN', 'optistate')}</strong>
+                                    </label>
+                                    <span class="optistate-tip os-mt-10">${__('Establishes an early connection to fonts.gstatic.com, reducing the latency when the browser starts downloading fonts.', 'optistate')}</span>
+                                </div>
+                                <div class="setting-item os-p-15-10-9" style="background: #fff5f5; border-left-color: #d63638;">
+                                    <label class="optistate-checkbox-label">
+                                        <input type="checkbox" class="font-remove-toggle" ${s.remove_google_fonts ? 'checked' : ''}>
+                                        <strong class="os-color-danger-bold">${__('🚫 Remove Google Fonts', 'optistate')}</strong>
+                                    </label>
+                                    <span class="optistate-tip os-mt-10">${__('Completely stops Google Fonts from loading. Best for privacy and raw performance, but will change your website\'s design to use system fonts.', 'optistate')}</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>`;
                 } else if (feature.type === 'custom_security_headers' && key === 'security_headers') {
                     const s = {
                         enabled: false,
@@ -3716,7 +4005,26 @@ jQuery(document).ready(function($) {
                             enabled: currentValue
                         })
                     };
-                    controlHTML = ` <div class="optistate-feature-control main-toggle"> <div class="os-htaccess-status"><span class="os-htaccess-status-icon"></span><span class="os-htaccess-status-text"></span></div> <label class="optistate-feature-toggle"><input type="checkbox" ${s.enabled ? 'checked' : ''}><span class="optistate-toggle-slider"></span></label> <span class="optistate-toggle-label">${s.enabled ? __('✔ Active', 'optistate') : __('✗ Inactive', 'optistate')}</span> </div> <div class="server-cache-settings-panel ${!s.enabled ? 'os-panel-hidden' : ''}"> <div class="server-cache-panel-grid"> <div class="cache-settings os-full-width"> <h4>✴ ${__('Optional Security Headers', 'optistate')}</h4> <div class="setting-item optistate-db-setting-row"> <label class="optistate-checkbox-label"> <input type="checkbox" id="security-headers-optional" ${s.optional_headers_enabled ? 'checked' : ''}> <strong>${__('⛊︎ Enable Optional Headers (May Break Sites)', 'optistate')}</strong> </label> <span class="optistate-tip os-mt-10">${__('Adds extra security headers that can cause compatibility issues with some plugins, CDNs, or third-party resources.<br>Test your site and all its features thoroughly after enabling.', 'optistate')} <br><br><strong>${__('Headers added:', 'optistate')}</strong><br> • Cross-Origin-Opener-Policy: same-origin<br> • Cross-Origin-Embedder-Policy: require-corp<br> • X-DNS-Prefetch-Control: off<br> • Strict-Transport-Security with includeSubDomains and preload </span> </div> </div> </div> </div> `;
+                    controlHTML = `
+                    <div class="optistate-feature-control main-toggle">
+                        <div class="os-htaccess-status"><span class="os-htaccess-status-icon"></span><span class="os-htaccess-status-text"></span></div>
+                        <label class="optistate-feature-toggle"><input type="checkbox" ${s.enabled ? 'checked' : ''}><span class="optistate-toggle-slider"></span></label>
+                        <span class="optistate-toggle-label">${s.enabled ? __('✔ Active', 'optistate') : __('✗ Inactive', 'optistate')}</span>
+                    </div>
+                    <div class="server-cache-settings-panel ${!s.enabled ? 'os-panel-hidden' : ''}">
+                        <div class="server-cache-panel-grid">
+                            <div class="cache-settings os-full-width">
+                                <h4>✴ ${__('Optional Security Headers', 'optistate')}</h4>
+                                <div class="setting-item optistate-db-setting-row">
+                                    <label class="optistate-checkbox-label">
+                                        <input type="checkbox" id="security-headers-optional" ${s.optional_headers_enabled ? 'checked' : ''}>
+                                        <strong>${__('⛊︎ Enable Optional Headers (May Break Sites)', 'optistate')}</strong>
+                                    </label>
+                                    <span class="optistate-tip os-mt-10">${__('Adds extra security headers that can cause compatibility issues with some plugins, CDNs, or third-party resources.<br>Test your site and all its features thoroughly after enabling.', 'optistate')} <br><br><strong>${__('Headers added:', 'optistate')}</strong><br> • Cross-Origin-Opener-Policy: same-origin<br> • Cross-Origin-Embedder-Policy: require-corp<br> • X-DNS-Prefetch-Control: off<br> • Strict-Transport-Security with includeSubDomains and preload </span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>`;
                 } else if (feature.type === 'custom_bot_blocker' && key === 'bad_bot_blocker') {
                     const s = {
                         enabled: false,
@@ -3726,15 +4034,63 @@ jQuery(document).ready(function($) {
                             user_agents: feature.default.user_agents
                         } : {}))
                     };
-                    controlHTML = ` <div class="optistate-feature-control main-toggle"> <label class="optistate-feature-toggle"><input type="checkbox" ${s.enabled ? 'checked' : ''}><span class="optistate-toggle-slider"></span></label> <span class="optistate-toggle-label">${s.enabled ? __('✔ Active', 'optistate') : __('✗ Inactive', 'optistate')}</span> </div> <div class="server-cache-settings-panel ${!s.enabled ? 'os-panel-hidden' : ''}"> <div class="os-feature-info-box"> <label class="os-font-bold-block"> ${__('<strong>🚫 Blocked User Agents</strong> (One per line, 150 characters max).<br>⚠️ Caution: Do not block user agents commonly found in web browsers.', 'optistate')} </label> <div class="os-p-8-12-warning os-mb-10 os-bot-margin"> <strong>${__('Your User Agent:', 'optistate')}</strong> <code style="background:rgba(0,0,0,0.05); padding:1px 4px; word-break:break-all;">${esc_html(current_user_agent)}</code><br> <span style="color:#d63638;">${__('⚠ To avoid blocking yourself, ensure this string, or any part of it, is NOT in the list below.', 'optistate')}</span> </div> <textarea class="bad-bot-list os-textarea-full" rows="8" placeholder="MJ12bot&#10;AhrefsBot&#10;...">${esc_html(s.user_agents)}</textarea> <div class="os-flex-between-mt"> <span class="description os-text-muted"> ${__('Partial matches allowed. E.g., "Google" blocks "Googlebot". Case-insensitive.<br>You can view a complete list of bots on ', 'optistate')} <a href="https://radar.cloudflare.com/bots/directory?kind=all" target="_blank">${__('this page', 'optistate')}</a>${__('.', 'optistate')} </span> <button type="button" class="button reset-bots-btn" data-default="${encodeURIComponent(feature.default.user_agents || '')}">${__('⟲ Reset to Defaults', 'optistate')}</button> </div> </div> </div>`;
+                    controlHTML = `
+                    <div class="optistate-feature-control main-toggle">
+                        <label class="optistate-feature-toggle"><input type="checkbox" ${s.enabled ? 'checked' : ''}><span class="optistate-toggle-slider"></span></label>
+                        <span class="optistate-toggle-label">${s.enabled ? __('✔ Active', 'optistate') : __('✗ Inactive', 'optistate')}</span>
+                    </div>
+                    <div class="server-cache-settings-panel ${!s.enabled ? 'os-panel-hidden' : ''}">
+                        <div class="os-feature-info-box">
+                            <label class="os-font-bold-block">
+                                ${__('<strong>🚫 Blocked User Agents</strong> (One per line, 150 characters max).<br>⚠️ Caution: Do not block user agents commonly found in web browsers.', 'optistate')}
+                            </label>
+                            <div class="os-p-8-12-warning os-mb-10 os-bot-margin">
+                                <strong>${__('Your User Agent:', 'optistate')}</strong> <code style="background:rgba(0,0,0,0.05); padding:1px 4px; word-break:break-all;">${esc_html(current_user_agent)}</code><br>
+                                <span style="color:#d63638;">${__('⚠ To avoid blocking yourself, ensure this string, or any part of it, is NOT in the list below.', 'optistate')}</span>
+                            </div>
+                            <textarea class="bad-bot-list os-textarea-full" rows="8" placeholder="MJ12bot&#10;AhrefsBot&#10;...">${esc_html(s.user_agents)}</textarea>
+                            <div class="os-flex-between-mt">
+                                <span class="description os-text-muted">
+                                    ${__('Partial matches allowed. E.g., "Google" blocks "Googlebot". Case-insensitive.<br>You can view a complete list of bots on ', 'optistate')}
+                                    <a href="https://radar.cloudflare.com/bots/directory?kind=all" target="_blank">${__('this page', 'optistate')}</a>${__('.', 'optistate')}
+                                </span>
+                                <button type="button" class="button reset-bots-btn" data-default="${encodeURIComponent(feature.default.user_agents || '')}">${__('⟲ Reset to Defaults', 'optistate')}</button>
+                            </div>
+                        </div>
+                    </div>`;
                 } else if (feature.type === 'toggle') {
                     if (key === 'browser_caching') {
-                        controlHTML = ` <div class="optistate-feature-control"> <div class="os-htaccess-status"><span class="os-htaccess-status-icon"></span><span class="os-htaccess-status-text"></span></div> <label class="optistate-feature-toggle"><input type="checkbox" ${currentValue ? 'checked' : ''} id="caching-toggle"><span class="optistate-toggle-slider"></span></label> <span class="optistate-toggle-label">${currentValue ? __('✔ Active', 'optistate') : __('✗ Inactive', 'optistate')}</span> </div>`;
+                        controlHTML = `
+                        <div class="optistate-feature-control">
+                            <div class="os-htaccess-status"><span class="os-htaccess-status-icon"></span><span class="os-htaccess-status-text"></span></div>
+                            <label class="optistate-feature-toggle"><input type="checkbox" ${currentValue ? 'checked' : ''} id="caching-toggle"><span class="optistate-toggle-slider"></span></label>
+                            <span class="optistate-toggle-label">${currentValue ? __('✔ Active', 'optistate') : __('✗ Inactive', 'optistate')}</span>
+                        </div>`;
                     } else {
-                        controlHTML = ` <div class="optistate-feature-control" ${feature.disabled ? 'class="os-opacity-50-no-cursor"' : ''}> <label class="optistate-feature-toggle"><input type="checkbox" ${currentValue ? 'checked' : ''} ${feature.disabled ? 'disabled' : ''}><span class="optistate-toggle-slider"></span></label> <span class="optistate-toggle-label">${currentValue ? __('✔ Active', 'optistate') : __('✗ Inactive', 'optistate')}</span> </div>`;
+                        controlHTML = `
+                        <div class="optistate-feature-control" ${feature.disabled ? 'class="os-opacity-50-no-cursor"' : ''}>
+                            <label class="optistate-feature-toggle"><input type="checkbox" ${currentValue ? 'checked' : ''} ${feature.disabled ? 'disabled' : ''}><span class="optistate-toggle-slider"></span></label>
+                            <span class="optistate-toggle-label">${currentValue ? __('✔ Active', 'optistate') : __('✗ Inactive', 'optistate')}</span>
+                        </div>`;
                     }
                 } else if (feature.type === 'custom_cron_manager' && key === 'cron_manager') {
-                    controlHTML = ` <div class="optistate-feature-control main-toggle"> <label class="optistate-feature-toggle"> <input type="checkbox" class="cron-manager-toggle"> <span class="optistate-toggle-slider"></span> </label> <span class="optistate-toggle-label cron-toggle-label">${__('Show', 'optistate')}</span> </div> <div id="cron-manager-container" class="cron-manager-panel" style="display:none;"> <div class="os-flex-between-mb"> <span class="os-cron-count">${__('Loading cron jobs...', 'optistate')}</span> <button type="button" class="button button-small" id="refresh-cron-jobs-btn">${__('♻ Refresh', 'optistate')} </button> </div> <div id="cron-jobs-table-wrapper"> <div class="optistate-loading">${__('Fetching cron jobs...', 'optistate')}</div> </div> </div> `;
+                    controlHTML = `
+                    <div class="optistate-feature-control main-toggle">
+                        <label class="optistate-feature-toggle">
+                            <input type="checkbox" class="cron-manager-toggle">
+                            <span class="optistate-toggle-slider"></span>
+                        </label>
+                        <span class="optistate-toggle-label cron-toggle-label">${__('Show', 'optistate')}</span>
+                    </div>
+                    <div id="cron-manager-container" class="cron-manager-panel" style="display:none;">
+                        <div class="os-flex-between-mb">
+                            <span class="os-cron-count">${__('Loading cron jobs...', 'optistate')}</span>
+                            <button type="button" class="button button-small" id="refresh-cron-jobs-btn">${__('♻ Refresh', 'optistate')} </button>
+                        </div>
+                        <div id="cron-jobs-table-wrapper">
+                            <div class="optistate-loading">${__('Fetching cron jobs...', 'optistate')}</div>
+                        </div>
+                    </div>`;
                 } else if (feature.options) {
                     const optionsHTML = Object.entries(feature.options).map(([optKey, label]) => `<option value="${esc_attr(optKey)}" ${currentValue === optKey ? 'selected' : ''}>${esc_html(label)}</option>`).join('');
                     const isDisabled = (key === 'post_revisions' && revisions_defined) || (key === 'trash_auto_empty' && trash_days_defined);
@@ -3743,22 +4099,106 @@ jQuery(document).ready(function($) {
                         controlHTML += `<div class="optistate-feature-warning os-p-8-12-warning"><span class="dashicons dashicons-info-outline os-icon-inline"></span> ${sprintf(__('This setting is already defined in your wp-config.php as %s.', 'optistate'), key === 'post_revisions' ? 'WP_POST_REVISIONS' : 'EMPTY_TRASH_DAYS')}</div>`;
                     }
                 }
+
                 const div = document.createElement('div');
                 div.className = `optistate-performance-feature ${!feature.safe ? 'feature-unsafe' : ''}`;
                 div.setAttribute('data-feature', esc_attr(key));
-                div.innerHTML = ` <div class="optistate-feature-header"> <div class="optistate-feature-title">${esc_html(feature.title || __('Unnamed', 'optistate'))} ${warningBadge}${feature.manual_url ? `<a href="${feature.manual_url}" class="optistate-info-link os-no-decoration" target="_blank" rel="noopener noreferrer" title="${esc_attr(__('Read the Manual', 'optistate'))}"><span class="dashicons dashicons-info"></span></a>` : ''}</div> <span class="optistate-feature-impact ${impactClass}">${impactLabel}</span> </div> <div class="optistate-feature-description">${(feature.description || '').replace(/<(?!strong>|\/strong>|br\s*\/?>|a[\s>]|\/a>)[^>]*>/gi, '').replace(/<br\s*\/?>/gi, '<br>')}</div> ${controlHTML} `;
-                body.appendChild(div);
+                div.innerHTML = `
+                <div class="optistate-feature-header">
+                    <div class="optistate-feature-title">${esc_html(feature.title || __('Unnamed', 'optistate'))} ${warningBadge}${feature.manual_url ? `<a href="${feature.manual_url}" class="optistate-info-link os-no-decoration" target="_blank" rel="noopener noreferrer" title="${esc_attr(__('Read the Manual', 'optistate'))}"><span class="dashicons dashicons-info"></span></a>` : ''}</div>
+                    <span class="optistate-feature-impact ${impactClass}">${impactLabel}</span>
+                </div>
+                <div class="optistate-feature-description">${(feature.description || '').replace(/<(?!strong>|\/strong>|br\s*\/?>|a[\s>]|\/a>)[^>]*>/gi, '').replace(/<br\s*\/?>/gi, '<br>')}</div>
+                ${controlHTML}
+            `;
+                container.appendChild(div);
             });
-            fragment.appendChild(groupWrapper);
+
+            if (cat === 'caching') {
+                cachingFragment.appendChild(container);
+            } else {
+                tweaksFragment.appendChild(groupWrapper);
+            }
         });
-        $perfFeaturesContainer.append(fragment);
+
+        $('#optistate-caching-features-container').append(cachingFragment);
+        $('#optistate-tweaks-features-container').append(tweaksFragment);
+
         if (cron_jobs && Array.isArray(cron_jobs)) {
             var $cronContainer = $('#cron-manager-container');
             if ($cronContainer.length) {
                 renderCronJobsTable(cron_jobs);
             }
         }
-        $perfFeaturesContainer.on('change', '.cron-manager-toggle', function() {
+
+        if ($('#server-caching-query-mode').length) {
+            $('#server-caching-query-mode').trigger('change');
+        }
+
+        if (definitions.browser_caching || definitions.security_headers) {
+            checkHtaccessStatus().then(status => {
+                $('.os-htaccess-status').each(function() {
+                    updateHtaccessFeatureDisplay(status, $(this));
+                });
+            });
+        }
+
+        if ($('#cache-file-count').length) {
+            loadCacheStats();
+        }
+        if ($('#server-caching-auto-preload').length) {
+            checkPreloadStatus();
+        }
+    }
+
+    function bindPerformanceEvents() {
+        $(document).on('change', '.optistate-feature-toggle input', function() {
+            const $toggle = $(this);
+            const $wrapper = $toggle.closest('.optistate-performance-feature');
+            const $panel = $wrapper.find('.server-cache-settings-panel');
+            const $label = $toggle.closest('.optistate-feature-control').find('.optistate-toggle-label');
+            const isChecked = $toggle.is(':checked');
+            const feature = $wrapper.data('feature');
+            $label.text(isChecked ? '✔ Active' : '✗ Inactive');
+
+            if (['server_caching', 'db_query_caching', 'bad_bot_blocker', 'font_optimization', 'security_headers'].includes(feature)) {
+                isChecked ? $panel.slideDown(300) : $panel.slideUp(300);
+            }
+            if (feature === 'font_optimization' && isChecked) {
+                $panel.find('.font-remove-toggle').trigger('change');
+            }
+        });
+
+        $(document).on('change', '.font-remove-toggle', function() {
+            const isRemoveChecked = $(this).is(':checked');
+            const $panel = $(this).closest('.server-cache-settings-panel');
+            const $otherOptions = $panel.find('input[type="checkbox"]').not(this);
+            $otherOptions.prop('disabled', isRemoveChecked).prop('checked', !isRemoveChecked && $otherOptions.prop('checked'));
+            $otherOptions.closest('.optistate-db-setting-row').toggleClass('os-option-disabled', isRemoveChecked);
+        });
+
+        $(document).on('input propertychange', '.bad-bot-list', function() {
+            const val = $(this).val();
+            const lines = val.split('\n');
+            if (lines.some(l => l.length > 150)) {
+                const start = this.selectionStart;
+                $(this).val(lines.map(l => l.substring(0, 150)).join('\n'));
+                this.setSelectionRange(start, start);
+            }
+        });
+
+        $(document).on('click', '.reset-bots-btn', function() {
+            const $btn = $(this);
+            showOPTISTATEModal(
+                __('⟲ Confirm Reset', 'optistate'),
+                __('Are you sure you want to reset the blocked list to defaults?', 'optistate'),
+                function() {
+                    $btn.closest('.os-feature-info-box').find('textarea').val(decodeURIComponent($btn.data('default')));
+                }
+            );
+        });
+
+        $(document).on('change', '.cron-manager-toggle', function() {
             const $panel = $(this).closest('.optistate-performance-feature').find('.cron-manager-panel');
             const $label = $(this).closest('.optistate-feature-control').find('.cron-toggle-label');
             if ($(this).is(':checked')) {
@@ -3769,19 +4209,70 @@ jQuery(document).ready(function($) {
                 $label.text(__('Show', 'optistate'));
             }
         });
-        if (definitions.browser_caching || definitions.security_headers) {
-            checkHtaccessStatus().then(status => {
-                $perfFeaturesContainer.find('.os-htaccess-status').each(function() {
-                    updateHtaccessFeatureDisplay(status, $(this));
-                });
-            });
-        }
-        if ($('#cache-file-count').length) loadCacheStats();
-        $perfFeaturesContainer.on('change', '#server-caching-query-mode', function() {
+
+        $(document).on('change', '#server-caching-query-mode', function() {
             const mode = $(this).val();
             $('#query-mode-descriptions .query-mode-desc').hide().filter(`[data-mode="${mode}"]`).show();
-        }).find('#server-caching-query-mode').trigger('change');
-        if ($('#server-caching-auto-preload').length) checkPreloadStatus();
+        });
+
+        $(document).on('click', '#purge-page-cache-btn', function(e) {
+            e.preventDefault();
+            const $btn = $(this);
+            if ($btn.prop('disabled')) return;
+            const msg = sprintf(
+                __('You are about to delete all %s cached pages (total size: %s).', 'optistate'),
+                esc_html($('#cache-file-count').text()),
+                esc_html($('#cache-total-size').text())
+            ) + '<br><br>' + __('This is generally not required as the cache clears automatically based on the set cache lifetime. Proceed only if certain.', 'optistate');
+            showOPTISTATEModal(__('🗑️ Confirm Cache Purge', 'optistate'), msg, function() {
+                $btn.prop('disabled', true).html(`<span class="spinner is-active os-spinner-inline"></span> ${__('PURGING ....', 'optistate')}`);
+                $.post(optistate_Ajax.ajaxurl, {
+                        action: 'optistate_purge_page_cache',
+                        nonce: optistate_Ajax.nonce
+                    }).done(res => {
+                        if (res?.success) {
+                            showToast(res.data.message || __('Cache successfully purged!', 'optistate'), 'success');
+                            if (res.data.trigger_preload) setTimeout(() => startPreload(), 1000);
+                        } else showToast(res?.data?.message || __('An error occurred.', 'optistate'), 'error');
+                    }).fail(xhr => showToast(xhr.status === 429 ? (xhr.responseJSON?.data?.message || getRateLimitMessage(false)) : __('Network error.', 'optistate'), xhr.status === 429 ? 'warning' : 'error'))
+                    .always(() => {
+                        $btn.prop('disabled', false).html(`🗑️ ${__('Purge All Cache', 'optistate')}`);
+                        loadCacheStats();
+                    });
+            });
+        });
+        $(document).on('click', '#stop-preload-btn', function(e) {
+            e.preventDefault();
+            isPreloadCancelled = true;
+            clearTimeout(preloadInterval);
+            if (window._preloadPoller) {
+                window._preloadPoller.stop();
+                window._preloadPoller = null;
+            }
+            const $btn = $(this);
+            if ($btn.prop('disabled')) return;
+            $btn.prop('disabled', true).html(`<span></span> ${__('Stopping...', 'optistate')}`);
+            $.post(optistate_Ajax.ajaxurl, {
+                action: 'optistate_stop_preload',
+                nonce: optistate_Ajax.nonce
+            }).done(res => {
+                if (res?.success) {
+                    showToast(res.data.message, 'info');
+                    $('#preload-status-text').html(`<strong>${__('Preload stopped by user.', 'optistate')}</strong>`);
+                    setTimeout(() => $('#preload-progress-wrapper').slideUp(300), 1500);
+                    loadCacheStats();
+                    debouncedLoadOptimizationLog();
+                } else {
+                    showToast(__('Failed to stop preload', 'optistate'), 'error');
+                    $btn.prop('disabled', false).html(`🟥 ${__('Stop', 'optistate')}`);
+                    isPreloadCancelled = false;
+                }
+            }).fail(xhr => {
+                showToast(xhr.status === 429 ? (xhr.responseJSON?.data?.message || getRateLimitMessage(false)) : (xhr.responseJSON?.data?.message || __('Network error', 'optistate')), xhr.status === 429 ? 'warning' : 'error');
+                $btn.prop('disabled', false).html(`🟥 ${__('Stop', 'optistate')}`);
+                isPreloadCancelled = false;
+            });
+        });
     }
 
     function checkHtaccessStatus() {
@@ -3870,59 +4361,6 @@ jQuery(document).ready(function($) {
             });
         }, 300);
     }
-    $perfFeaturesContainer.on('click', '#stop-preload-btn', function(e) {
-        e.preventDefault();
-        isPreloadCancelled = true;
-        clearTimeout(preloadInterval);
-        if (window._preloadPoller) {
-            window._preloadPoller.stop();
-            window._preloadPoller = null;
-        }
-        const $btn = $(this);
-        if ($btn.prop('disabled')) return;
-        $btn.prop('disabled', true).html(`<span></span> ${__('Stopping...', 'optistate')}`);
-        $.post(optistate_Ajax.ajaxurl, {
-            action: 'optistate_stop_preload',
-            nonce: optistate_Ajax.nonce
-        }).done(res => {
-            if (res?.success) {
-                showToast(res.data.message, 'info');
-                $('#preload-status-text').html(`<strong>${__('Preload stopped by user.', 'optistate')}</strong>`);
-                setTimeout(() => $('#preload-progress-wrapper').slideUp(300), 1500);
-                loadCacheStats();
-                debouncedLoadOptimizationLog();
-            } else {
-                showToast(__('Failed to stop preload', 'optistate'), 'error');
-                $btn.prop('disabled', false).html(`🟥 ${__('Stop', 'optistate')}`);
-                isPreloadCancelled = false;
-            }
-        }).fail(xhr => {
-            showToast(xhr.status === 429 ? (xhr.responseJSON?.data?.message || getRateLimitMessage(false)) : (xhr.responseJSON?.data?.message || __('Network error', 'optistate')), xhr.status === 429 ? 'warning' : 'error');
-            $btn.prop('disabled', false).html(`🟥 ${__('Stop', 'optistate')}`);
-            isPreloadCancelled = false;
-        });
-    });
-    $perfFeaturesContainer.on('click', '#purge-page-cache-btn', function(e) {
-        e.preventDefault();
-        const $btn = $(this);
-        if ($btn.prop('disabled')) return;
-        const msg = `${sprintf(__('You are about to delete all %s cached pages (total size: %s).', 'optistate'), esc_html($('#cache-file-count').text()), esc_html($('#cache-total-size').text()))}<br><br>${__('This is generally not required as the cache clears automatically based on the set cache lifetime. Proceed only if certain.', 'optistate')}`;
-        showOPTISTATEModal(__('🗑️ Confirm Cache Purge', 'optistate'), msg, function() {
-            $btn.prop('disabled', true).html(`<span class="spinner is-active os-spinner-inline"></span> ${__('PURGING ....', 'optistate')}`);
-            $.post(optistate_Ajax.ajaxurl, {
-                action: 'optistate_purge_page_cache',
-                nonce: optistate_Ajax.nonce
-            }).done(res => {
-                if (res?.success) {
-                    showToast(res.data.message || __('Cache successfully purged!', 'optistate'), 'success');
-                    if (res.data.trigger_preload) setTimeout(() => startPreload(), 1000);
-                } else showToast(res?.data?.message || __('An error occurred.', 'optistate'), 'error');
-            }).fail(xhr => showToast(xhr.status === 429 ? (xhr.responseJSON?.data?.message || getRateLimitMessage(false)) : __('Network error.', 'optistate'), xhr.status === 429 ? 'warning' : 'error')).always(() => {
-                $btn.prop('disabled', false).html(`🗑️ ${__('Purge All Cache', 'optistate')}`);
-                loadCacheStats();
-            });
-        });
-    });
 
     function initSettingsImportExportEvents() {
         $('#optistate-export-settings-btn').on('click', function() {
@@ -3995,7 +4433,7 @@ jQuery(document).ready(function($) {
                                 msg += `• ${__('Auto Optimize:', 'optistate')} ${sprintf(__('Every %s days', 'optistate'), res.data.summary.auto_optimize_days)}<br>`;
                                 msg += `• ${__('Email Notifications:', 'optistate')} ${res.data.summary.email_notifications ? __('Enabled', 'optistate') : __('Disabled', 'optistate')}<br>`;
                                 const featCount = typeof res.data.summary.performance_features_count === 'number' ? res.data.summary.performance_features_count.toLocaleString() : res.data.summary.performance_features_count;
-                                msg += `• ${__('Performance Features:', 'optistate')} ${featCount} ${__('configured', 'optistate')}<br>`;
+                                msg += `• ${__('Caching/Tweaks Features:', 'optistate')} ${featCount} ${__('configured', 'optistate')}<br>`;
                                 if (res.data.summary.preset_label) {
                                     msg += `• ${__('Settings Preset:', 'optistate')} ${res.data.summary.preset_label}<br>`;
                                 }
@@ -4384,10 +4822,6 @@ jQuery(document).ready(function($) {
                 $btn.prop('disabled', true).html(`<span class="spinner is-active os-spinner-inline"></span> ${__('Initializing...', 'optistate')}`);
                 $('#optistate-psi-metrics').css('opacity', '0.5');
             }
-            const resetBtn = () => {
-                isProcessing = false;
-                $btn.prop('disabled', false).html(`<span class="dashicons dashicons-performance optst-adt-icn"></span> ${__('Run Audit', 'optistate')}`);
-            };
             $.post(optistate_Ajax.ajaxurl, {
                 action: 'optistate_run_pagespeed_audit',
                 nonce: optistate_Ajax.nonce,
@@ -4399,17 +4833,17 @@ jQuery(document).ready(function($) {
                     if (res.data.score !== undefined) {
                         updatePageSpeedUI(res.data);
                         if (forceRefresh) showToast(__('Performance audit loaded from cache!', 'optistate'), 'success');
-                        resetBtn();
+                        resetButton();
                     } else if (res.data.status === 'processing') {
                         $btn.html(`<span class="spinner is-active os-spinner-inline"></span> ${__('Auditing...', 'optistate')}`);
                         pollPageSpeedStatus(res.data.task_id);
                     } else {
                         showToast(res.data.message || __('Audit failed to start.', 'optistate'), 'error');
-                        resetBtn();
+                        resetButton();
                     }
                 } else {
                     showToast(res.data.message || __('Audit failed to start.', 'optistate'), 'error');
-                    resetBtn();
+                    resetButton();
                 }
             }).fail(function(xhr) {
                 let errorMsg = __('Connection error.', 'optistate');
@@ -4419,17 +4853,18 @@ jQuery(document).ready(function($) {
                     errorMsg = getRateLimitMessage(false);
                 }
                 showToast(errorMsg, xhr.status === 429 ? 'warning' : 'error');
-                resetBtn();
+                resetButton();
             });
         };
         const loadCachedPageSpeed = () => {
             if ($('#psi-score').length === 0) return;
+            if (typeof optistate_last_strategy !== 'undefined' && optistate_last_strategy) {
+                $('#optistate-strategy').val(optistate_last_strategy);
+            }
             $.post(optistate_Ajax.ajaxurl, {
                 action: 'optistate_run_pagespeed_audit',
                 nonce: optistate_Ajax.nonce,
-                cached_only: 'true',
-                force_refresh: 'false',
-                strategy: $(SELECTORS.psiStrategy).val()
+                cached_only: 'true'
             }).done(function(response) {
                 if (response.success && response.data && typeof response.data === 'object' && 'score' in response.data) {
                     updatePageSpeedUI(response.data);
@@ -4471,92 +4906,88 @@ jQuery(document).ready(function($) {
         if (!data) return;
         const $testUrl = $('#optistate-test-url');
         const $customUrl = $('#optistate-custom-url');
-        if (data.tested_url) {
-            if ($testUrl.find(`option[value="${data.tested_url}"]`).length > 0) {
-                $testUrl.val(data.tested_url);
-                $customUrl.val('');
-            } else {
-                $testUrl.val('');
-                $customUrl.val(data.tested_url);
+
+        optistate_batch_update(function() {
+            if (data.tested_url) {
+                if ($testUrl.find('option').filter(function () {
+                return this.value === data.tested_url;
+                }).length > 0) {
+                    $testUrl.val(data.tested_url);
+                    $customUrl.val('');
+                } else {
+                    $testUrl.val('');
+                    $customUrl.val(data.tested_url);
+                }
             }
-        }
-        const score = parseInt(data.score, 10);
-        $('#psi-score').text(score);
-        let color = score >= 90 ? '#28a745' : (score >= 60 ? '#ffa400' : '#dc3545');
-        let bg = score >= 90 ? '#e8f5e9' : (score >= 60 ? '#fff8e1' : '#fce8e8');
-        $('#psi-score-circle').css({
-            borderColor: color,
-            backgroundColor: bg,
-            color: '#333'
-        });
-        const updateMetric = (id, metric, thresholds) => {
-            const val = metric?.value || 0;
-            $(`${id}`).text(`→ ${metric?.display || 'N/A'}`).closest('.optistate-targeted-card').css({
-                borderLeft: `4px solid ${val <= thresholds.good ? '#28a745' : (val <= thresholds.needsImprovement ? '#ffa400' : '#dc3545')}`,
-                paddingLeft: '11px'
+            if (data.strategy) {
+                $('#optistate-strategy').val(data.strategy.toLowerCase());
+            }
+            const score = parseInt(data.score, 10);
+            $('#psi-score').text(score);
+            let color = score >= 90 ? '#28a745' : (score >= 60 ? '#ffa400' : '#dc3545');
+            let bg = score >= 90 ? '#e8f5e9' : (score >= 60 ? '#fff8e1' : '#fce8e8');
+            $('#psi-score-circle').css({
+                borderColor: color,
+                backgroundColor: bg,
+                color: '#333'
             });
-        };
-        updateMetric('#psi-fcp', data.fcp, {
-            good: 1800,
-            needsImprovement: 3000
-        });
-        updateMetric('#psi-lcp', data.lcp, {
-            good: 2500,
-            needsImprovement: 4000
-        });
-        updateMetric('#psi-cls', data.cls, {
-            good: 0.1,
-            needsImprovement: 0.25
-        });
-        updateMetric('#psi-tbt', data.tbt, {
-            good: 200,
-            needsImprovement: 600
-        });
-        updateMetric('#psi-si', data.si, {
-            good: 3400,
-            needsImprovement: 5800
-        });
-        updateMetric('#psi-tti', data.tti, {
-            good: 3800,
-            needsImprovement: 7300
-        });
-        updateMetric('#psi-ttfb', data.ttfb, {
-            good: 600,
-            needsImprovement: 1800
-        });
-        $('#psi-timestamp').text(`${data.timestamp} (${data.strategy})`);
-        if (data.tested_url) {
-            let urlPath = data.tested_url.replace(/^https?:\/\/[^\/]+/, '');
-            if (!urlPath || urlPath === '/') {
-                urlPath = '🏠︎/';
-            }
-            $('#psi-tested-url').text(__('Tested: ', 'optistate') + urlPath);
-        }
-        $('#optistate-psi-metrics').css({
-            opacity: '1',
-            pointerEvents: 'auto'
-        });
-        const $recsList = $('#optistate-psi-recommendations-list');
-        if (data.recommendations?.length > 0) {
-            const colors = {
-                high: '#C13048',
-                medium: '#EF8F00',
-                low: '#666'
+
+            const updateMetric = (id, metric, thresholds) => {
+                const val = metric?.value || 0;
+                $(id).text(`→ ${metric?.display || 'N/A'}`).closest('.optistate-targeted-card').css({
+                    borderLeft: `4px solid ${val <= thresholds.good ? '#28a745' : (val <= thresholds.needsImprovement ? '#ffa400' : '#dc3545')}`,
+                    paddingLeft: '11px'
+                });
             };
-            let html = '';
-            data.recommendations.forEach(rec => {
-                const urgency = rec.urgency || 'low';
-                html += `<div class="optistate-card os-p-15-mb-12" style="border-left: 4px solid ${colors[rec.priority]};"><div class="os-flex-start-gap"><span class="dashicons ${rec.icon} os-psi-icon"></span><div class="os-flex-1"><div class="os-flex-center-gap"><strong class="os-font-14-bold">${rec.title}</strong><span class="os-speed-prior" style="background: ${colors[rec.priority]};">${rec.priority.toUpperCase()}</span></div><p class="os-psi-desc">${rec.description}</p>${rec.tab ? `<a class="nav-tab-link button button-small os-no-decoration" href="${rec.tab}">${__('Performance Settings →', 'optistate')}</a>` : ''}</div></div></div>`;
+            updateMetric('#psi-fcp', data.fcp, { good: 1800, needsImprovement: 3000 });
+            updateMetric('#psi-lcp', data.lcp, { good: 2500, needsImprovement: 4000 });
+            updateMetric('#psi-cls', data.cls, { good: 0.1, needsImprovement: 0.25 });
+            updateMetric('#psi-tbt', data.tbt, { good: 200, needsImprovement: 600 });
+            updateMetric('#psi-si', data.si, { good: 3400, needsImprovement: 5800 });
+            updateMetric('#psi-tti', data.tti, { good: 3800, needsImprovement: 7300 });
+            updateMetric('#psi-ttfb', data.ttfb, { good: 600, needsImprovement: 1800 });
+
+            $('#psi-timestamp').text(`${data.timestamp} (${data.strategy})`);
+            if (data.tested_url) {
+                let urlPath = data.tested_url.replace(/^https?:\/\/[^\/]+/, '');
+                if (!urlPath || urlPath === '/') {
+                    urlPath = '🏠︎/';
+                }
+                const maxDisplayLength = 105;
+                if (urlPath.length > maxDisplayLength) {
+                    urlPath = urlPath.substring(0, maxDisplayLength) + '…';
+                }
+                $('#psi-tested-url').text(__('Tested: ', 'optistate') + urlPath);
+            }
+            $('#optistate-psi-metrics').css({
+                opacity: '1',
+                pointerEvents: 'auto'
             });
-            $recsList.html(html).parent().show();
-            $recsList.find('.nav-tab-link').on('click', function(e) {
-                e.preventDefault();
-                $(`.nav-tab-wrapper a[href="${$(this).attr('href')}"]`).click();
-                window.scrollTo(0, 0);
-            });
-        } else if (score >= 90) {
-            $recsList.html(`<div class="optistate-card os-psi-excellent-card"><span class="dashicons dashicons-yes-alt"></span><h3 class="os-psi-excellent-title">${__('Excellent Performance!', 'optistate')}</h3><p class="os-psi-excellent-desc">${__('Your site is performing well.', 'optistate')}</p></div>`).parent().show();
-        } else $recsList.parent().hide();
+
+            const $recsList = $('#optistate-psi-recommendations-list');
+            if (data.recommendations?.length > 0) {
+                const colors = {
+                    high: '#C13048',
+                    medium: '#EF8F00',
+                    low: '#666'
+                };
+                let html = '';
+                data.recommendations.forEach(rec => {
+                    const urgency = rec.urgency || 'low';
+                    html += `<div class="optistate-card os-p-15-mb-12" style="border-left: 4px solid ${colors[rec.priority]};"><div class="os-flex-start-gap"><span class="dashicons ${rec.icon} os-psi-icon"></span><div class="os-flex-1"><div class="os-flex-center-gap"><strong class="os-font-14-bold">${rec.title}</strong><span class="os-speed-prior" style="background: ${colors[rec.priority]};">${rec.priority.toUpperCase()}</span></div><p class="os-psi-desc">${rec.description}</p>${rec.tab ? `<a class="nav-tab-link button button-small os-no-decoration" href="${rec.tab}">${__('Performance Settings →', 'optistate')}</a>` : ''}</div></div></div>`;
+                });
+                $recsList.html(html).parent().show();
+                $recsList.find('.nav-tab-link').on('click', function(e) {
+                    e.preventDefault();
+                    $(`.nav-tab-wrapper a[href="${$(this).attr('href')}"]`).click();
+                    window.scrollTo(0, 0);
+                });
+            } else if (score >= 90) {
+                $recsList.html(`<div class="optistate-card os-psi-excellent-card"><span class="dashicons dashicons-yes-alt"></span><h3 class="os-psi-excellent-title">${__('Excellent Performance!', 'optistate')}</h3><p class="os-psi-excellent-desc">${__('Your site is performing well.', 'optistate')}</p></div>`).parent().show();
+            } else {
+                $recsList.parent().hide();
+            }
+        });
     };
 
     function initUserBlockingEvents() {
@@ -4684,7 +5115,9 @@ jQuery(document).ready(function($) {
         if (typeof checkRestoreStatusOnLoad === 'function') checkRestoreStatusOnLoad();
         if (typeof checkBackupStatusOnLoad === 'function') checkBackupStatusOnLoad();
         if ($statsContainer.length) loadStats();
-        if ($perfFeaturesContainer.length) initPerformanceFeatures();
+        if ($('#optistate-caching-features-container').length || $('#optistate-tweaks-features-container').length) {
+            loadPerformanceFeatures();
+        }
         if ($healthScoreWrapper.length) initializeHealthScore();
         loadTrashItems();
     }

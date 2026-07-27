@@ -84,34 +84,48 @@ class OPTISTATE_Admin_Interface
  ); ?>" target="_blank" rel="noopener noreferrer"> <strong><?php esc_html_e(
     "Nginx Configuration Guide ⚙️",
     "optistate"
-); ?></strong> </a> </p> </div> <?php endif; ?> <h2 class="nav-tab-wrapper optistate-nav-tabs"> <a href="#tab-dashboard" class="nav-tab"><span class="dashicons dashicons-dashboard"></span> <?php esc_html_e(
-     "Dashboard",
-     "optistate"
- ); ?></a> <a href="#tab-stats" class="nav-tab"><span class="dashicons dashicons-chart-bar"></span> <?php esc_html_e(
-    "Statistics",
-    "optistate"
-); ?></a> <a href="#tab-backups" class="nav-tab"><span class="dashicons dashicons-database-export"></span> <?php esc_html_e(
-    "Backups",
-    "optistate"
-); ?></a> <a href="#tab-cleanup" class="nav-tab"><span class="dashicons dashicons-trash"></span> <?php esc_html_e(
-    "Cleanup",
-    "optistate"
-); ?></a> <a href="#tab-performance" class="nav-tab"><span class="dashicons dashicons-performance"></span> <?php esc_html_e(
-    "Performance",
-    "optistate"
-); ?></a> <a href="#tab-advanced" class="nav-tab"><span class="dashicons dashicons-admin-tools"></span> <?php esc_html_e(
-    "Advanced Tools",
-    "optistate"
-); ?></a> <a href="#tab-automation" class="nav-tab"><span class="dashicons dashicons-clock"></span> <?php esc_html_e(
-    "Schedule",
-    "optistate"
-); ?></a> <a href="#tab-security" class="nav-tab"><span class="dashicons dashicons-shield"></span> <?php esc_html_e(
-    "Security",
-    "optistate"
-); ?></a> <a href="#tab-settings" class="nav-tab"><span class="dashicons dashicons-admin-settings"></span> <?php esc_html_e(
-    "Settings",
-    "optistate"
-); ?></a> </h2> <!-- Dashboard Tab --> <div id="tab-dashboard" class="optistate-tab-content"> <div class="optistate-grid-2"> <div class="optistate-card optistate-card-highlight"> <h2> <span>💥 <?php esc_html_e(
+); ?></strong> </a> </p> </div> <?php endif; ?><h2 class="nav-tab-wrapper optistate-nav-tabs">
+    <a href="#tab-dashboard" class="nav-tab"><span class="dashicons dashicons-dashboard"></span> <?php esc_html_e(
+        "Dashboard",
+        "optistate"
+    ); ?></a>
+    <a href="#tab-stats" class="nav-tab"><span class="dashicons dashicons-chart-bar"></span> <?php esc_html_e(
+        "Statistics",
+        "optistate"
+    ); ?></a>
+    <a href="#tab-backups" class="nav-tab"><span class="dashicons dashicons-database-export"></span> <?php esc_html_e(
+        "Backups",
+        "optistate"
+    ); ?></a>
+    <a href="#tab-cleanup" class="nav-tab"><span class="dashicons dashicons-trash"></span> <?php esc_html_e(
+        "Cleanup",
+        "optistate"
+    ); ?></a>
+    <a href="#tab-advanced" class="nav-tab"><span class="dashicons dashicons-admin-tools"></span> <?php esc_html_e(
+        "Advanced",
+        "optistate"
+    ); ?></a>
+    <a href="#tab-caching" class="nav-tab"><span class="dashicons dashicons-database"></span> <?php esc_html_e(
+        "Caching",
+        "optistate"
+    ); ?></a>
+    <a href="#tab-tweaks" class="nav-tab"><span class="dashicons dashicons-admin-settings"></span> <?php esc_html_e(
+        "Tweaks",
+        "optistate"
+    ); ?></a>
+    <a href="#tab-automation" class="nav-tab"><span class="dashicons dashicons-clock"></span> <?php esc_html_e(
+        "Schedule",
+        "optistate"
+    ); ?></a>
+    <a href="#tab-security" class="nav-tab"><span class="dashicons dashicons-shield"></span> <?php esc_html_e(
+        "Security",
+        "optistate"
+    ); ?></a>
+    <a href="#tab-settings" class="nav-tab"><span class="dashicons dashicons-admin-generic"></span> <?php esc_html_e(
+        "Settings",
+        "optistate"
+    ); ?></a>
+</h2><div id="tab-dashboard" class="optistate-tab-content"> <div class="optistate-grid-2"> <div class="optistate-card optistate-card-highlight"> <h2> <span>💥 <?php esc_html_e(
     "One-Click Optimization",
     "optistate"
 ); ?></span> <a href="<?php echo esc_url(
@@ -252,22 +266,37 @@ foreach ($recent_posts as $post) {
         '">' .
         esc_html($page->post_title) .
         "</option>";
-} ?> </optgroup> </select> <input type="text" id="optistate-custom-url" placeholder="<?php esc_attr_e(
+} ?> </optgroup> </select> <input type="text" id="optistate-custom-url" maxlength="1000" placeholder="<?php esc_attr_e(
      "Or enter custom URL...",
      "optistate"
- ); ?>" class="os-w100-mb10"> </div> <div class="os-flex-center-gap-10"> <select id="optistate-strategy" class="os-h-36"> <option value="mobile">📱 <?php esc_html_e(
-    "Mobile Device",
+ ); ?>" class="os-w100-mb10"> </div> <div class="os-flex-center-gap-10"> <select id="optistate-strategy" class="os-h-36">
+    <option value="mobile">📱 <?php esc_html_e(
+        "Mobile Device",
+        "optistate"
+    ); ?></option>
+    <option value="desktop">💻 <?php esc_html_e(
+        "Desktop",
+        "optistate"
+    ); ?></option>
+</select>
+<?php
+$last_state = get_option("optistate_pagespeed_last_state");
+$last_strategy = isset($last_state["strategy"])
+    ? $last_state["strategy"]
+    : "mobile";
+?>
+<script> var optistate_last_strategy = <?php echo wp_json_encode(
+    $last_strategy
+); ?>; </script>
+<button type="button" class="button button-primary button-large" id="run-pagespeed-btn">
+    <span class="dashicons dashicons-performance optst-adt-icn"></span> <?php esc_html_e(
+        "Run Audit",
+        "optistate"
+    ); ?>
+</button> </div> <p class="os-last-checked"> <?php esc_html_e(
+    "Last checked:",
     "optistate"
-); ?></option> <option value="desktop">💻 <?php esc_html_e(
-    "Desktop",
-    "optistate"
-); ?></option> </select> <button type="button" class="button button-primary button-large" id="run-pagespeed-btn"> <span class="dashicons dashicons-performance optst-adt-icn"></span> <?php esc_html_e(
-    "Run Audit",
-    "optistate"
-); ?> </button> </div> <p class="os-last-checked"> <?php esc_html_e(
-     "Last checked:",
-     "optistate"
- ); ?> <span id="psi-timestamp"><?php esc_html_e(
+); ?> <span id="psi-timestamp"><?php esc_html_e(
      "Never",
      "optistate"
  ); ?></span><br> <span id="psi-tested-url" class="os-color-link-blue"></span> </p> </div> <div class="optistate-psi-score-wrapper"> <div class="optistate-score-circle" id="psi-score-circle"> <span id="psi-score">--</span> </div> <span class="optistate-psi-text">🚦 <?php esc_html_e(
@@ -276,7 +305,7 @@ foreach ($recent_posts as $post) {
 ); ?></span> </div> </div> <div id="optistate-psi-metrics" class="optistate-grid-targeted os-psi-metrics-disabled"> <div class="optistate-card optistate-targeted-card os-card-min-auto-p12"> <div class="targeted-header"> <h4>FCP (First Contentful Paint)</h4> </div> <div class="targeted-stat os-font-11em-bold" id="psi-fcp">--</div> </div> <div class="optistate-card optistate-targeted-card os-card-min-auto-p12"> <div class="targeted-header"> <h4>LCP (Largest Contentful Paint)</h4> </div> <div class="targeted-stat os-font-11em-bold" id="psi-lcp">--</div> </div> <div class="optistate-card optistate-targeted-card os-card-min-auto-p12"> <div class="targeted-header"> <h4>CLS (Cumulative Layout Shift)</h4> </div> <div class="targeted-stat os-font-11em-bold" id="psi-cls">--</div> </div> <div class="optistate-card optistate-targeted-card os-card-min-auto-p12"> <div class="targeted-header"> <h4>TTFB (Time to First Byte)</h4> </div> <div class="targeted-stat os-font-11em-bold" id="psi-ttfb">--</div> </div> <div class="optistate-card optistate-targeted-card os-card-min-auto-p12"> <div class="targeted-header"> <h4>TBT (Total Blocking Time)</h4> </div> <div class="targeted-stat os-font-11em-bold" id="psi-tbt">--</div> </div> <div class="optistate-card optistate-targeted-card os-card-min-auto-p12"> <div class="targeted-header"> <h4>SI (Speed Index)</h4> </div> <div class="targeted-stat os-font-11em-bold" id="psi-si">--</div> </div> <div class="optistate-card optistate-targeted-card os-card-min-auto-p12"> <div class="targeted-header"> <h4>TTI (Time to Interactive)</h4> </div> <div class="targeted-stat os-font-11em-bold" id="psi-tti">--</div> </div> <div class="os-psi-legend"> <span class="os-color-muted">🚦 COLOR KEY</span><br> <span class="os-color-success">🟢 GOOD (90-100)</span><br> <span class="os-color-average">🟠 AVERAGE (60-89)</span><br> <span class="os-color-poor">🔴 POOR (0-59)</span> </div> </div> <div id="optistate-psi-recommendations" class="os-mt-32 os-display-none"> <h3 class="os-psi-rec-header"><span class="dashicons dashicons-lightbulb os-color-link-blue"></span> <?php esc_html_e(
     "Recommended Actions",
     "optistate"
-); ?></h3> <div id="optistate-psi-recommendations-list"></div> </div> </div> </div> <!-- Cleanup Tab --> <div id="tab-cleanup" class="optistate-tab-content"> <div class="optistate-card"> <h2> <span>🧹 <?php esc_html_e(
+); ?></h3> <div id="optistate-psi-recommendations-list"></div> </div> </div> </div><div id="tab-cleanup" class="optistate-tab-content"> <div class="optistate-card"> <h2> <span>🧹 <?php esc_html_e(
     "Detailed Database Cleanup",
     "optistate"
 ); ?></span> <a href="<?php echo esc_url(
@@ -316,7 +345,7 @@ foreach ($recent_posts as $post) {
 ); ?></h3> <p class="os-mb-15"> 🕓 <?php esc_html_e(
     "Deleted folders/tables/options/metas are moved here and kept for 14 days. You can restore them if needed.",
     "optistate"
-); ?> </p> <div id="optistate-trash-list" class="os-mt-15"></div> </div> </div> </div> <!-- Backups Tab --> <div id="tab-backups" class="optistate-tab-content"> <div class="optistate-card"> <h2> <span><span class="dashicons dashicons-database-export"></span> <?php esc_html_e(
+); ?> </p> <div id="optistate-trash-list" class="os-mt-15"></div> </div> </div> </div><div id="tab-backups" class="optistate-tab-content"> <div class="optistate-card"> <h2> <span><span class="dashicons dashicons-database-export"></span> <?php esc_html_e(
      "Create a Database Backup",
      "optistate"
  ); ?></span> <a href="<?php echo esc_url(
@@ -513,7 +542,7 @@ foreach ($recent_posts as $post) {
 ); ?><br> <div class="os-warning-text-danger"> ⚠️ <?php esc_html_e(
     "Warning: This disables the SQL Firewall and Malicious Code Scanner. Only use with trusted backup files.",
     "optistate"
-); ?> </div> </div> </div> </label> </div> </div> </div> <!-- Stats Tab --> <div id="tab-stats" class="optistate-tab-content"> <div class="optistate-card"> <h2> <span>📈 <?php esc_html_e(
+); ?> </div> </div> </div> </label> </div> </div> </div><div id="tab-stats" class="optistate-tab-content"> <div class="optistate-card"> <h2> <span>📈 <?php esc_html_e(
      "Database Statistics",
      "optistate"
  ); ?></span> <a href="<?php echo esc_url(
@@ -536,33 +565,92 @@ foreach ($recent_posts as $post) {
 ); ?></span> </div> <button class="button optistate-refresh-health-score" id="optistate-refresh-stats">♻ <?php esc_html_e(
     "Refresh Stats",
     "optistate"
-); ?></button> </div> </div> <!-- Performance Tab --> <div id="tab-performance" class="optistate-tab-content"> <div class="optistate-card"> <h2> <span><span class="dashicons dashicons-admin-settings"></span> <?php esc_html_e(
-    "Performance Features Manager",
-    "optistate"
-); ?></span> <a href="<?php echo esc_url(
-    $manual_base . "#ch-7"
-); ?>" class="optistate-info-link os-no-decoration" target="_blank" rel="noopener noreferrer" title="<?php esc_attr_e(
+); ?></button> </div> </div>
+<div id="tab-caching" class="optistate-tab-content">
+    <div class="optistate-card">
+        <h2>
+            <span><span class="dashicons dashicons-database"></span> <?php esc_html_e(
+                "Caching Features",
+                "optistate"
+            ); ?></span>
+            <a href="<?php echo esc_url(
+                $manual_base . "#ch-7-2"
+            ); ?>" class="optistate-info-link os-no-decoration" target="_blank" rel="noopener noreferrer" title="<?php esc_attr_e(
     "Read the Manual",
     "optistate"
-); ?>"><span class="dashicons dashicons-info"></span></a> </h2> <div id="optistate-performance-content-wrapper"> <p class="os-line-height-relaxed"> 🎯 <?php esc_html_e(
-    "Activate or deactivate WordPress features according to your needs for improved performance and lower server load.",
+); ?>"><span class="dashicons dashicons-info"></span></a>
+        </h2>
+        <div id="optistate-caching-content-wrapper">
+            <p class="os-line-height-relaxed">
+                🗄️ <?php esc_html_e(
+                    "Configure caching mechanisms to dramatically improve page load times and reduce server load.",
+                    "optistate"
+                ); ?><br>
+                ⚠️ <?php esc_html_e(
+                    "Do not activate server‑side page caching if you already use a caching plugin (e.g., WP Rocket, LiteSpeed, WP Super Cache).",
+                    "optistate"
+                ); ?>
+            </p>
+            <div id="optistate-caching-features-loading" class="os-loading-padded-center">
+                <span class="spinner is-active"></span><span><?php esc_html_e(
+                    "Loading caching features...",
+                    "optistate"
+                ); ?></span>
+            </div>
+            <div id="optistate-caching-features-container" class="os-display-none"></div>
+            <div class="optistate-features-actions">
+                <button type="button" class="button button-primary button-large optistate-save-perf-btn" id="save-caching-features-btn">✓ <?php esc_html_e(
+                    "Save Caching Settings",
+                    "optistate"
+                ); ?></button>
+            </div>
+        </div>
+    </div>
+</div>
+<div id="tab-tweaks" class="optistate-tab-content">
+    <div class="optistate-card">
+        <h2>
+            <span><span class="dashicons dashicons-admin-settings"></span> <?php esc_html_e(
+                "Tweak Features",
+                "optistate"
+            ); ?></span>
+            <a href="<?php echo esc_url(
+                $manual_base . "#ch-7-4"
+            ); ?>" class="optistate-info-link os-no-decoration" target="_blank" rel="noopener noreferrer" title="<?php esc_attr_e(
+    "Read the Manual",
     "optistate"
-); ?><br> <strong>⚠️ <?php esc_html_e(
-    "Important:",
-    "optistate"
-); ?></strong> <?php esc_html_e(
+); ?>"><span class="dashicons dashicons-info"></span></a>
+        </h2>
+        <div id="optistate-tweaks-content-wrapper">
+            <p class="os-line-height-relaxed">
+                🛠️ <?php esc_html_e(
+                    "Fine‑tune various WordPress features to improve performance, reduce overhead, and enhance security.",
+                    "optistate"
+                ); ?><br>
+                <strong>⚠️ <?php esc_html_e(
+                    "Important:",
+                    "optistate"
+                ); ?></strong> <?php esc_html_e(
     "Some features may affect functionality. Features marked with ⚠️ should be tested carefully.",
     "optistate"
-); ?><br> ✔ <?php esc_html_e(
-    "Click the Save button at the bottom of this list to confirm features activation/update.",
-    "optistate"
-); ?> </p> <div id="optistate-performance-features-loading" class="os-loading-padded-center"> <span class="spinner is-active"></span><span><?php esc_html_e(
-     "Loading performance features...",
-     "optistate"
- ); ?></span> </div> <div id="optistate-performance-features-container" class="os-display-none"></div> <div id="optistate-performance-features-actions" class="optistate-features-actions"> <button type="button" class="button button-primary button-large os-save-perf-btn" id="save-performance-features-btn">✓ <?php esc_html_e(
-    "Save Performance Settings",
-    "optistate"
-); ?></button> </div> </div> </div> </div> <!-- Advanced Tab --> <div id="tab-advanced" class="optistate-tab-content"> <div class="optistate-card"> <h2> <span>🗄️ <?php esc_html_e(
+); ?>
+            </p>
+            <div id="optistate-tweaks-features-loading" class="os-loading-padded-center">
+                <span class="spinner is-active"></span><span><?php esc_html_e(
+                    "Loading tweak features...",
+                    "optistate"
+                ); ?></span>
+            </div>
+            <div id="optistate-tweaks-features-container" class="os-display-none"></div>
+            <div class="optistate-features-actions">
+                <button type="button" class="button button-primary button-large optistate-save-perf-btn" id="save-tweaks-features-btn">✓ <?php esc_html_e(
+                    "Save Tweaks Settings",
+                    "optistate"
+                ); ?></button>
+            </div>
+        </div>
+    </div>
+</div> <div id="tab-advanced" class="optistate-tab-content"> <div class="optistate-card"> <h2> <span>🗄️ <?php esc_html_e(
     "Advanced Database Optimization",
     "optistate"
 ); ?></span> <a href="<?php echo esc_url(
@@ -759,7 +847,7 @@ foreach ($sr_tables as $sr_table) {
 ); ?></button> <span id="optistate-sr-loading" class="os-sr-loading-span"> <span class="spinner is-active os-spinner-reset"></span><span class="sr-status-text"><?php esc_html_e(
     "Processing...",
     "optistate"
-); ?></span> </span> </div> <div id="optistate-sr-results" class="os-mt-20-hidden"></div> </div> </div> <!-- Automation Tab --> <div id="tab-automation" class="optistate-tab-content"> <div class="optistate-card"> <h2> <span><span class="dashicons dashicons-clock"></span> <?php esc_html_e(
+); ?></span> </span> </div> <div id="optistate-sr-results" class="os-mt-20-hidden"></div> </div> </div><div id="tab-automation" class="optistate-tab-content"> <div class="optistate-card"> <h2> <span><span class="dashicons dashicons-clock"></span> <?php esc_html_e(
     "Automatic Backup and Cleanup",
     "optistate"
 ); ?></span> <a href="<?php echo esc_url(
@@ -913,7 +1001,7 @@ printf(
 ); ?>">⬇ <?php esc_html_e(
     "Download Log",
     "optistate"
-); ?></button> </div> </div> <div id="optistate-settings-log"></div> </div> </div> <!-- Security Tab --> <div id="tab-security" class="optistate-tab-content"> <div class="optistate-card"> <h2> <span class="dashicons dashicons-shield"></span> <?php esc_html_e(
+); ?></button> </div> </div> <div id="optistate-settings-log"></div> </div> </div><div id="tab-security" class="optistate-tab-content"> <div class="optistate-card"> <h2> <span class="dashicons dashicons-shield"></span> <?php esc_html_e(
     "Login Page Protection",
     "optistate"
 ); ?> <a href="<?php echo esc_url(
@@ -1369,7 +1457,7 @@ printf(
 ); ?></p> <br> <button type="button" class="button button-primary" id="optistate-save-two-factor-btn">✓ <?php esc_html_e(
     "Save 2FA Settings",
     "optistate"
-); ?></button> </div> </div> <!-- Settings Tab --> <div id="tab-settings" class="optistate-tab-content"> <div class="optistate-card"> <h2><span class="dashicons dashicons-admin-users"></span> <?php esc_html_e(
+); ?></button> </div> </div><div id="tab-settings" class="optistate-tab-content"> <div class="optistate-card"> <h2><span class="dashicons dashicons-admin-users"></span> <?php esc_html_e(
     "User Access Control",
     "optistate"
 ); ?> <a href="<?php echo esc_url(
@@ -1497,7 +1585,7 @@ isset($presets[$last_preset])
     "Download a JSON file containing all your plugin settings.",
     "optistate"
 ); ?><br> ✓ <?php esc_html_e(
-    "Includes: Backup limits, automation schedule, performance features, user access restrictions, and more.",
+    "Includes: Backup limits, automation schedule, caching/tweak features, user access restrictions, and more.",
     "optistate"
 ); ?> </p> <button type="button" class="button-2" id="optistate-export-settings-btn"><span class="dashicons dashicons-download"></span> <?php esc_html_e(
      "Export Settings",

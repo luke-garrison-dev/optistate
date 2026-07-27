@@ -943,21 +943,6 @@ class OPTISTATE_Settings_Manager
                 );
                 return;
             }
-            $validated_cron_state = null;
-            if (
-                isset($import_data["cron_manager_state"]) &&
-                is_array($import_data["cron_manager_state"])
-            ) {
-                $validated_cron_state = $this->validate_cron_manager_state(
-                    $import_data["cron_manager_state"]
-                );
-                $this->main_plugin->set_store_data(
-                    "cron_manager_state",
-                    $validated_cron_state
-                );
-                delete_transient("optistate_cron_jobs_cache");
-                delete_transient("optistate_cron_slowed_schedules");
-            }
             if (
                 !empty($validated_settings["login_protect_enabled"]) ||
                 !empty($validated_settings["ip_blocker_enabled"])
@@ -1009,10 +994,8 @@ class OPTISTATE_Settings_Manager
             } else {
                 $preset_label = __("None (Default)", "optistate");
             }
-            $cron_state_imported = $validated_cron_state !== null;
-            $cron_state_count = $cron_state_imported
-                ? count($validated_cron_state)
-                : 0;
+            $cron_state_imported = false;
+            $cron_state_count = 0;
             $summary = [
                 "max_backups" => $validated_settings["max_backups"],
                 "auto_optimize_days" =>
@@ -1029,11 +1012,20 @@ class OPTISTATE_Settings_Manager
                     ? sanitize_text_field($import_data["exported_at"])
                     : __("Unknown", "optistate"),
                 "preset_label" => $preset_label,
-                "cron_state_imported" => $cron_state_imported,
-                "cron_state_count" => $cron_state_count,
+                "cron_state_imported" => false,
+                "cron_state_count" => 0,
+                "cron_state_warning" => __(
+                    "<br>Paused/slowed cron states were not imported. Reconfigure them if needed.",
+                    "optistate"
+                ),
             ];
+            $message = __("Settings imported successfully!", "optistate");
+            if (!empty($summary["cron_state_warning"])) {
+                $message .= " " . $summary["cron_state_warning"];
+            }
+
             OPTISTATE_Utils::send_json_success([
-                "message" => __("Settings imported successfully!", "optistate"),
+                "message" => $message,
                 "summary" => $summary,
             ]);
         } catch (\Throwable $e) {
@@ -1236,77 +1228,6 @@ class OPTISTATE_Settings_Manager
             );
             return false;
         }
-    }
-    private function validate_cron_manager_state(array $state): array
-    {
-        $validated = [];
-        foreach ($state as $entry) {
-            if (!is_array($entry)) {
-                continue;
-            }
-            if (!isset($entry["hook"]) || !is_string($entry["hook"])) {
-                continue;
-            }
-            if (!isset($entry["paused"]) && !isset($entry["slowed"])) {
-                continue;
-            }
-            $hook = sanitize_text_field($entry["hook"]);
-            $args =
-                isset($entry["args"]) && is_array($entry["args"])
-                    ? $entry["args"]
-                    : [];
-            $valid = ["hook" => $hook, "args" => $args];
-            if (
-                isset($entry["original_schedule"]) &&
-                is_string($entry["original_schedule"])
-            ) {
-                $valid["original_schedule"] = sanitize_text_field(
-                    $entry["original_schedule"]
-                );
-            }
-            if (
-                isset($entry["original_interval"]) &&
-                is_numeric($entry["original_interval"])
-            ) {
-                $valid["original_interval"] = (int) $entry["original_interval"];
-            }
-            if (
-                isset($entry["original_next_run"]) &&
-                is_numeric($entry["original_next_run"])
-            ) {
-                $valid["original_next_run"] = (int) $entry["original_next_run"];
-            }
-            if (isset($entry["paused"])) {
-                $valid["paused"] = (bool) $entry["paused"];
-            }
-            if (isset($entry["slowed"])) {
-                $valid["slowed"] = (bool) $entry["slowed"];
-            }
-            if (
-                isset($entry["slowed_schedule"]) &&
-                is_string($entry["slowed_schedule"])
-            ) {
-                $valid["slowed_schedule"] = sanitize_key(
-                    $entry["slowed_schedule"]
-                );
-            }
-            if (
-                isset($entry["slowed_interval"]) &&
-                is_numeric($entry["slowed_interval"])
-            ) {
-                $valid["slowed_interval"] = (int) $entry["slowed_interval"];
-            }
-            if (
-                !empty($valid["slowed"]) &&
-                (!isset($valid["slowed_schedule"]) ||
-                    !isset($valid["slowed_interval"]))
-            ) {
-                continue;
-            }
-            $id = md5($hook . serialize($args));
-            $validated[$id] = $valid;
-        }
-        return $validated;
     }
     public function ajax_save_one_click_extra_items(): void
     {

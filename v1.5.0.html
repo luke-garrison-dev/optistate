@@ -1516,20 +1516,20 @@
                 <li class="li-sm"><a class="toc-link" href="#ch-6-4">6.4. ⏱️ A Note on WP-Cron</a></li>
               </ul>
             </li>
-            <li class="li-std">
-              <strong><a class="toc-link-primary" href="#ch-7">⚡ Performance Features Manager</a></strong>
-              <ul class="toc-sublist">
-                <li class="li-sm"><a class="toc-link" href="#ch-7-1">7.1. 🚫 CRITICAL: Do NOT Use With Other Caching Plugins</a></li>
-                <li class="li-sm"><a class="toc-link" href="#ch-7-2">7.2. 💨 Feature: Server-Side Page Caching</a></li>
-                <li class="li-sm"><a class="toc-link" href="#ch-7-3">7.3. 🌐 Feature: Browser Caching (.htaccess)</a></li>
-                <li class="li-sm"><a class="toc-link" href="#ch-7-3-1">7.3.1 🖥 Nginx Server Configuration (Security + Caching)</a></li>
-                <li class="li-sm"><a class="toc-link" href="#ch-7-3-2">7.3.2. 🛡️ Feature: Security Headers (.htaccess)</a></li>
-                <li class="li-sm"><a class="toc-link" href="#ch-7-4">7.4. 🏗️ Feature: WordPress Core Optimizations (A-Z)</a></li>
-                <li class="li-sm"><a class="toc-link" href="#ch-7-5">7.5. 📊 Feature: Performance Metrics (PageSpeed)</a></li>
-                <li class="li-sm"><a class="toc-link" href="#ch-7-6">7.6. 🤖 Feature: Bad Bot Blocker</a></li>
-                <li class="li-sm"><a class="toc-link" href="#ch-7-7">7.7. ⏰ Cron Manager</a></li>
-              </ul>
-            </li>
+<li class="li-std">
+  <strong><a class="toc-link-primary" href="#ch-7">⚡ Performance Features</a></strong>
+  <ul class="toc-sublist">
+    <li class="li-sm"><a class="toc-link" href="#ch-7-1">7.1. 🚫 CRITICAL: Do NOT Use With Other Caching Plugins</a></li>
+    <li class="li-sm"><a class="toc-link" href="#ch-7-2">7.2. 💨 Feature: Server-Side Page Caching <span class="txt-blue2">(Caching Tab)</span></a></li>
+    <li class="li-sm"><a class="toc-link" href="#ch-7-3">7.3. 🌐 Feature: Browser Caching (.htaccess) <span class="txt-blue2">(Caching Tab)</span></a></li>
+    <li class="li-sm"><a class="toc-link" href="#ch-7-3-1">7.3.1 🖥 Nginx Server Configuration (Security + Caching) <span class="txt-blue2">(Caching Tab)</span></a></li>
+    <li class="li-sm"><a class="toc-link" href="#ch-7-3-2">7.3.2. 🛡️ Feature: Security Headers (.htaccess) <span class="txt-blue2">(Tweaks Tab)</span></a></li>
+    <li class="li-sm"><a class="toc-link" href="#ch-7-4">7.4. 🏗️ WordPress Core Optimizations (Tweak Features) <span class="txt-blue2">(Tweaks Tab)</span></a></li>
+    <li class="li-sm"><a class="toc-link" href="#ch-7-5">7.5. 📊 Feature: Performance Metrics (PageSpeed) <span class="txt-blue2">(Dashboard Tab)</span></a></li>
+    <li class="li-sm"><a class="toc-link" href="#ch-7-6">7.6. 🤖 Feature: Bad Bot Blocker <span class="txt-blue2">(Tweaks Tab)</span></a></li>
+    <li class="li-sm"><a class="toc-link" href="#ch-7-7">7.7. ⏰ Cron Manager <span class="txt-blue2">(Tweaks Tab)</span></a></li>
+  </ul>
+</li>
             <li class="li-std">
               <strong><a class="toc-link-primary" href="#ch-8">🎯 Optimization Strategies: Putting It All Together</a></strong>
               <ul class="toc-sublist">
@@ -3294,7 +3294,7 @@ SET FOREIGN_KEY_CHECKS = 1;</code></pre>
         <li class="li-std">Clears any stuck maintenance mode flag that might remain after a crashed restore.</li>
       </ul>
       <h2 id="ch-7" class="h2title">⚡ 7. Performance Features Manager</h2>
-      <p>This is a complete, standalone performance suite.</p>
+      <p>🔄 The plugin’s Performance features are now organised into two dedicated tabs: <strong>Caching</strong> and <strong>Tweaks</strong>, both accessible from the main navigation. The <strong>Caching</strong> tab contains all features related to page and browser caching (Server‑Side Page Caching, Browser Caching, Database Query Caching, and the Nginx configuration guide). The <strong>Tweaks</strong> tab groups all other performance enhancements, security headers, bot blocking, cron management, and WordPress core optimisations. Each feature description below indicates its tab location.</p>
       <h3 id="ch-7-1" class="h3title">🚫 7.1. CRITICAL: Do NOT Use With Other Caching Plugins</h3>
       <blockquote class="niceblock">
         <strong class="block-title-warn">🚨 WARNING</strong>
@@ -3303,6 +3303,7 @@ SET FOREIGN_KEY_CHECKS = 1;</code></pre>
         <p class="mb-0">If you are already using another caching plugin, <strong>🚫 DO NOT</strong> enable "Server-Side Page Caching" or "Browser Caching" in WP Optimal State PRO. You can, however, still use all the "WordPress Core Optimizations".</p>
       </blockquote>
       <h3 id="ch-7-2" class="h3title">💨 7.2. Feature: Server-Side Page Caching</h3>
+	  <p><strong>📍 Location:</strong> Caching Tab</p>
       <p>This is the single most effective way to speed up your site. It converts heavy PHP processing into instant static HTML. When a visitor requests a page, a lightweight cached file is served directly, bypassing slow PHP and database queries. For example, after enabling this, viewing your homepage for the second time will load instantly from a pre-generated HTML file instead of rebuilding the page from scratch. Combine this with browser caching for ultimate performance.</p>
       <ul class="ul-std">
         <li class="li-std">
@@ -3388,6 +3389,7 @@ SET FOREIGN_KEY_CHECKS = 1;</code></pre>
         <strong>If you don't see it:</strong> The page was generated dynamically (this is normal for logged-in users, cart pages, or first visits before the cache is built).
       </blockquote>
       <h3 id="ch-7-3" class="h3title">🌐 7.3. Feature: Browser Caching (.htaccess)</h3>
+	  <p><strong>📍 Location:</strong> Caching Tab</p>
       <p>This complements Server Caching. It tells a visitor's <em>browser</em> to save static files (like your logo, CSS, and JS) on their computer.</p>
       <ul class="ul-std">
         <li class="li-std"><strong>❓ What it is:</strong> When a user visits a second page, their browser doesn't need to re-download your logo; it can pull it from its local storage.</li>
@@ -3516,6 +3518,7 @@ SET FOREIGN_KEY_CHECKS = 1;</code></pre>
         </div>
       </details>
       <h3 id="ch-7-3-1" class="h3title">🖥 7.3.1. Nginx Server Configuration (Security + Caching)</h3>
+	  <p><strong>📍 Location:</strong> Caching Tab (manual configuration instructions)</p>
       <blockquote class="nginx-info-blockquote">
         <strong class="block-title-blue-5">ℹ️ IMPORTANT: Nginx Users</strong>
         <p class="mt-5">If your server runs on Nginx instead of Apache, the <strong>Browser Caching (.htaccess)</strong> feature cannot be activated automatically because Nginx does not use .htaccess files.</p>
@@ -3763,6 +3766,7 @@ location ~* \.(?:css|js|jpg|jpeg|png|gif|webp|avif|svg|ico|woff|woff2|ttf|eot)$ 
         <li class="li-std"><strong>Directory Security:</strong> Try accessing <code>https://yoursite.com/wp-content/uploads/optistate/db-backups/</code> - you should get a 403 Forbidden error.</li>
       </ul>
       <h3 id="ch-7-3-2" class="h3title">🛡️ 7.3.2. Feature: Security Headers (.htaccess)</h3>
+	  <p><strong>📍 Location:</strong> Tweaks Tab</p>
       <p>This feature adds a comprehensive set of recommended HTTP security headers to your site's <code>.htaccess</code> file, protecting against common web vulnerabilities such as clickjacking, MIME sniffing, XSS, and more. Requires Apache server with a writable <code>.htaccess</code> file.</p>
       <ul class="ul-std">
         <li class="li-std"><strong>❓ What it does:</strong> Adds HTTP response headers that instruct the browser on how to handle your site's content securely, preventing many client-side attacks.</li>
@@ -3841,7 +3845,8 @@ location ~* \.(?:css|js|jpg|jpeg|png|gif|webp|avif|svg|ico|woff|woff2|ttf|eot)$ 
         <strong class="block-title-blue-5">ℹ️ IMPORTANT: Nginx Users</strong>
         <p>On Nginx servers, this feature cannot be activated automatically. The security headers must be manually added to your Nginx configuration. See <a href="#ch-7-3-1" class="txt-link-blue">Section 7.3.1</a> for the complete Nginx configuration that includes all these headers.</p>
       </blockquote>
-      <h3 id="ch-7-4" class="h3title">🏗️ 7.4. Feature: WordPress Core Optimizations (A-Z)</h3>
+      <h3 id="ch-7-4" class="h3title">🏗️ 7.4. WordPress Core Optimizations (Tweak Features)</h3>
+	  <p><strong>📍 Location:</strong> Tweaks Tab (except <strong>Database Query Caching</strong>, which is located in the Caching Tab).</p>
       <p>This is a comprehensive suite of toggles and configurations designed to disable or optimize non-essential WordPress features that can slow down your site.<br>These are all <strong>safe to use</strong> alongside other third-party caching plugins.</p>
       <ul class="ul-std">
         <li class="li-xl">
@@ -3938,19 +3943,13 @@ location ~* \.(?:css|js|jpg|jpeg|png|gif|webp|avif|svg|ico|woff|woff2|ttf|eot)$ 
             </li>
           </ul>
         </li>
-        <li class="li-xl">
-          <strong>🤖 Bad Bot Blocker:</strong> Blocks resource-intensive SEO crawlers that provide competitive intelligence to other businesses. Does NOT block legitimate search engines like Google, Bing, or regional search engines. For example, bots like AhrefsBot and SemrushBot, which can consume significant server resources by crawling your entire site daily, will be blocked from accessing your content. You can customize the list to match your needs (see <a href="#ch-7-6">section 7.6</a> for more details).
+	    <li class="li-xl">
+          <strong>😊 Emoji Scripts:</strong> Removes the emoji detection JavaScript (wp-emoji-release.min.js) loaded on every page. Modern browsers display emojis natively, making this script redundant. For example, on a business website that never uses emojis, this removes an unnecessary HTTP request and JavaScript execution, slightly improving page load speed.
           <ul class="toc-sublist">
             <li class="li-sm">
               <div class="rec-box">
-                <strong>💡 Recommendation:</strong> <strong>Activate</strong> (especially useful for reducing server load on shared hosting).
+                <strong>💡 Recommendation:</strong> <strong>Activate</strong> (set to "✔ Active").
               </div>
-            </li>
-            <li class="li-sm mt-8">
-              <strong>⚙️ Configuration:</strong>
-              <ul class="ul-disc">
-                <li class="li-std"><strong>🤖 Blocked Bots List:</strong> Customize the list of bot User-Agents to block (one per line). Default list includes MJ12bot, AhrefsBot, SemrushBot, DotBot, PetalBot, Bytespider, Mauibot, MegaIndex, SerpstatBot, BLEXBot, DataForSeoBot, and AspiegelBot.</li>
-              </ul>
             </li>
           </ul>
         </li>
@@ -3974,6 +3973,42 @@ location ~* \.(?:css|js|jpg|jpeg|png|gif|webp|avif|svg|ico|woff|woff2|ttf|eot)$ 
               </div>
             </li>
             <li class="li-sm mt-8"><em>(Note: If this setting is defined in your <code>wp-config.php</code> file, this control will be disabled.)</em></li>
+          </ul>
+        </li>
+        <li class="li-xl">
+          <strong>၊၊||၊ Heartbeat API Control:</strong> Reduces or disables the WordPress Heartbeat API that creates frequent AJAX calls (every 15-60 seconds). This saves server resources but may disable real-time features like post editing locks. For example, on a site where multiple authors aren't simultaneously editing the same post, you can set it to "Slow Down" to reduce background AJAX requests by 75%.
+          <ul class="toc-sublist">
+            <li class="li-sm">
+              <div class="rec-box">
+                <strong>💡 Recommendation:</strong> "Slow Down (Every 2 minutes)."
+              </div>
+            </li>
+          </ul>
+        </li>
+        <li class="li-xl">
+          <strong>↩️ Self Pingbacks:</strong> Prevents WordPress from creating pingback notifications when you link to your own posts, reducing unnecessary database operations. For example, if you write a blog post that links to another post on your own site, without this feature WordPress would create a pingback comment for that internal link, cluttering your comments section and adding database overhead.
+          <ul class="toc-sublist">
+            <li class="li-sm">
+              <div class="rec-box">
+                <strong>💡 Recommendation:</strong> <strong>Activate</strong> (set to "✔ Active").
+              </div>
+            </li>
+          </ul>
+        </li>
+        <li class="li-xl">
+          <strong>🤖 Bad Bot Blocker:</strong> Blocks resource-intensive SEO crawlers that provide competitive intelligence to other businesses. Does NOT block legitimate search engines like Google, Bing, or regional search engines. For example, bots like AhrefsBot and SemrushBot, which can consume significant server resources by crawling your entire site daily, will be blocked from accessing your content. You can customize the list to match your needs (see <a href="#ch-7-6">section 7.6</a> for more details).
+          <ul class="toc-sublist">
+            <li class="li-sm">
+              <div class="rec-box">
+                <strong>💡 Recommendation:</strong> <strong>Activate</strong> (especially useful for reducing server load on shared hosting).
+              </div>
+            </li>
+            <li class="li-sm mt-8">
+              <strong>⚙️ Configuration:</strong>
+              <ul class="ul-disc">
+                <li class="li-std"><strong>🤖 Blocked Bots List:</strong> Customize the list of bot User-Agents to block (one per line). Default list includes MJ12bot, AhrefsBot, SemrushBot, DotBot, PetalBot, Bytespider, Mauibot, MegaIndex, SerpstatBot, BLEXBot, DataForSeoBot, and AspiegelBot.</li>
+              </ul>
+            </li>
           </ul>
         </li>
         <li class="li-xl">
@@ -4007,27 +4042,7 @@ location ~* \.(?:css|js|jpg|jpeg|png|gif|webp|avif|svg|ico|woff|woff2|ttf|eot)$ 
           </ul>
         </li>
         <li class="li-xl">
-          <strong>၊၊||၊ Heartbeat API Control:</strong> Reduces or disables the WordPress Heartbeat API that creates frequent AJAX calls (every 15-60 seconds). This saves server resources but may disable real-time features like post editing locks. For example, on a site where multiple authors aren't simultaneously editing the same post, you can set it to "Slow Down" to reduce background AJAX requests by 75%.
-          <ul class="toc-sublist">
-            <li class="li-sm">
-              <div class="rec-box">
-                <strong>💡 Recommendation:</strong> "Slow Down (Every 2 minutes)."
-              </div>
-            </li>
-          </ul>
-        </li>
-        <li class="li-xl">
-          <strong>😊 Emoji Scripts:</strong> Removes the emoji detection JavaScript (wp-emoji-release.min.js) loaded on every page. Modern browsers display emojis natively, making this script redundant. For example, on a business website that never uses emojis, this removes an unnecessary HTTP request and JavaScript execution, slightly improving page load speed.
-          <ul class="toc-sublist">
-            <li class="li-sm">
-              <div class="rec-box">
-                <strong>💡 Recommendation:</strong> <strong>Activate</strong> (set to "✔ Active").
-              </div>
-            </li>
-          </ul>
-        </li>
-        <li class="li-xl">
-          <strong>↩️ Self Pingbacks:</strong> Prevents WordPress from creating pingback notifications when you link to your own posts, reducing unnecessary database operations. For example, if you write a blog post that links to another post on your own site, without this feature WordPress would create a pingback comment for that internal link, cluttering your comments section and adding database overhead.
+          <strong>♯ WordPress Version Meta Tag:</strong> Removes the <code>&lt;meta name="generator" content="WordPress X.Y.Z" /&gt;</code> tag. This is a minor security improvement, as it hides your WordPress version from simple scanners. For example, automated bots scanning for vulnerable WordPress versions will not see your version number in the page source.
           <ul class="toc-sublist">
             <li class="li-sm">
               <div class="rec-box">
@@ -4068,16 +4083,6 @@ location ~* \.(?:css|js|jpg|jpeg|png|gif|webp|avif|svg|ico|woff|woff2|ttf|eot)$ 
         </li>
         <li class="li-xl">
           <strong>🪟 Windows Live Writer Manifest:</strong> Removes the <code>wlwmanifest.xml</code> link tag, used by a discontinued Microsoft product. For example, the tag <code>&lt;link rel="wlwmanifest" type="application/wlwmanifest+xml" href="https://yoursite.com/wp-includes/wlwmanifest.xml" /&gt;</code> will be removed. This is completely safe as the software is no longer in use.
-          <ul class="toc-sublist">
-            <li class="li-sm">
-              <div class="rec-box">
-                <strong>💡 Recommendation:</strong> <strong>Activate</strong> (set to "✔ Active").
-              </div>
-            </li>
-          </ul>
-        </li>
-        <li class="li-xl">
-          <strong>♯ WordPress Version Meta Tag:</strong> Removes the <code>&lt;meta name="generator" content="WordPress X.Y.Z" /&gt;</code> tag. This is a minor security improvement, as it hides your WordPress version from simple scanners. For example, automated bots scanning for vulnerable WordPress versions will not see your version number in the page source.
           <ul class="toc-sublist">
             <li class="li-sm">
               <div class="rec-box">
@@ -4246,6 +4251,7 @@ if (method_exists($wpdb, 'remove_placeholder_escape')) {
         </ul>
       </div>
       <h3 id="ch-7-5" class="h3title">📊 7.5. Feature: Performance Metrics (PageSpeed)</h3>
+	  <p><strong>📍 Location:</strong> Dashboard Tab (Performance Metrics card).</p>
       <p>This module integrates the Google PageSpeed Insights API directly into your WordPress dashboard. It allows you to monitor real-world performance metrics without leaving the platform, focusing on the <strong>Core Web Vitals</strong> that impact your search engine rankings and user experience.</p>
       <h4 class="h4title">🔑 API Configuration & Security</h4>
       <ul class="ul-std">
@@ -4298,6 +4304,7 @@ if (method_exists($wpdb, 'remove_placeholder_escape')) {
         <li class="li-std"><strong>Activity Logging:</strong> Every successful audit is automatically recorded in the Activity Log using the format: <code>🚦 Performance Audit (Strategy): Score% - URL</code>. For example: <code>🚦 Performance Audit (Mobile): 99% - /home/</code>.</li>
       </ul>
       <h3 id="ch-7-6" class="h3title">🤖 7.6. Feature: Bad Bot Blocker</h3>
+	  <p><strong>📍 Location:</strong> Tweaks Tab</p>
       <p>Not all traffic to your website is human or helpful. Resource-intensive bots—such as aggressive SEO crawlers, backlink analyzers, and competitive intelligence tools—can consume up to 40% of your server resources without providing any value to your business or visitors.</p>
       <div class="info-box-mb15">
         <strong>💡 The Benefit:</strong> By blocking these bots at the application level, you save CPU cycles and RAM, ensuring your server remains responsive for real visitors and legitimate search engines like Google and Bing.
@@ -4500,6 +4507,7 @@ if ($http_user_agent ~* ("MJ12bot|AhrefsBot|SemrushBot|DotBot|PetalBot|Bytespide
         </div>
       </blockquote>
       <h3 id="ch-7-7" class="h3title">⏰ 7.7. Cron Manager</h3>
+	  <p><strong>📍 Location:</strong> Tweaks Tab</p>
       <p>
         The Cron Manager gives you visibility and control over WordPress's background task scheduler.
         It allows you to view every scheduled job, its next run time, and its current state, and to take actions to reduce server load by pausing or slowing down non‑critical tasks.
