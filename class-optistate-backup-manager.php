@@ -561,8 +561,7 @@ class OPTISTATE_Backup_Manager
 
             $verification = OPTISTATE_Backup_Utilities::verify_backup_file(
                 $this->wp_filesystem,
-                $filepath,
-                false
+                $filepath
             );
             if ($verification["valid"] === false) {
                 throw new Exception(
@@ -1261,7 +1260,6 @@ class OPTISTATE_Backup_Manager
                 $verification = OPTISTATE_Backup_Utilities::verify_backup_file(
                     $this->wp_filesystem,
                     $safety_filepath,
-                    false,
                     true,
                     true
                 );
@@ -1748,6 +1746,8 @@ class OPTISTATE_Backup_Manager
             );
 
             if ($result["status"] === "done") {
+                $uploaded_file_info =
+                    $result["state"]["uploaded_file_info"] ?? [];
                 $this->process_store->delete($restore_key);
                 if (!empty($result["state"]["user_id"])) {
                     $this->process_store->delete(
@@ -1755,6 +1755,19 @@ class OPTISTATE_Backup_Manager
                             $result["state"]["user_id"]
                     );
                 }
+                if (!empty($uploaded_file_info["temp_filepath_to_delete"])) {
+                    $this->cleanup_all_temp_sql_files(
+                        basename(
+                            $uploaded_file_info["temp_filepath_to_delete"]
+                        )
+                    );
+                }
+                if (!empty($uploaded_file_info["temp_transient_to_delete"])) {
+                    $this->process_store->delete(
+                        $uploaded_file_info["temp_transient_to_delete"]
+                    );
+                }
+                $this->cleanup_all_temp_sql_files();
 
                 $settings = $this->main_plugin->settings_manager->get_persistent_settings();
                 $two_factor_was_enabled = !empty(
@@ -3007,8 +3020,7 @@ class OPTISTATE_Backup_Manager
 
         $result = OPTISTATE_Backup_Utilities::verify_backup_file(
             $this->wp_filesystem,
-            $filepath,
-            false
+            $filepath
         );
         if ($result["valid"]) {
             set_transient($cache_key, $result, 24 * HOUR_IN_SECONDS);

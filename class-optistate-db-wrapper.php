@@ -130,7 +130,6 @@ class OPTISTATE_DB_Wrapper
             (class_exists("LudicrousDB") && is_a($wpdb, "LudicrousDB")) ||
             (isset($wpdb->is_mysql) && !$wpdb->is_mysql)
         ) {
-            $connection_start = microtime(true);
             if (method_exists($wpdb, "send_reads_to_masters")) {
                 $wpdb->send_reads_to_masters();
             }
@@ -180,7 +179,6 @@ class OPTISTATE_DB_Wrapper
         $client_flags = defined("MYSQL_CLIENT_FLAGS") ? MYSQL_CLIENT_FLAGS : 0;
         $attempts = 0;
         $last_error = "";
-        $connection_start = microtime(true);
 
         while ($attempts < $this->max_retries) {
             try {
@@ -608,7 +606,6 @@ class OPTISTATE_DB_Wrapper
             $this->transaction_active = false;
             $this->transaction_start_time = null;
             $connection->autocommit(true);
-            $this->init_commands["autocommit"] = "SET autocommit = 1";
             return true;
         }
         OPTISTATE_Utils::log_critical_error("Failed to commit transaction", [
@@ -640,7 +637,6 @@ class OPTISTATE_DB_Wrapper
             $this->transaction_active = false;
             $this->transaction_start_time = null;
             $connection->autocommit(true);
-            $this->init_commands["autocommit"] = "SET autocommit = 1";
             return true;
         }
         OPTISTATE_Utils::log_critical_error("Failed to rollback transaction", [
@@ -665,50 +661,47 @@ class OPTISTATE_DB_Wrapper
     {
         return $this->connection ? $this->connection->errno : 0;
     }
+    public function owns_connection(): bool
+    {
+        return $this->owns_connection;
+    }
+
+    private function restore_original_session_vars(): void
+    {
+        if (
+            $this->connection === null ||
+            $this->owns_connection ||
+            empty($this->original_session_vars)
+        ) {
+            return;
+        }
+        $integer_vars = [
+            "foreign_key_checks" => "foreign_key_checks",
+            "unique_checks" => "unique_checks",
+            "autocommit" => "autocommit",
+            "wait_timeout" => "wait_timeout",
+        ];
+        $quoted_vars = ["sql_mode" => "sql_mode", "time_zone" => "time_zone"];
+        foreach ($this->original_session_vars as $var => $value) {
+            if (isset($integer_vars[$var])) {
+                @$this->connection->query(
+                    "SET SESSION {$integer_vars[$var]} = " . (int) $value
+                );
+            } elseif (isset($quoted_vars[$var])) {
+                @$this->connection->query(
+                    "SET SESSION {$quoted_vars[$var]} = '" .
+                        $this->connection->real_escape_string((string) $value) .
+                        "'"
+                );
+            }
+        }
+        $this->original_session_vars = [];
+    }
+
     public function close(): void
     {
         if ($this->connection !== null) {
-            if (
-                !$this->owns_connection &&
-                !empty($this->original_session_vars)
-            ) {
-                foreach ($this->original_session_vars as $var => $value) {
-                    if ($var === "foreign_key_checks") {
-                        @$this->connection->query(
-                            "SET SESSION foreign_key_checks = " . (int) $value
-                        );
-                    } elseif ($var === "unique_checks") {
-                        @$this->connection->query(
-                            "SET SESSION unique_checks = " . (int) $value
-                        );
-                    } elseif ($var === "autocommit") {
-                        @$this->connection->query(
-                            "SET SESSION autocommit = " . (int) $value
-                        );
-                    } elseif ($var === "sql_mode") {
-                        @$this->connection->query(
-                            "SET SESSION sql_mode = '" .
-                                $this->connection->real_escape_string(
-                                    (string) $value
-                                ) .
-                                "'"
-                        );
-                    } elseif ($var === "wait_timeout") {
-                        @$this->connection->query(
-                            "SET SESSION wait_timeout = " . (int) $value
-                        );
-                    } elseif ($var === "time_zone") {
-                        @$this->connection->query(
-                            "SET SESSION time_zone = '" .
-                                $this->connection->real_escape_string(
-                                    (string) $value
-                                ) .
-                                "'"
-                        );
-                    }
-                }
-                $this->original_session_vars = [];
-            }
+            $this->restore_original_session_vars();
 
             if (!empty($this->active_locks)) {
                 foreach (array_keys($this->active_locks) as $lock_name) {
@@ -796,8 +789,12 @@ class OPTISTATE_DB_Wrapper
 
         if ($this->connection !== null && $this->is_connection_alive()) {
             try {
-                @$this->connection->query("SET FOREIGN_KEY_CHECKS = 1");
-                @$this->connection->query("SET AUTOCOMMIT = 1");
+                if ($this->owns_connection) {
+                    @$this->connection->query("SET FOREIGN_KEY_CHECKS = 1");
+                    @$this->connection->query("SET AUTOCOMMIT = 1");
+                } else {
+                    $this->restore_original_session_vars();
+                }
             } catch (\Throwable $e) {
             }
         }

@@ -213,22 +213,38 @@ class OPTISTATE_Process_Store
         wp_cache_set($key, $value, self::CACHE_GROUP, $cache_ttl);
         return $value;
     }
-    private function get_expiration(string $key)
+    private function read_live_row(string $key): ?array
     {
-        $this->ensure_table_exists();
         global $wpdb;
         $row = $this->safe_db_retry(function () use ($wpdb, $key) {
             return $wpdb->get_row(
                 $wpdb->prepare(
-                    "SELECT expiration FROM {$this->table_name} WHERE process_key = %s",
-                    $key
+                    "SELECT process_value, expiration FROM {$this->table_name} WHERE process_key = %s AND (expiration = 0 OR expiration > %d)",
+                    $key,
+                    time()
                 )
             );
         });
         if (!$row) {
-            return false;
+            return null;
         }
-        return (int) $row->expiration;
+        $value = json_decode($row->process_value, true);
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            $value = false;
+        }
+        return [
+            "value" => $value,
+            "expiration" => (int) $row->expiration,
+        ];
+    }
+
+    private function expiration_to_ttl(int $expiration): int
+    {
+        if ($expiration === 0) {
+            return 0;
+        }
+        $remaining = $expiration - time();
+        return $remaining > 0 ? $remaining : 1;
     }
 
     public function delete(string $key): bool
@@ -355,16 +371,14 @@ class OPTISTATE_Process_Store
         $needs_lock = $this->is_critical_key($key);
 
         if (!$needs_lock) {
-            $current = $this->get($key);
+            $row = $this->read_live_row($key);
+            $current = $row === null ? false : $row["value"];
             $new_value = $callback($current);
             if ($new_value !== false) {
-                $existing_exp = $this->get_expiration($key);
-                if ($existing_exp !== false && $existing_exp > 0) {
-                    $remaining = $existing_exp - time();
-                    $ttl = $remaining > 0 ? $remaining : DAY_IN_SECONDS;
-                } else {
-                    $ttl = DAY_IN_SECONDS;
-                }
+                $ttl =
+                    $row === null
+                        ? DAY_IN_SECONDS
+                        : $this->expiration_to_ttl($row["expiration"]);
                 $this->set($key, $new_value, $ttl);
             }
             return $new_value;
@@ -398,7 +412,6 @@ class OPTISTATE_Process_Store
 
         try {
             global $wpdb;
-            $connection = $db_wrapper->get_connection();
             $current_time = time();
             $prepared_select = $wpdb->prepare(
                 "SELECT process_value, expiration FROM {$this->table_name} WHERE process_key = %s AND (expiration = 0 OR expiration > %d)",

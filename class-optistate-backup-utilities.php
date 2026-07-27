@@ -256,7 +256,6 @@ class OPTISTATE_Backup_Utilities
     public static function verify_backup_file(
         $filesystem,
         string $filepath,
-        bool $skip_integrity_check = false,
         bool $check_core_tables = true,
         bool $check_db_name = true
     ): array {
@@ -278,16 +277,12 @@ class OPTISTATE_Backup_Utilities
                 ),
             ];
         }
+
         $filename = basename($filepath);
-        if ($skip_integrity_check) {
-            return [
-                "valid" => true,
-                "message" => esc_html__("File accessible.", "optistate"),
-            ];
-        }
         $is_temp =
             strpos($filename, "restore-temp-") === 0 ||
             strpos($filename, "decompressed-") === 0;
+
         global $wpdb;
         $table_name = $wpdb->prefix . "optistate_backup_metadata";
         $metadata = $wpdb->get_row(
@@ -297,6 +292,7 @@ class OPTISTATE_Backup_Utilities
             ),
             ARRAY_A
         );
+
         if (!$is_temp && $metadata) {
             $actual_size = $filesystem->size($filepath);
             $expected_size = (int) $metadata["file_size"];
@@ -330,91 +326,47 @@ class OPTISTATE_Backup_Utilities
                 ];
             }
         }
-        if (preg_match('/\.gz$/i', $filepath)) {
-            if (!function_exists("gzopen")) {
+
+        $is_gzipped = (bool) preg_match('/\.gz$/i', $filepath);
+        if ($is_gzipped && !function_exists("gzopen")) {
+            return [
+                "valid" => false,
+                "message" => esc_html__(
+                    "Gzip support is not available on this server.",
+                    "optistate"
+                ),
+            ];
+        }
+
+        $scan = self::scan_backup_file(
+            $filepath,
+            $is_gzipped,
+            $check_core_tables,
+            $check_db_name
+        );
+        if (!$scan["readable"]) {
+            return ["valid" => false, "message" => $scan["message"]];
+        }
+
+        if ($check_db_name && $scan["db_name"] !== null) {
+            if (!hash_equals($scan["db_name"], DB_NAME)) {
                 return [
                     "valid" => false,
-                    "message" => esc_html__(
-                        "Gzip support is not available on this server.",
-                        "optistate"
-                    ),
-                ];
-            }
-            $gz_handle = @gzopen($filepath, "rb");
-            if (!$gz_handle) {
-                return [
-                    "valid" => false,
-                    "message" => esc_html__(
-                        "Cannot open gzip file.",
-                        "optistate"
-                    ),
-                ];
-            }
-            $test_read = @gzread($gz_handle, 4096);
-            @gzclose($gz_handle);
-            if ($test_read === false) {
-                return [
-                    "valid" => false,
-                    "message" => esc_html__(
-                        "Gzip file corrupted.",
+                    "message" => __(
+                        "Validation failed: Database name mismatch.<br>The current database and the backup to be restored have different names!",
                         "optistate"
                     ),
                 ];
             }
         }
-        if ($check_core_tables) {
-            $core_table_suffixes = ["_options", "_posts", "_users"];
-            $found_tables = [];
-            $is_gzipped = preg_match('/\.gz$/i', $filepath);
-            $handle = null;
-            try {
-                $handle = $is_gzipped
-                    ? @gzopen($filepath, "rb")
-                    : @fopen($filepath, "rb");
-                if (!$handle) {
-                } else {
-                    $buffer = "";
-                    $current_delimiter = ";";
-                    $max_statements = 5000;
-                    $checked = 0;
-                    while (
-                        ($statement = OPTISTATE_SQL_Parser::read_statement(
-                            $handle,
-                            $buffer,
-                            $is_gzipped,
-                            $current_delimiter
-                        )) !== null
-                    ) {
-                        $checked++;
-                        if ($checked > $max_statements) {
-                            break;
-                        }
-                        $trim_line = trim($statement);
-                        if (empty($trim_line)) {
-                            continue;
-                        }
-                        foreach ($core_table_suffixes as $suffix) {
-                            if (
-                                !in_array($suffix, $found_tables) &&
-                                strpos($trim_line, $suffix) !== false
-                            ) {
-                                $found_tables[] = $suffix;
-                            }
-                        }
-                        if (count($found_tables) >= 3) {
-                            break;
-                        }
-                    }
-                    if ($is_gzipped) {
-                        @gzclose($handle);
-                    } else {
-                        @fclose($handle);
-                    }
-                }
-            } catch (\Exception $e) {
-            }
-            if (count($found_tables) < 3) {
-                $missing = array_diff($core_table_suffixes, $found_tables);
+
+        if ($check_core_tables && !$scan["truncated"]) {
+            $missing = array_keys(
+                array_filter($scan["core_tables"], static function ($found) {
+                    return !$found;
+                })
+            );
+            if (!empty($missing)) {
                 return [
                     "valid" => false,
                     "message" => sprintf(
@@ -427,77 +379,7 @@ class OPTISTATE_Backup_Utilities
                 ];
             }
         }
-        if ($check_db_name) {
-            $is_gzipped = preg_match('/\.gz$/i', $filepath);
-            $handle = null;
-            try {
-                $handle = $is_gzipped
-                    ? @gzopen($filepath, "rb")
-                    : @fopen($filepath, "rb");
-                if ($handle) {
-                    $header = $is_gzipped
-                        ? @gzread($handle, 8192)
-                        : @fread($handle, 8192);
-                    if ($header !== false) {
-                        $file_db_name = null;
-                        if (
-                            preg_match(
-                                '/^(?:--|#)\s*Database:\s*[`\'"]?(.+?)[`\'"]?\s*$/m',
-                                $header,
-                                $matches
-                            )
-                        ) {
-                            $file_db_name = trim($matches[1]);
-                        }
-                        if ($file_db_name === null) {
-                            if (
-                                preg_match(
-                                    '/CREATE\s+DATABASE\s+(?:IF\s+NOT\s+EXISTS\s+)?[`\'"]?([^`\'";\s]+)[`\'"]?/i',
-                                    $header,
-                                    $matches
-                                )
-                            ) {
-                                $file_db_name = trim($matches[1]);
-                            }
-                        }
-                        if ($file_db_name === null) {
-                            if (
-                                preg_match(
-                                    '/USE\s+[`\'"]?([^`\'";\s]+)[`\'"]?/i',
-                                    $header,
-                                    $matches
-                                )
-                            ) {
-                                $file_db_name = trim($matches[1]);
-                            }
-                        }
-                        if (
-                            $file_db_name !== null &&
-                            !hash_equals($file_db_name, DB_NAME)
-                        ) {
-                            if ($is_gzipped) {
-                                @gzclose($handle);
-                            } else {
-                                @fclose($handle);
-                            }
-                            return [
-                                "valid" => false,
-                                "message" => __(
-                                    "Validation failed: Database name mismatch.<br>The current database and the backup to be restored have different names!",
-                                    "optistate"
-                                ),
-                            ];
-                        }
-                    }
-                    if ($is_gzipped) {
-                        @gzclose($handle);
-                    } else {
-                        @fclose($handle);
-                    }
-                }
-            } catch (\Exception $e) {
-            }
-        }
+
         return [
             "valid" => true,
             "message" => esc_html__(
@@ -506,6 +388,158 @@ class OPTISTATE_Backup_Utilities
             ),
             "metadata" => $metadata ?? null,
         ];
+    }
+
+    private static function scan_backup_file(
+        string $filepath,
+        bool $is_gzipped,
+        bool $need_core_tables,
+        bool $need_db_name
+    ): array {
+        $result = [
+            "readable" => false,
+            "message" => "",
+            "db_name" => null,
+            "core_tables" => ["options" => false, "posts" => false, "users" => false],
+            "truncated" => false,
+        ];
+
+        $handle = $is_gzipped
+            ? @gzopen($filepath, "rb")
+            : @fopen($filepath, "rb");
+        if (!$handle) {
+            $result["message"] = esc_html__(
+                "Backup file could not be opened for verification.",
+                "optistate"
+            );
+            return $result;
+        }
+
+        try {
+            $header = $is_gzipped
+                ? @gzread($handle, 8192)
+                : @fread($handle, 8192);
+            if ($header === false) {
+                $result["message"] = $is_gzipped
+                    ? esc_html__("Gzip file corrupted.", "optistate")
+                    : esc_html__(
+                        "Backup file could not be read.",
+                        "optistate"
+                    );
+                return $result;
+            }
+            $result["readable"] = true;
+
+            if ($need_db_name) {
+                $result["db_name"] = self::extract_db_name_from_header(
+                    (string) $header
+                );
+            }
+
+            if (!$need_core_tables) {
+                return $result;
+            }
+
+            global $wpdb;
+            $base_prefix = (string) $wpdb->base_prefix;
+            $buffer = (string) $header;
+            $current_delimiter = ";";
+            $deadline = time() + 15;
+            $max_statements = 200000;
+            $checked = 0;
+            $remaining = 3;
+
+            while (
+                ($statement = OPTISTATE_SQL_Parser::read_statement(
+                    $handle,
+                    $buffer,
+                    $is_gzipped,
+                    $current_delimiter
+                )) !== null
+            ) {
+                if (++$checked > $max_statements || time() > $deadline) {
+                    $result["truncated"] = true;
+                    break;
+                }
+                $head = ltrim($statement);
+                if (strncasecmp($head, "CREATE TABLE", 12) !== 0) {
+                    continue;
+                }
+                $table = self::extract_created_table_name($head);
+                if ($table === null) {
+                    continue;
+                }
+                if (
+                    $base_prefix !== "" &&
+                    strpos($table, $base_prefix) !== 0
+                ) {
+                    continue;
+                }
+                foreach ($result["core_tables"] as $role => $found) {
+                    if ($found) {
+                        continue;
+                    }
+                    $len = strlen($role);
+                    if (
+                        strlen($table) > $len &&
+                        strcasecmp(substr($table, -$len), $role) === 0
+                    ) {
+                        $result["core_tables"][$role] = true;
+                        $remaining--;
+                        break;
+                    }
+                }
+                if ($remaining === 0) {
+                    break;
+                }
+            }
+        } catch (\Throwable $e) {
+            $result["truncated"] = true;
+            OPTISTATE_Utils::log_critical_error(
+                "verify_backup_file: scan aborted",
+                ["file" => basename($filepath), "error" => $e->getMessage()]
+            );
+        } finally {
+            if ($is_gzipped) {
+                @gzclose($handle);
+            } else {
+                @fclose($handle);
+            }
+        }
+
+        return $result;
+    }
+
+    private static function extract_created_table_name(string $statement): ?string
+    {
+        if (
+            preg_match(
+                '/^CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[`"\']?([A-Za-z0-9_$]+)[`"\']?/i',
+                $statement,
+                $matches
+            )
+        ) {
+            return $matches[1];
+        }
+        return null;
+    }
+
+    private static function extract_db_name_from_header(string $header): ?string
+    {
+        $patterns = [
+            '/^(?:--|#)\s*Database:\s*[`\'"]?(.+?)[`\'"]?\s*$/m',
+            '/CREATE\s+DATABASE\s+(?:IF\s+NOT\s+EXISTS\s+)?[`\'"]?([^`\'";\s]+)[`\'"]?/i',
+            '/USE\s+[`\'"]?([^`\'";\s]+)[`\'"]?/i',
+        ];
+        foreach ($patterns as $pattern) {
+            if (preg_match($pattern, $header, $matches)) {
+                $name = trim($matches[1]);
+                if ($name !== "") {
+                    return $name;
+                }
+            }
+        }
+        return null;
     }
 
     public static function is_shell_exec_available(): bool
@@ -603,49 +637,49 @@ class OPTISTATE_Backup_Utilities
         }
         $upper = strtoupper(substr($sql, 0, 20));
 
-        if (str_starts_with($upper, "INSERT")) {
+        if (strncmp($upper, "INSERT", 6) === 0) {
             return "INSERT";
         }
-        if (str_starts_with($upper, "REPLACE")) {
+        if (strncmp($upper, "REPLACE", 7) === 0) {
             return "REPLACE";
         }
-        if (str_starts_with($upper, "UPDATE")) {
+        if (strncmp($upper, "UPDATE", 6) === 0) {
             return "UPDATE";
         }
-        if (str_starts_with($upper, "DELETE")) {
+        if (strncmp($upper, "DELETE", 6) === 0) {
             return "DELETE";
         }
-        if (str_starts_with($upper, "TRUNCATE")) {
+        if (strncmp($upper, "TRUNCATE", 8) === 0) {
             return "TRUNCATE";
         }
-        if (str_starts_with($upper, "CREATE")) {
+        if (strncmp($upper, "CREATE", 6) === 0) {
             return "CREATE";
         }
-        if (str_starts_with($upper, "DROP")) {
+        if (strncmp($upper, "DROP", 4) === 0) {
             return "DROP T";
         }
-        if (str_starts_with($upper, "ALTER")) {
+        if (strncmp($upper, "ALTER", 5) === 0) {
             return "ALTER ";
         }
-        if (str_starts_with($upper, "SET ")) {
+        if (strncmp($upper, "SET ", 4) === 0) {
             return "SET ";
         }
         if (
-            str_starts_with($upper, "START ") ||
-            str_starts_with($upper, "BEGIN")
+            strncmp($upper, "START ", 6) === 0 ||
+            strncmp($upper, "BEGIN", 5) === 0
         ) {
             return "START ";
         }
-        if (str_starts_with($upper, "COMMIT")) {
+        if (strncmp($upper, "COMMIT", 6) === 0) {
             return "COMMIT";
         }
-        if (str_starts_with($upper, "LOCK T")) {
+        if (strncmp($upper, "LOCK T", 6) === 0) {
             return "LOCK T";
         }
-        if (str_starts_with($upper, "UNLOCK")) {
+        if (strncmp($upper, "UNLOCK", 6) === 0) {
             return "UNLOCK";
         }
-        if (str_starts_with($upper, "DELIMITER")) {
+        if (strncmp($upper, "DELIMITER", 9) === 0) {
             return "DELIMITER";
         }
         if ($sql[0] === "/" || $sql[0] === "-" || $sql[0] === "#") {
@@ -726,30 +760,42 @@ class OPTISTATE_Backup_Utilities
             }
         }
         unset($seg);
+        $sql_only = "";
+        foreach ($segments as $seg) {
+            if ($seg["type"] === "sql") {
+                $sql_only .= $seg["value"];
+            }
+        }
+        $inject_row_format =
+            $add_row_format &&
+            stripos($sql_only, "ENGINE=InnoDB") !== false &&
+            stripos($sql_only, "ROW_FORMAT") === false;
+        $downgrade_collation =
+            $mysql_version !== "" &&
+            version_compare($mysql_version, "8.0.0", "<");
+
         $out = "";
         foreach ($segments as $seg) {
-            $out .= $seg["value"];
+            $value = $seg["value"];
+            if ($seg["type"] === "sql") {
+                if ($inject_row_format) {
+                    $value = preg_replace(
+                        "/(ENGINE=InnoDB)/i",
+                        '$1 ROW_FORMAT=DYNAMIC',
+                        $value
+                    );
+                }
+                if ($downgrade_collation) {
+                    $value = str_replace(
+                        "utf8mb4_0900_ai_ci",
+                        "utf8mb4_unicode_520_ci",
+                        $value
+                    );
+                }
+                $value = preg_replace("/\)\s*ENGINE/", ") ENGINE", $value);
+            }
+            $out .= $value;
         }
-
-        if (
-            $add_row_format &&
-            stripos($out, "ENGINE=InnoDB") !== false &&
-            stripos($out, "ROW_FORMAT") === false
-        ) {
-            $out = preg_replace(
-                "/(ENGINE=InnoDB)/i",
-                '$1 ROW_FORMAT=DYNAMIC',
-                $out
-            );
-        }
-        if ($mysql_version && version_compare($mysql_version, "8.0.0", "<")) {
-            $out = str_replace(
-                "utf8mb4_0900_ai_ci",
-                "utf8mb4_unicode_520_ci",
-                $out
-            );
-        }
-        $out = preg_replace("/\)\s*ENGINE/", ") ENGINE", $out);
         return trim($out) . ";";
     }
     private static function split_sql_preserving_literals(string $sql): array
@@ -892,42 +938,6 @@ class OPTISTATE_Backup_Utilities
         $config["max_worker_time"] = max(10, $config["max_worker_time"]);
         $config_cache = $config;
         return $config;
-    }
-
-    public static function is_internal_backup(
-        $filesystem,
-        string $filepath
-    ): bool {
-        if (!$filesystem || !$filesystem->exists($filepath)) {
-            return false;
-        }
-        $is_gzipped = preg_match('/\.gz$/i', $filepath);
-        $line = false;
-        try {
-            if ($is_gzipped) {
-                if (function_exists("gzopen")) {
-                    $handle = @gzopen($filepath, "rb");
-                    if ($handle) {
-                        $line = @gzgets($handle, 1024);
-                        @gzclose($handle);
-                    }
-                }
-            } else {
-                if (function_exists("fopen")) {
-                    $handle = @fopen($filepath, "rb");
-                    if ($handle) {
-                        $line = @fgets($handle, 1024);
-                        @fclose($handle);
-                    }
-                }
-            }
-        } catch (\Throwable $e) {
-            return false;
-        }
-        if ($line === false || $line === null) {
-            return false;
-        }
-        return strpos($line, "-- Created by WP Optimal State Plugin") !== false;
     }
 
     public static function scan_sql_for_php_threats(string $sample): bool

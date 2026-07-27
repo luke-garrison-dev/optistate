@@ -120,7 +120,6 @@ class OPTISTATE_Restore_Engine
             $verification = OPTISTATE_Backup_Utilities::verify_backup_file(
                 $this->wp_filesystem,
                 $sql_filepath,
-                false,
                 true,
                 true
             );
@@ -183,10 +182,6 @@ class OPTISTATE_Restore_Engine
             $master_restore_key =
                 "optistate_master_restore_" . bin2hex(random_bytes(14));
             $temp_filename = basename($sql_filepath);
-            $is_internal_backup = OPTISTATE_Backup_Utilities::is_internal_backup(
-                $this->wp_filesystem,
-                $sql_filepath
-            );
             $master_state = [
                 "status" => "safety_backup_starting",
                 "message" => __("CREATING SAFETY BACKUP ....", "optistate"),
@@ -199,7 +194,6 @@ class OPTISTATE_Restore_Engine
                 "restore_key" => null,
                 "button_selector" => $button_selector,
                 "backup_charset" => $verification["metadata"] ?? null,
-                "is_internal_backup" => $is_internal_backup,
             ];
             $this->process_store->set(
                 $master_restore_key,
@@ -320,10 +314,6 @@ class OPTISTATE_Restore_Engine
 
             global $wpdb;
             $meta_table = $wpdb->prefix . "optistate_backup_metadata";
-            $is_internal = OPTISTATE_Backup_Utilities::is_internal_backup(
-                $this->wp_filesystem,
-                $filepath
-            );
             $total_statements_estimate = 0;
             if (preg_match('/\.gz$/i', $filepath)) {
                 $total_statements_estimate = (int) (($total_size * 5) / 500);
@@ -350,7 +340,6 @@ class OPTISTATE_Restore_Engine
                 "deferred_indexes" => [],
                 "resume_attempts" => 0,
                 "last_error" => "",
-                "is_internal_backup" => $is_internal,
                 "total_statements_estimate" => $total_statements_estimate,
                 "restore_key" => $transient_key,
                 "estimate_adjusted" => false,
@@ -1123,7 +1112,6 @@ class OPTISTATE_Restore_Engine
             $temp_views_created = $state["temp_views_created"] ?? [];
             $deferred_views = $state["deferred_views"] ?? [];
             $state["deferred_indexes"] = $state["deferred_indexes"] ?? [];
-            $is_internal_backup = $state["is_internal_backup"] ?? false;
             $restore_key_for_deferred =
                 $state["restore_key"] ?? "restore_deferred";
 
@@ -1743,19 +1731,19 @@ class OPTISTATE_Restore_Engine
                         );
                     }
                     $swap_result = $this->swap_temp_tables_to_live(
-                    $db_connection,
-                    $temp_tables_created
-                );
-                if (!$swap_result["success"]) {
-                    throw new Exception($swap_result["message"]);
-                }
+                        $db_connection,
+                        $temp_tables_created
+                    );
+                    if (!$swap_result["success"]) {
+                        throw new Exception($swap_result["message"]);
+                    }
                 if (function_exists("wp_cache_flush")) {
                     wp_cache_flush();
                 }
                 wp_cache_delete("alloptions", "options");
                 wp_cache_delete("notoptions", "options");
                 $state["temp_tables_created"] = $temp_tables_created;
-                $state["temp_views_created"]  = $temp_views_created;
+                $state["temp_views_created"] = $temp_views_created;
                 $state["deferred_views"]      = $deferred_views;
                 $this->process_store->set(
                     $restore_key_for_deferred,
@@ -2294,29 +2282,33 @@ class OPTISTATE_Restore_Engine
                 ),
             ];
         }
-        $found_options_table_key = null;
-        $found_posts_table_key = null;
-        $found_users_table_key = null;
+        global $wpdb;
+        $base_prefix = (string) $wpdb->base_prefix;
+        $core_roles = ["options" => null, "posts" => null, "users" => null];
         foreach ($temp_tables_created as $original_table => $temp_table) {
             if (
-                $found_options_table_key === null &&
-                substr($original_table, -8) === "_options"
+                $base_prefix !== "" &&
+                strpos($original_table, $base_prefix) !== 0
             ) {
-                $found_options_table_key = $original_table;
+                continue;
             }
-            if (
-                $found_posts_table_key === null &&
-                substr($original_table, -6) === "_posts"
-            ) {
-                $found_posts_table_key = $original_table;
-            }
-            if (
-                $found_users_table_key === null &&
-                substr($original_table, -6) === "_users"
-            ) {
-                $found_users_table_key = $original_table;
+            foreach ($core_roles as $role => $already_found) {
+                if ($already_found !== null) {
+                    continue;
+                }
+                $len = strlen($role);
+                if (
+                    strlen($original_table) > $len &&
+                    strcasecmp(substr($original_table, -$len), $role) === 0
+                ) {
+                    $core_roles[$role] = $original_table;
+                    break;
+                }
             }
         }
+        $found_options_table_key = $core_roles["options"];
+        $found_posts_table_key = $core_roles["posts"];
+        $found_users_table_key = $core_roles["users"];
         if (
             !$found_options_table_key ||
             !$found_posts_table_key ||
@@ -2324,13 +2316,13 @@ class OPTISTATE_Restore_Engine
         ) {
             $missing = [];
             if (!$found_options_table_key) {
-                $missing[] = "..._options";
+                $missing[] = "...options";
             }
             if (!$found_posts_table_key) {
-                $missing[] = "..._posts";
+                $missing[] = "...posts";
             }
             if (!$found_users_table_key) {
-                $missing[] = "..._users";
+                $missing[] = "...users";
             }
             return [
                 "valid" => false,
@@ -2348,7 +2340,6 @@ class OPTISTATE_Restore_Engine
             $found_posts_table_key,
             $found_users_table_key,
         ];
-        global $wpdb;
         $temp_table_names = [];
         foreach ($core_table_keys_to_check as $core_table_key) {
             $temp_table_name = $temp_tables_created[$core_table_key];
@@ -2699,7 +2690,6 @@ class OPTISTATE_Restore_Engine
                 "message" => "no foreign keys touch the swapped tables",
             ];
         }
-        $db->query("SET SESSION FOREIGN_KEY_CHECKS = 1");
         $orphans = [];
         foreach ($fks as $fk) {
             $child_q = OPTISTATE_Utils::escape_identifier($fk["child_table"]);

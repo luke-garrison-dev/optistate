@@ -921,9 +921,14 @@ class OPTISTATE_Backup_Engine
                         : [$offset_batch_size, $offset]
                 );
             }
-            $result = $wrapper
-                ->get_connection()
-                ->query($query, MYSQLI_USE_RESULT);
+            $conn = $wrapper->get_connection();
+            $target_bytes = $this->get_effective_batch_size($conn);
+            $result = $conn->query(
+                $query,
+                $wrapper->owns_connection()
+                    ? MYSQLI_USE_RESULT
+                    : MYSQLI_STORE_RESULT
+            );
             if (!$result) {
                 $db_error = $wrapper->get_error();
                 $wrapper->rollback();
@@ -946,8 +951,6 @@ class OPTISTATE_Backup_Engine
                 : "INSERT INTO {$safe_table} VALUES ";
             $row_buffer = [];
             $buffer_size = 0;
-            $conn = $wrapper->get_connection();
-            $target_bytes = $this->get_effective_batch_size($conn);
             $max_rows_per_flush = 5000;
             $flush_count = 0;
             $last_pk_value = $offset === null ? 0 : $offset;
@@ -1085,7 +1088,11 @@ class OPTISTATE_Backup_Engine
         $query = "SELECT $column_list FROM $safe_table";
         $wrapper = OPTISTATE_DB_Wrapper::get_instance();
         $conn = $wrapper->get_connection();
-        $result = $conn->query($query, MYSQLI_USE_RESULT);
+        $target_bytes = $this->get_effective_batch_size($conn);
+        $result = $conn->query(
+            $query,
+            $wrapper->owns_connection() ? MYSQLI_USE_RESULT : MYSQLI_STORE_RESULT
+        );
         if (!$result) {
             throw new Exception(
                 "Unbuffered query failed: " . $wrapper->get_error()
@@ -1094,7 +1101,6 @@ class OPTISTATE_Backup_Engine
         $insert_header = "INSERT INTO {$safe_table} ({$column_list}) VALUES ";
         $row_buffer = [];
         $buffer_size = 0;
-        $target_bytes = $this->get_effective_batch_size($conn);
         $row_count = 0;
         $total_rows = 0;
         while ($row = mysqli_fetch_assoc($result)) {
