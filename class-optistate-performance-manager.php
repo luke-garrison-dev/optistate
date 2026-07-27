@@ -11,44 +11,56 @@ class OPTISTATE_Performance_Manager
     private bool $is_trash_days_defined = false;
     private bool $runtime_optimizations_applied = false;
     private ?string $compiled_bot_regex = null;
-
+    private array $hook_callback_cache = [];
+    private ?bool $config_constants_loaded = null;
     private static function _str_contains(
         string $haystack,
         string $needle
     ): bool {
         return $needle === "" || strpos($haystack, $needle) !== false;
     }
-
     public function __construct(OPTISTATE $main_plugin)
     {
         $this->main_plugin = $main_plugin;
         add_filter("cron_schedules", [$this, "register_custom_cron_schedules"]);
-        if (is_admin() || wp_doing_ajax() || (defined("WP_CLI") && WP_CLI)) {
-            $config_constants = get_transient("optistate_config_constants");
-            if (
-                !is_array($config_constants) ||
-                !array_key_exists("WP_POST_REVISIONS", $config_constants) ||
-                !array_key_exists("EMPTY_TRASH_DAYS", $config_constants)
-            ) {
-                $config_constants = [
-                    "WP_POST_REVISIONS" => $this->is_constant_in_wp_config(
-                        "WP_POST_REVISIONS"
-                    ),
-                    "EMPTY_TRASH_DAYS" => $this->is_constant_in_wp_config(
-                        "EMPTY_TRASH_DAYS"
-                    ),
-                ];
-                set_transient(
-                    "optistate_config_constants",
-                    $config_constants,
-                    12 * HOUR_IN_SECONDS
-                );
-            }
-            $this->is_revisions_defined =
-                (bool) $config_constants["WP_POST_REVISIONS"];
-            $this->is_trash_days_defined =
-                (bool) $config_constants["EMPTY_TRASH_DAYS"];
+        add_action("admin_init", [$this, "cleanup_orphaned_cron_state"]);
+    }
+
+    private function _ensure_config_constants_loaded(): void
+    {
+        if ($this->config_constants_loaded !== null) {
+            return;
         }
+        $this->config_constants_loaded = true;
+
+        if (!is_admin() && !wp_doing_ajax() && !(defined("WP_CLI") && WP_CLI)) {
+            return;
+        }
+
+        $config_constants = get_transient("optistate_config_constants");
+        if (
+            !is_array($config_constants) ||
+            !array_key_exists("WP_POST_REVISIONS", $config_constants) ||
+            !array_key_exists("EMPTY_TRASH_DAYS", $config_constants)
+        ) {
+            $config_constants = [
+                "WP_POST_REVISIONS" => $this->is_constant_in_wp_config(
+                    "WP_POST_REVISIONS"
+                ),
+                "EMPTY_TRASH_DAYS" => $this->is_constant_in_wp_config(
+                    "EMPTY_TRASH_DAYS"
+                ),
+            ];
+            set_transient(
+                "optistate_config_constants",
+                $config_constants,
+                12 * HOUR_IN_SECONDS
+            );
+        }
+        $this->is_revisions_defined =
+            (bool) $config_constants["WP_POST_REVISIONS"];
+        $this->is_trash_days_defined =
+            (bool) $config_constants["EMPTY_TRASH_DAYS"];
     }
 
     public function get_feature_definitions(): array
@@ -456,29 +468,21 @@ class OPTISTATE_Performance_Manager
                     "category" => "header",
                 ],
             ];
-            if (
-                isset($definitions["browser_caching"]) ||
-                isset($definitions["security_headers"])
-            ) {
-                $htaccess_info = $this->get_htaccess_info();
-                if (isset($definitions["browser_caching"])) {
-                    $definitions["browser_caching"][
-                        "disabled"
-                    ] = !$htaccess_info["writable"];
-                }
-                if (isset($definitions["security_headers"])) {
-                    $definitions["security_headers"][
-                        "disabled"
-                    ] = !$htaccess_info["writable"];
-                }
-            }
+
+            $htaccess_info = $this->get_htaccess_info();
+            $definitions["browser_caching"]["disabled"] = !$htaccess_info[
+                "writable"
+            ];
+            $definitions["security_headers"]["disabled"] = !$htaccess_info[
+                "writable"
+            ];
         }
         return $definitions;
     }
 
-    public function get_performance_settings(): array
+    public function get_performance_settings(bool $force = false): array
     {
-        if ($this->performance_settings_cache !== null) {
+        if (!$force && $this->performance_settings_cache !== null) {
             return $this->performance_settings_cache;
         }
         $settings = $this->main_plugin->settings_manager->get_persistent_settings();
@@ -802,7 +806,26 @@ class OPTISTATE_Performance_Manager
         array $args,
         int $timestamp = 0
     ): string {
-        return md5($hook . serialize($args) . "|" . $timestamp);
+        return md5($hook . $this->_canonicalize_args($args) . "|" . $timestamp);
+    }
+
+    private function _canonicalize_args(array $args): string
+    {
+        $this->_deep_ksort($args);
+        return wp_json_encode(
+            $args,
+            JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+        );
+    }
+
+    private function _deep_ksort(array &$array): void
+    {
+        ksort($array, SORT_STRING);
+        foreach ($array as &$value) {
+            if (is_array($value)) {
+                $this->_deep_ksort($value);
+            }
+        }
     }
 
     private function _cron_manager_get_state(bool $force = false): array
@@ -873,11 +896,16 @@ class OPTISTATE_Performance_Manager
             $changed = true;
         }
         if ($changed) {
-            $this->_cron_manager_set_state($state);
-            $this->main_plugin->log_entry(
-                "🧹 Orphaned cron manager state cleaned up"
-            );
-            delete_transient("optistate_cron_jobs_cache");
+            if ($this->_cron_manager_set_state($state)) {
+                $this->main_plugin->log_entry(
+                    "🧹 Orphaned cron manager state cleaned up"
+                );
+                delete_transient("optistate_cron_jobs_cache");
+            } else {
+                OPTISTATE_Utils::log_critical_error(
+                    "Failed to persist orphaned cron state cleanup"
+                );
+            }
         }
     }
 
@@ -921,10 +949,15 @@ class OPTISTATE_Performance_Manager
 
     private function get_hook_callbacks($hook)
     {
+        if (isset($this->hook_callback_cache[$hook])) {
+            return $this->hook_callback_cache[$hook];
+        }
+
         global $wp_filter;
         $infos = [];
 
         if (empty($wp_filter[$hook])) {
+            $this->hook_callback_cache[$hook] = $infos;
             return $infos;
         }
 
@@ -943,6 +976,7 @@ class OPTISTATE_Performance_Manager
         }
 
         if (empty($callbacks) || !is_array($callbacks)) {
+            $this->hook_callback_cache[$hook] = $infos;
             return $infos;
         }
 
@@ -963,6 +997,7 @@ class OPTISTATE_Performance_Manager
             }
         }
 
+        $this->hook_callback_cache[$hook] = $infos;
         return $infos;
     }
 
@@ -1112,6 +1147,7 @@ class OPTISTATE_Performance_Manager
                         ? (int) $event["interval"]
                         : 0;
                     $next_run = (int) $timestamp;
+                    $is_protected = $this->is_protected_hook($hook);
 
                     $job = [
                         "id" => $id,
@@ -1122,7 +1158,7 @@ class OPTISTATE_Performance_Manager
                         "next_run" => $next_run,
                         "state" => "normal",
                         "can_slow_down" => false,
-                        "protected" => $this->is_protected_hook($hook),
+                        "protected" => $is_protected,
                         "deletable" => $this->is_deletable_hook($hook),
                         "callback_info" => $this->get_hook_callbacks($hook),
                     ];
@@ -1133,6 +1169,10 @@ class OPTISTATE_Performance_Manager
                             $job["state"] = "paused";
                         } elseif (isset($st["slowed"]) && $st["slowed"]) {
                             $job["state"] = "slowed";
+                            $job["slowed_interval"] =
+                                $st["slowed_interval"] ?? 0;
+                            $job["slowed_schedule"] =
+                                $st["slowed_schedule"] ?? "";
                         }
                         if (isset($st["original_schedule"])) {
                             $job["original_schedule"] =
@@ -1150,14 +1190,10 @@ class OPTISTATE_Performance_Manager
 
                     $multiplier = $this->_get_slowdown_multiplier($interval);
                     $job["can_slow_down"] =
+                        !$is_protected &&
                         $schedule !== false &&
                         $multiplier > 1 &&
                         !isset($state[$id]["slowed"]);
-
-                    if ($this->is_protected_hook($job["hook"])) {
-                        $job["protected"] = true;
-                        $job["can_slow_down"] = false;
-                    }
 
                     if ($job["state"] === "missed") {
                         $job["can_slow_down"] = false;
@@ -1194,6 +1230,7 @@ class OPTISTATE_Performance_Manager
             if ($next_run < $now) {
                 $next_run = $now + 60;
             }
+            $is_protected = $this->is_protected_hook($hook);
 
             $job = [
                 "id" => $id,
@@ -1204,15 +1241,10 @@ class OPTISTATE_Performance_Manager
                 "next_run" => $next_run,
                 "state" => "paused",
                 "can_slow_down" => false,
-                "protected" => $this->is_protected_hook($hook),
+                "protected" => $is_protected,
                 "deletable" => $this->is_deletable_hook($hook),
                 "callback_info" => $this->get_hook_callbacks($hook),
             ];
-
-            if ($this->is_protected_hook($hook)) {
-                $job["protected"] = true;
-                $job["can_slow_down"] = false;
-            }
 
             $jobs[] = $job;
         }
@@ -1357,164 +1389,242 @@ class OPTISTATE_Performance_Manager
                         "original_interval" => $interval,
                         "original_next_run" => $next_run,
                     ];
-                    $this->_cron_manager_set_state($state);
+                    if (!$this->_cron_manager_set_state($state)) {
+                        $restored = wp_schedule_event(
+                            $next_run,
+                            $schedule,
+                            $hook,
+                            $args
+                        );
+                        if ($restored === false) {
+                            OPTISTATE_Utils::log_critical_error(
+                                "CRITICAL: Pause state save failed AND original schedule could not be restored",
+                                ["hook" => $hook, "event_id" => $event_id]
+                            );
+                            throw new Exception(
+                                __(
+                                    "Failed to save pause state and could not restore original schedule. Please review the cron manager.",
+                                    "optistate"
+                                )
+                            );
+                        }
+                        throw new Exception(
+                            __(
+                                "Failed to save pause state. Original schedule restored.",
+                                "optistate"
+                            )
+                        );
+                    }
                     $this->main_plugin->log_entry(
                         sprintf('⏸️ Cron job "%s" paused by {username}', $hook)
                     );
                     delete_transient("optistate_cron_jobs_cache");
+                    $updated_jobs = $this->get_cron_jobs(true);
                     OPTISTATE_Utils::send_json_success([
                         "message" => __("Cron job paused.", "optistate"),
+                        "refresh" => true,
+                        "cron_jobs" => $updated_jobs,
                     ]);
                     return;
 
                 case "slowdown":
-    if (!$target_job) {
-        throw new Exception(__("Job not found.", "optistate"));
-    }
-    if ($target_job["state"] === "paused") {
-        throw new Exception(
-            __(
-                "This job is currently paused. Resume it before slowing it down.",
-                "optistate"
-            )
-        );
-    }
-    if ($target_job["state"] === "slowed") {
-        throw new Exception(
-            __("This job is already slowed down.", "optistate")
-        );
-    }
-    if ($schedule === false) {
-        throw new Exception(
-            __(
-                "One-time jobs cannot be slowed down.",
-                "optistate"
-            )
-        );
-    }
+                    if (!$target_job) {
+                        throw new Exception(__("Job not found.", "optistate"));
+                    }
+                    if ($target_job["state"] === "paused") {
+                        throw new Exception(
+                            __(
+                                "This job is currently paused. Resume it before slowing it down.",
+                                "optistate"
+                            )
+                        );
+                    }
+                    if ($target_job["state"] === "slowed") {
+                        throw new Exception(
+                            __("This job is already slowed down.", "optistate")
+                        );
+                    }
+                    if ($schedule === false) {
+                        throw new Exception(
+                            __(
+                                "One-time jobs cannot be slowed down.",
+                                "optistate"
+                            )
+                        );
+                    }
 
-    $multiplier = $this->_get_slowdown_multiplier($interval);
-    if ($multiplier <= 1) {
-        throw new Exception(
-            __(
-                "This job interval is already long enough; no slowdown needed.",
-                "optistate"
-            )
-        );
-    }
+                    $multiplier = $this->_get_slowdown_multiplier($interval);
+                    if ($multiplier <= 1) {
+                        throw new Exception(
+                            __(
+                                "This job interval is already long enough; no slowdown needed.",
+                                "optistate"
+                            )
+                        );
+                    }
 
-    $new_interval = $interval * $multiplier;
-    $new_schedule =
-        "slowed_" .
-        substr(md5($event_id . $new_interval), 0, 12);
+                    $new_interval = $interval * $multiplier;
+                    $new_schedule =
+                        "slowed_" .
+                        substr(md5($event_id . $new_interval), 0, 12);
 
-    add_filter("cron_schedules", function (
-        array $schedules
-    ) use ($new_schedule, $new_interval): array {
-        if (!isset($schedules[$new_schedule])) {
-            $schedules[$new_schedule] = [
-                "interval" => $new_interval,
-                "display" => sprintf(
-                    __("Slowed (%s seconds)", "optistate"),
-                    number_format_i18n($new_interval)
-                ),
-            ];
-        }
-        return $schedules;
-    });
+                    add_filter("cron_schedules", function (
+                        array $schedules
+                    ) use ($new_schedule, $new_interval): array {
+                        if (!isset($schedules[$new_schedule])) {
+                            $schedules[$new_schedule] = [
+                                "interval" => $new_interval,
+                                "display" => sprintf(
+                                    __("Slowed (%s seconds)", "optistate"),
+                                    number_format_i18n($new_interval)
+                                ),
+                            ];
+                        }
+                        return $schedules;
+                    });
 
-    $unscheduled = wp_unschedule_event($next_run, $hook, $args);
-    if ($unscheduled === false) {
-        throw new Exception(
-            __(
-                "Failed to unschedule the original cron event.",
-                "optistate"
-            )
-        );
-    }
-    $new_next_run = time() + $new_interval;
-    $scheduled = wp_schedule_event($new_next_run, $new_schedule, $hook, $args);
-    if ($scheduled === false) {
-        if (wp_next_scheduled($hook, $args) !== false) {
-            OPTISTATE_Utils::log_critical_error(
-                "Cron slowdown race condition detected: job already scheduled",
-                [
-                    "hook" => $hook,
-                    "event_id" => $event_id,
-                    "new_schedule" => $new_schedule,
-                ]
-            );
-            throw new Exception(
-                __(
-                    "This cron job was modified by another process. Please refresh and try again.",
-                    "optistate"
-                )
-            );
-        }
+                    $unscheduled = wp_unschedule_event($next_run, $hook, $args);
+                    if ($unscheduled === false) {
+                        throw new Exception(
+                            __(
+                                "Failed to unschedule the original cron event.",
+                                "optistate"
+                            )
+                        );
+                    }
+                    $new_next_run = time() + $new_interval;
+                    $scheduled = wp_schedule_event(
+                        $new_next_run,
+                        $new_schedule,
+                        $hook,
+                        $args
+                    );
+                    if ($scheduled === false) {
+                        if (wp_next_scheduled($hook, $args) !== false) {
+                            OPTISTATE_Utils::log_critical_error(
+                                "Cron slowdown race condition detected: job already scheduled",
+                                [
+                                    "hook" => $hook,
+                                    "event_id" => $event_id,
+                                    "new_schedule" => $new_schedule,
+                                ]
+                            );
+                            throw new Exception(
+                                __(
+                                    "This cron job was modified by another process. Please refresh and try again.",
+                                    "optistate"
+                                )
+                            );
+                        }
 
-        $restored = wp_schedule_event(
-            time() + $interval,
-            $schedule,
-            $hook,
-            $args
-        );
-        if ($restored === false) {
-            OPTISTATE_Utils::log_critical_error(
-                "Slowdown failed AND original cron schedule could not be restored",
-                [
-                    "hook" => $hook,
-                    "event_id" => $event_id,
-                    "schedule" => $schedule,
-                    "interval" => $interval,
-                ]
-            );
-            $this->main_plugin->log_entry(
-                sprintf(
-                    '⚠️ Failed to restore original schedule for "%s" after failed slowdown attempt',
-                    $hook
-                ),
-                "error"
-            );
-            throw new Exception(
-                __(
-                    "Failed to schedule the slower cron job AND could not restore the original schedule. Please review the cron manager.",
-                    "optistate"
-                )
-            );
-        }
-        throw new Exception(
-            __(
-                "Failed to schedule the slower cron job. Original schedule restored.",
-                "optistate"
-            )
-        );
-    }
-    $new_event_id = $this->_cron_manager_get_event_id($hook, $args, $new_next_run);
-    unset($state[$event_id]);
-    $state[$new_event_id] = [
-        "slowed" => true,
-        "hook" => $hook,
-        "args" => $args,
-        "original_schedule" => $schedule,
-        "original_interval" => $interval,
-        "slowed_schedule" => $new_schedule,
-        "slowed_interval" => $new_interval,
-    ];
-    $this->_cron_manager_set_state($state);
+                        $restored = wp_schedule_event(
+                            time() + $interval,
+                            $schedule,
+                            $hook,
+                            $args
+                        );
+                        if ($restored === false) {
+                            OPTISTATE_Utils::log_critical_error(
+                                "Slowdown failed AND original cron schedule could not be restored",
+                                [
+                                    "hook" => $hook,
+                                    "event_id" => $event_id,
+                                    "schedule" => $schedule,
+                                    "interval" => $interval,
+                                ]
+                            );
+                            $this->main_plugin->log_entry(
+                                sprintf(
+                                    '⚠️ Failed to restore original schedule for "%s" after failed slowdown attempt',
+                                    $hook
+                                ),
+                                "error"
+                            );
+                            throw new Exception(
+                                __(
+                                    "Failed to schedule the slower cron job AND could not restore the original schedule. Please review the cron manager.",
+                                    "optistate"
+                                )
+                            );
+                        }
+                        throw new Exception(
+                            __(
+                                "Failed to schedule the slower cron job. Original schedule restored.",
+                                "optistate"
+                            )
+                        );
+                    }
+                    $new_event_id = $this->_cron_manager_get_event_id(
+                        $hook,
+                        $args,
+                        $new_next_run
+                    );
+                    unset($state[$event_id]);
+                    $state[$new_event_id] = [
+                        "slowed" => true,
+                        "hook" => $hook,
+                        "args" => $args,
+                        "original_schedule" => $schedule,
+                        "original_interval" => $interval,
+                        "slowed_schedule" => $new_schedule,
+                        "slowed_interval" => $new_interval,
+                    ];
 
-    $this->main_plugin->log_entry(
-        sprintf(
-            '🐢 Cron job "%s" slowed down (interval %d → %d seconds) by {username}',
-            $hook,
-            $interval,
-            $new_interval
-        )
-    );
-    delete_transient("optistate_cron_jobs_cache");
-    OPTISTATE_Utils::send_json_success([
-        "message" => __("Cron job slowed down.", "optistate"),
-    ]);
-    return;
+                    if (!$this->_cron_manager_set_state($state)) {
+                        $rollback_unschedule = wp_unschedule_event(
+                            $new_next_run,
+                            $hook,
+                            $args
+                        );
+                        $rollback_schedule = wp_schedule_event(
+                            time() + $interval,
+                            $schedule,
+                            $hook,
+                            $args
+                        );
+                        if (
+                            $rollback_unschedule === false ||
+                            $rollback_schedule === false
+                        ) {
+                            OPTISTATE_Utils::log_critical_error(
+                                "CRITICAL: Slowdown state save failed AND rollback failed",
+                                [
+                                    "hook" => $hook,
+                                    "event_id" => $event_id,
+                                    "new_event_id" => $new_event_id,
+                                ]
+                            );
+                            throw new Exception(
+                                __(
+                                    "Failed to save slowdown state and could not restore original schedule. Please review the cron manager.",
+                                    "optistate"
+                                )
+                            );
+                        }
+                        throw new Exception(
+                            __(
+                                "Failed to save slowdown state. Original schedule restored.",
+                                "optistate"
+                            )
+                        );
+                    }
+
+                    $this->main_plugin->log_entry(
+                        sprintf(
+                            '🐢 Cron job "%s" slowed down (interval %d → %d seconds) by {username}',
+                            $hook,
+                            $interval,
+                            $new_interval
+                        )
+                    );
+                    delete_transient("optistate_cron_jobs_cache");
+                    $updated_jobs = $this->get_cron_jobs(true);
+                    OPTISTATE_Utils::send_json_success([
+                        "message" => __("Cron job slowed down.", "optistate"),
+                        "refresh" => true,
+                        "cron_jobs" => $updated_jobs,
+                    ]);
+                    return;
 
                 case "resume":
                 case "restore":
@@ -1527,8 +1637,7 @@ class OPTISTATE_Performance_Manager
                     $orig_schedule = $stored["original_schedule"] ?? false;
                     $orig_interval = $stored["original_interval"] ?? 0;
                     $orig_next_run = $stored["original_next_run"] ?? 0;
-
-                    wp_unschedule_event($next_run, $hook, $args);
+                    wp_clear_scheduled_hook($hook, $args);
 
                     if ($orig_schedule !== false && $orig_interval > 0) {
                         $scheduled = wp_schedule_event(
@@ -1559,7 +1668,18 @@ class OPTISTATE_Performance_Manager
                         );
                     }
                     unset($state[$event_id]);
-                    $this->_cron_manager_set_state($state);
+                    if (!$this->_cron_manager_set_state($state)) {
+                        OPTISTATE_Utils::log_critical_error(
+                            "Failed to clear cron state after resume/restore",
+                            ["hook" => $hook, "event_id" => $event_id]
+                        );
+                        throw new Exception(
+                            __(
+                                "Cron job was restored but state cleanup failed. Please refresh the page.",
+                                "optistate"
+                            )
+                        );
+                    }
                     $this->main_plugin->log_entry(
                         sprintf(
                             '▶️ Cron job "%s" resumed/restored by {username}',
@@ -1567,15 +1687,26 @@ class OPTISTATE_Performance_Manager
                         )
                     );
                     delete_transient("optistate_cron_jobs_cache");
+                    $updated_jobs = $this->get_cron_jobs(true);
                     OPTISTATE_Utils::send_json_success([
                         "message" => __(
                             "Cron job restored to original schedule.",
                             "optistate"
                         ),
+                        "refresh" => true,
+                        "cron_jobs" => $updated_jobs,
                     ]);
                     return;
 
                 case "run_now":
+                    if ($target_job && $target_job["state"] === "paused") {
+                        throw new Exception(
+                            __(
+                                "This job is currently paused. Resume it before running it.",
+                                "optistate"
+                            )
+                        );
+                    }
                     $scheduled = wp_schedule_single_event(
                         time() + 1,
                         $hook,
@@ -1590,8 +1721,19 @@ class OPTISTATE_Performance_Manager
                         );
                     }
                     if (!$target_job && isset($state[$event_id])) {
-                        unset($state[$event_id]);
-                        $this->_cron_manager_set_state($state);
+                        $stored = $state[$event_id];
+                        $is_one_time =
+                            !isset($stored["original_schedule"]) ||
+                            $stored["original_schedule"] === false;
+                        if ($is_one_time) {
+                            unset($state[$event_id]);
+                            if (!$this->_cron_manager_set_state($state)) {
+                                OPTISTATE_Utils::log_critical_error(
+                                    "Failed to clear cron state after run_now",
+                                    ["hook" => $hook, "event_id" => $event_id]
+                                );
+                            }
+                        }
                     }
                     if ($target_job && $schedule === false) {
                         $unscheduled = wp_unschedule_event(
@@ -1616,11 +1758,14 @@ class OPTISTATE_Performance_Manager
                         )
                     );
                     delete_transient("optistate_cron_jobs_cache");
+                    $updated_jobs = $this->get_cron_jobs(true);
                     OPTISTATE_Utils::send_json_success([
                         "message" => __(
                             "Job scheduled to run now.",
                             "optistate"
                         ),
+                        "refresh" => true,
+                        "cron_jobs" => $updated_jobs,
                     ]);
                     return;
 
@@ -1633,40 +1778,48 @@ class OPTISTATE_Performance_Manager
                             )
                         );
                     }
-
-                    if ($target_job) {
-                        $unscheduled = wp_unschedule_event(
-                            $next_run,
-                            $hook,
-                            $args
-                        );
-                        if ($unscheduled === false) {
-                            OPTISTATE_Utils::log_critical_error(
-                                "wp_unschedule_event returned false for hook: $hook",
-                                ["next_run" => $next_run]
+                    if ($target_job && $target_job["state"] === "paused") {
+                    } else {
+                        if ($target_job) {
+                            $unscheduled = wp_unschedule_event(
+                                $next_run,
+                                $hook,
+                                $args
                             );
+                            if ($unscheduled === false) {
+                                OPTISTATE_Utils::log_critical_error(
+                                    "wp_unschedule_event returned false for hook: $hook",
+                                    ["next_run" => $next_run]
+                                );
+                            }
                         }
                     }
 
                     if (isset($state[$event_id])) {
                         unset($state[$event_id]);
-                        $this->_cron_manager_set_state($state);
+                        if (!$this->_cron_manager_set_state($state)) {
+                            OPTISTATE_Utils::log_critical_error(
+                                "Failed to clear cron state after delete",
+                                ["hook" => $hook, "event_id" => $event_id]
+                            );
+                        }
                     }
 
                     delete_transient("optistate_cron_jobs_cache");
-
                     $this->main_plugin->log_entry(
                         sprintf(
                             '🗑️ Cron event "%s" deleted by {username}',
                             $hook
                         )
                     );
-
+                    $updated_jobs = $this->get_cron_jobs(true);
                     OPTISTATE_Utils::send_json_success([
                         "message" => __(
                             "Cron event deleted successfully.",
                             "optistate"
                         ),
+                        "refresh" => true,
+                        "cron_jobs" => $updated_jobs,
                     ]);
                     return;
 
@@ -1712,7 +1865,29 @@ class OPTISTATE_Performance_Manager
         ) {
             OPTISTATE_Utils::apply_trash_days($settings["trash_auto_empty"]);
         }
-        OPTISTATE_Utils::apply_header_cleanups($settings);
+
+        $header_keys = [
+            "rest_api_link",
+            "shortlink",
+            "rsd_link",
+            "wlwmanifest",
+            "wp_generator",
+            "feed_links",
+            "post_relational_links",
+        ];
+        $has_header_cleanup = !empty($settings["xmlrpc"]);
+        if (!$has_header_cleanup) {
+            foreach ($header_keys as $key) {
+                if (!empty($settings[$key])) {
+                    $has_header_cleanup = true;
+                    break;
+                }
+            }
+        }
+        if ($has_header_cleanup) {
+            OPTISTATE_Utils::apply_header_cleanups($settings);
+        }
+
         if (!empty($settings["emoji_script"])) {
             OPTISTATE_Utils::disable_emoji_scripts();
         }
@@ -1979,7 +2154,7 @@ class OPTISTATE_Performance_Manager
         $clean_content = $this->strip_optistate_htaccess_blocks(
             $current_content
         );
-        $perf_settings = $this->get_performance_settings();
+        $perf_settings = $this->get_performance_settings(true);
         $global_settings = $this->main_plugin->settings_manager->get_persistent_settings();
         $ip_blocker_enabled = filter_var(
             $global_settings["ip_blocker_enabled"] ?? false,
@@ -2395,6 +2570,7 @@ class OPTISTATE_Performance_Manager
     {
         check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
         $this->main_plugin->settings_manager->check_user_access();
+        $this->_ensure_config_constants_loaded();
         $force_refresh = isset($_POST["refresh"]) && $_POST["refresh"] === "1";
         if (
             $force_refresh &&
@@ -2548,12 +2724,14 @@ class OPTISTATE_Performance_Manager
                     ];
                 }
             } elseif (isset($def["type"]) && $def["type"] === "toggle") {
-                $new_value_normalized =
-                    $new_value_raw === "true" ||
-                    $new_value_raw === true ||
-                    $new_value_raw === 1 ||
-                    $new_value_raw === "1";
-                $old_value_normalized = (bool) $old_value_raw;
+                $new_value_normalized = filter_var(
+                    $new_value_raw,
+                    FILTER_VALIDATE_BOOLEAN
+                );
+                $old_value_normalized = filter_var(
+                    $old_value_raw,
+                    FILTER_VALIDATE_BOOLEAN
+                );
             } elseif (isset($def["options"])) {
                 $new_value_normalized = (string) $new_value_raw;
                 $old_value_normalized = (string) $old_value_raw;
@@ -2707,20 +2885,31 @@ class OPTISTATE_Performance_Manager
         if ($raw === false || $raw === "") {
             return false;
         }
+
         $clean = $raw;
-        $clean = preg_replace('/\/\/.*$/m', "", $clean);
-        $clean = preg_replace('/#.*$/m', "", $clean);
-        $clean = preg_replace("/\/\*.*?\*\//s", "", $clean);
-        $clean = preg_replace(
+        $patterns = [
+            '/\/\/.*$/m',
+            '/#.*$/m',
+            "/\/\*.*?\*\//s",
             "/'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'/s",
-            "''",
-            $clean
-        );
-        $clean = preg_replace(
             '/"[^"\\\\]*(?:\\\\.[^"\\\\]*)*"/s',
-            '""',
-            $clean
-        );
+        ];
+
+        foreach ($patterns as $pattern) {
+            $result = preg_replace($pattern, "", $clean);
+            if ($result === null) {
+                OPTISTATE_Utils::log_critical_error(
+                    "preg_replace failed in is_constant_in_wp_config",
+                    [
+                        "pattern" => $pattern,
+                        "constant" => $constant_name,
+                        "error" => preg_last_error_msg() ?? "unknown error",
+                    ]
+                );
+                return false;
+            }
+            $clean = $result;
+        }
 
         $q = preg_quote($constant_name, "/");
         return preg_match(

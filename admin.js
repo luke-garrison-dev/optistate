@@ -257,13 +257,13 @@ jQuery(document).ready(function($) {
             }
         };
     }
-    
+
     function resetButton() {
         isProcessing = false;
         const $btn = $('#run-pagespeed-btn');
         $btn.prop('disabled', false).html('<span class="dashicons dashicons-performance optst-adt-icn"></span> ' + __('Run Audit', 'optistate'));
     }
-    
+
     function pollPageSpeedStatus(taskId) {
         const poller = createPoller({
             action: 'optistate_check_pagespeed_status',
@@ -4909,9 +4909,9 @@ jQuery(document).ready(function($) {
 
         optistate_batch_update(function() {
             if (data.tested_url) {
-                if ($testUrl.find('option').filter(function () {
-                return this.value === data.tested_url;
-                }).length > 0) {
+                if ($testUrl.find('option').filter(function() {
+                        return this.value === data.tested_url;
+                    }).length > 0) {
                     $testUrl.val(data.tested_url);
                     $customUrl.val('');
                 } else {
@@ -4939,13 +4939,34 @@ jQuery(document).ready(function($) {
                     paddingLeft: '11px'
                 });
             };
-            updateMetric('#psi-fcp', data.fcp, { good: 1800, needsImprovement: 3000 });
-            updateMetric('#psi-lcp', data.lcp, { good: 2500, needsImprovement: 4000 });
-            updateMetric('#psi-cls', data.cls, { good: 0.1, needsImprovement: 0.25 });
-            updateMetric('#psi-tbt', data.tbt, { good: 200, needsImprovement: 600 });
-            updateMetric('#psi-si', data.si, { good: 3400, needsImprovement: 5800 });
-            updateMetric('#psi-tti', data.tti, { good: 3800, needsImprovement: 7300 });
-            updateMetric('#psi-ttfb', data.ttfb, { good: 600, needsImprovement: 1800 });
+            updateMetric('#psi-fcp', data.fcp, {
+                good: 1800,
+                needsImprovement: 3000
+            });
+            updateMetric('#psi-lcp', data.lcp, {
+                good: 2500,
+                needsImprovement: 4000
+            });
+            updateMetric('#psi-cls', data.cls, {
+                good: 0.1,
+                needsImprovement: 0.25
+            });
+            updateMetric('#psi-tbt', data.tbt, {
+                good: 200,
+                needsImprovement: 600
+            });
+            updateMetric('#psi-si', data.si, {
+                good: 3400,
+                needsImprovement: 5800
+            });
+            updateMetric('#psi-tti', data.tti, {
+                good: 3800,
+                needsImprovement: 7300
+            });
+            updateMetric('#psi-ttfb', data.ttfb, {
+                good: 600,
+                needsImprovement: 1800
+            });
 
             $('#psi-timestamp').text(`${data.timestamp} (${data.strategy})`);
             if (data.tested_url) {
