@@ -3402,7 +3402,7 @@ jQuery(document).ready(function($) {
         var html = '<table class="widefat striped os-border-table-full">';
         html += '<thead>';
         html += '<tr>';
-        html += '<th>' + __('Hook', 'optistate') + '</th>';
+        html += '<th style="min-width:220px;">' + __('Hook / Callback', 'optistate') + '</th>';
         html += '<th>' + __('Schedule', 'optistate') + '</th>';
         html += '<th>' + __('Next Run', 'optistate') + '</th>';
         html += '<th>' + __('State', 'optistate') + '</th>';
@@ -3410,6 +3410,7 @@ jQuery(document).ready(function($) {
         html += '</tr>';
         html += '</thead>';
         html += '<tbody>';
+
         jobs.forEach(function(job) {
             var state = job.state || 'normal';
             var stateLabel = state === 'normal' ? __('Normal', 'optistate') : (state === 'paused' ? '⏸️ ' + __('Paused', 'optistate') : '🐢 ' + __('Slowed', 'optistate'));
@@ -3422,8 +3423,33 @@ jQuery(document).ready(function($) {
             var isPaused = state === 'paused';
             var isSlowed = state === 'slowed';
             var isProtected = job.protected === true;
+            var callbacks = job.callback_info || [];
+            var callbackHtml = '';
+            if (callbacks.length) {
+                var pieces = [];
+                callbacks.forEach(function(cb) {
+                    var func = cb.function || 'Unknown';
+                    var fileLine = '';
+                    if (cb.file && cb.line) {
+                        var fileName = cb.file.split('/').pop().split('\\').pop();
+                        fileLine = fileName + ':' + cb.line;
+                    }
+
+                    if (func === 'Closure' && fileLine) {
+                        pieces.push('<br><span style="font-size:0.95em;">Closure: ' + esc_html(fileLine) + '</span>');
+                    } else {
+                        var funcLine = '<span style="font-size:0.95em;">' + esc_html(func) + '</span>';
+                        var fileLineHtml = fileLine ? '<br><span style="font-size:0.95em;">' + esc_html(fileLine) + '</span>' : '';
+                        pieces.push(funcLine + fileLineHtml);
+                    }
+                });
+                callbackHtml = '<br><div style="font-size:0.95em; color:#666; line-height:1.3; margin:2px 4px 0;">' + pieces.join('') + '</div>';
+            } else {
+                callbackHtml = '<br><span style="font-size:0.90em; color:#666; margin:0 4px 0;">' + __('(no callbacks)', 'optistate') + '</span>';
+            }
+
             html += '<tr data-event-id="' + esc_attr(job.id) + '">';
-            html += '<td><code>' + esc_html(job.hook) + '</code></td>';
+            html += '<td><code>' + esc_html(job.hook) + '</code>' + callbackHtml + '</td>';
             html += '<td>' + esc_html(scheduleDisplay) + '</td>';
             html += '<td>' + esc_html(nextRun) + '</td>';
             html += '<td>' + stateLabel + '</td>';
@@ -3441,24 +3467,44 @@ jQuery(document).ready(function($) {
                         html += '<button class="button button-small cron-slowdown-btn" data-action="slowdown" data-event-id="' + esc_attr(job.id) + '">' + '🐢 ' + __('Slow Down', 'optistate') + '</button> ';
                     }
                 }
-                html += '<button class="button button-small cron-run-now-btn" data-action="run_now" data-event-id="' + esc_attr(job.id) + '">' + '▶ ' + __('Run Now', 'optistate') + '</button>';
+                html += '<button class="button button-small cron-run-now-btn" data-action="run_now" data-event-id="' + esc_attr(job.id) + '">' + '▶ ' + __('Run Now', 'optistate') + '</button> ';
+                if (job.deletable) {
+                    html += '<button class="button button-small cron-delete-btn" data-action="delete" data-event-id="' + esc_attr(job.id) + '" data-hook="' + esc_attr(job.hook) + '" style="color:#d63638;">' + '🗑 ' + __('Delete', 'optistate') + '</button>';
+                }
             }
             html += '</td>';
             html += '</tr>';
         });
-        html += '</tbody>';
-        html += '</table>';
+
+        html += '</tbody></table>';
         $wrapper.html(html);
+
         var $count = $('.os-cron-count');
         if ($count.length) {
             $count.text(sprintf(__('%s cron jobs', 'optistate'), jobs.length));
         }
-        $wrapper.find('.cron-pause-btn, .cron-resume-btn, .cron-slowdown-btn, .cron-restore-btn, .cron-run-now-btn').off('click').on('click', function() {
+
+        $wrapper.find('.cron-pause-btn, .cron-resume-btn, .cron-slowdown-btn, .cron-restore-btn, .cron-run-now-btn, .cron-delete-btn').off('click').on('click', function() {
             var $btn = $(this);
             var action = $btn.data('action');
             var eventId = $btn.data('event-id');
             if (!eventId || !action) return;
             if ($btn.prop('disabled')) return;
+            if (action === 'delete') {
+                var hook = $btn.data('hook') || eventId;
+                showOPTISTATEModal(
+                    '🗑️ ' + __('Delete Cron Event', 'optistate'),
+                    sprintf(__('Are you sure you want to permanently delete the cron event: <br><br><code>%s</code>', 'optistate'), esc_html(hook)) +
+                    '<br><br>' +
+                    __('<strong>⚠️ Warning:</strong> This action cannot be undone.', 'optistate'),
+                    function() {
+                        handleCronAction(action, eventId, $btn);
+                    },
+                    true
+                );
+                return;
+            }
+
             handleCronAction(action, eventId, $btn);
         });
     }
@@ -4117,195 +4163,195 @@ jQuery(document).ready(function($) {
         });
     }
 
-function initSearchReplaceEvents() {
-    const SR_POLL_INTERVAL = 750;
+    function initSearchReplaceEvents() {
+        const SR_POLL_INTERVAL = 750;
 
-    const renderSRWarnings = (data) => {
-        const warnings = data.warnings || [];
-        if (warnings.length === 0) {
-            return '';
-        }
-        const total = typeof data.total_errors === 'number' ? data.total_errors : warnings.length;
-        let html = '<div class="notice notice-warning inline os-mt-15"><p><strong>⚠️ ' +
-            __('Some rows or tables were not processed:', 'optistate') +
-            '</strong></p><ul style="margin-top:0; list-style:disc; padding-left:20px;">';
-        warnings.forEach(warning => {
-            html += '<li>' + esc_html(String(warning)) + '</li>';
-        });
-        html += '</ul>';
-        if (total > warnings.length) {
-            html += '<p><em>' + sprintf(
-                __('%s further issue(s) were recorded; see the error log for the full list.', 'optistate'),
-                (total - warnings.length).toLocaleString()
-            ) + '</em></p>';
-        }
-        html += '</div>';
-        return html;
-    };
+        const renderSRWarnings = (data) => {
+            const warnings = data.warnings || [];
+            if (warnings.length === 0) {
+                return '';
+            }
+            const total = typeof data.total_errors === 'number' ? data.total_errors : warnings.length;
+            let html = '<div class="notice notice-warning inline os-mt-15"><p><strong>⚠️ ' +
+                __('Some rows or tables were not processed:', 'optistate') +
+                '</strong></p><ul style="margin-top:0; list-style:disc; padding-left:20px;">';
+            warnings.forEach(warning => {
+                html += '<li>' + esc_html(String(warning)) + '</li>';
+            });
+            html += '</ul>';
+            if (total > warnings.length) {
+                html += '<p><em>' + sprintf(
+                    __('%s further issue(s) were recorded; see the error log for the full list.', 'optistate'),
+                    (total - warnings.length).toLocaleString()
+                ) + '</em></p>';
+            }
+            html += '</div>';
+            return html;
+        };
 
-    const processSRChunk = (action, params, $btn, $loading, $results, $statusText) => {
-        $.post(optistate_Ajax.ajaxurl, {
-            ...params,
-            action: action,
-            nonce: optistate_Ajax.nonce
-        }).done(res => {
-            if (res.success) {
-                if (res.data.status === 'running') {
-                    if ($statusText.length && res.data.message) $statusText.text(res.data.message);
-                    params.reset = false;
-                    if (res.data.lock_token) params.lock_token = res.data.lock_token;
-                    setTimeout(() => processSRChunk(action, params, $btn, $loading, $results, $statusText), SR_POLL_INTERVAL);
-                } else if (action === 'optistate_search_replace_dry_run') {
-                    const data = res.data.data || res.data;
-                    renderDryRunResults(data, $results);
-                    $loading.hide();
-                    $btn.prop('disabled', false);
-                    const hasMatches = data.total_matches > 0;
-                    const hasReplace = $('#optistate-sr-replace').val().trim().length > 0;
-                    $('#optistate-sr-execute').prop('disabled', !(hasMatches && hasReplace));
+        const processSRChunk = (action, params, $btn, $loading, $results, $statusText) => {
+            $.post(optistate_Ajax.ajaxurl, {
+                ...params,
+                action: action,
+                nonce: optistate_Ajax.nonce
+            }).done(res => {
+                if (res.success) {
+                    if (res.data.status === 'running') {
+                        if ($statusText.length && res.data.message) $statusText.text(res.data.message);
+                        params.reset = false;
+                        if (res.data.lock_token) params.lock_token = res.data.lock_token;
+                        setTimeout(() => processSRChunk(action, params, $btn, $loading, $results, $statusText), SR_POLL_INTERVAL);
+                    } else if (action === 'optistate_search_replace_dry_run') {
+                        const data = res.data.data || res.data;
+                        renderDryRunResults(data, $results);
+                        $loading.hide();
+                        $btn.prop('disabled', false);
+                        const hasMatches = data.total_matches > 0;
+                        const hasReplace = $('#optistate-sr-replace').val().trim().length > 0;
+                        $('#optistate-sr-execute').prop('disabled', !(hasMatches && hasReplace));
+                    } else {
+                        showToast(res.data.message, 'success');
+                        $results.html(
+                            `<div class="optistate-success">✅ ${esc_html(res.data.message)}</div>` +
+                            renderSRWarnings(res.data)
+                        ).slideDown(300);
+                        if (typeof loadCacheStats === 'function') loadCacheStats();
+                        debouncedLoadOptimizationLog();
+                        $loading.hide();
+                        $btn.prop('disabled', false);
+                        $('#optistate-sr-dry-run').prop('disabled', false);
+                    }
                 } else {
-                    showToast(res.data.message, 'success');
-                    $results.html(
-                        `<div class="optistate-success">✅ ${esc_html(res.data.message)}</div>` +
-                        renderSRWarnings(res.data)
-                    ).slideDown(300);
-                    if (typeof loadCacheStats === 'function') loadCacheStats();
-                    debouncedLoadOptimizationLog();
+                    showToast(res.data.message || __('Operation failed.', 'optistate'), 'error');
                     $loading.hide();
                     $btn.prop('disabled', false);
-                    $('#optistate-sr-dry-run').prop('disabled', false);
+                    if (action.includes('execute')) $('#optistate-sr-dry-run').prop('disabled', false);
                 }
-            } else {
-                showToast(res.data.message || __('Operation failed.', 'optistate'), 'error');
+            }).fail(xhr => {
+                showToast(
+                    xhr.status === 429 ?
+                    (xhr.responseJSON?.data?.message || getRateLimitMessage(false)) :
+                    (xhr.responseJSON?.data?.message || __('Network error.', 'optistate')),
+                    xhr.status === 429 ? 'warning' : 'error'
+                );
                 $loading.hide();
                 $btn.prop('disabled', false);
-                if (action.includes('execute')) $('#optistate-sr-dry-run').prop('disabled', false);
-            }
-        }).fail(xhr => {
-            showToast(
-                xhr.status === 429
-                    ? (xhr.responseJSON?.data?.message || getRateLimitMessage(false))
-                    : (xhr.responseJSON?.data?.message || __('Network error.', 'optistate')),
-                xhr.status === 429 ? 'warning' : 'error'
-            );
-            $loading.hide();
-            $btn.prop('disabled', false);
-            $('#optistate-sr-dry-run').prop('disabled', false);
-        });
-    };
-
-    const renderDryRunResults = (data, $results) => {
-        let mainHtml = '';
-        if (data.total_matches === 0) {
-            mainHtml = `<div class="notice notice-info inline"><p>${__('✘ No matches found for this search term.', 'optistate')}</p></div>`;
-        } else {
-            let summary = '';
-            if (data.unique_rows !== undefined && data.unique_rows > 0) {
-                summary = sprintf(__('✔ Found <strong>%s</strong> occurrences inside <strong>%s</strong> unique rows across <strong>%s</strong> tables.', 'optistate'), data.total_matches.toLocaleString(), data.unique_rows.toLocaleString(), data.tables_affected.toLocaleString());
-                if (data.total_matches > data.unique_rows) {
-                    summary += ' ' + __('Multiple occurrences found in the same row.', 'optistate');
-                }
-                if (data.has_serialized_data) {
-                    summary += ' <br><small>⚠️ ' + __('Serialized data detected. The final replacement count may be slightly lower to prevent data corruption.', 'optistate') + '</small>';
-                }
-            } else {
-                summary = sprintf(__('Found %s matches across %s tables.', 'optistate'), data.total_matches.toLocaleString(), data.tables_affected.toLocaleString());
-            }
-            mainHtml = `<div class="optistate-success os-mb-15"><strong>${summary}</strong></div>`;
-        }
-
-        let cappedHtml = '';
-        if (data.counts_capped && data.counts_capped_note) {
-            cappedHtml = '<div class="notice notice-warning inline"><p>⚠️ ' + esc_html(data.counts_capped_note) + '</p></div>';
-        }
-
-        let skippedHtml = '';
-        const skippedNonTrans = data.skipped_non_transactional || [];
-        const skippedComp = data.skipped_composite || [];
-        if (skippedNonTrans.length > 0 || skippedComp.length > 0) {
-            skippedHtml += '<div class="notice notice-info inline"><p><strong>𝒊 ' + __('Some tables were not scanned:', 'optistate') + '</strong></p><ul style="margin-top:0; list-style:disc; padding-left:20px;">';
-            if (skippedNonTrans.length > 0) {
-                skippedHtml += '<li>' + sprintf(__('%s table(s) with non‑transactional storage engines: %s', 'optistate'), skippedNonTrans.length, skippedNonTrans.map(t => '<code>' + esc_html(t) + '</code>').join(', ')) + '</li>';
-            }
-            if (skippedComp.length > 0) {
-                skippedHtml += '<li>' + sprintf(__('%s table(s) with composite primary keys: %s', 'optistate'), skippedComp.length, skippedComp.map(t => '<code>' + esc_html(t) + '</code>').join(', ')) + '</li>';
-            }
-            skippedHtml += '</ul><p><em>' + __('These tables will be excluded from the search & replace operation to ensure data integrity.', 'optistate') + '</em></p></div>';
-        }
-
-        let previewHtml = '';
-        if (data.total_matches > 0 && data.preview?.length > 0) {
-            previewHtml += `<div class="os-search-container"><table class="widefat striped os-border-none"><thead><tr><th>${__('Table', 'optistate')}</th><th>${__('Column', 'optistate')}</th><th>${__('ID', 'optistate')}</th><th>${__('Content Preview', 'optistate')}</th></tr></thead><tbody>`;
-            data.preview.forEach(item => {
-                previewHtml += `<tr><td>${esc_html(item.table)}</td><td>${esc_html(item.column)}</td><td>${esc_html(item.id)}</td><td class="os-font-12-mono">${item.content}</td></tr>`;
+                $('#optistate-sr-dry-run').prop('disabled', false);
             });
-            const occurrencesShown = data.preview_occurrences !== undefined ? data.preview_occurrences : (data.preview?.length || 0);
-            if (data.total_matches > occurrencesShown) {
-                previewHtml += `<tr><td colspan="4" class="os-text-center"><em>${sprintf(__('%s more matches...', 'optistate'), (data.total_matches - occurrencesShown).toLocaleString())}</em></td></tr>`;
+        };
+
+        const renderDryRunResults = (data, $results) => {
+            let mainHtml = '';
+            if (data.total_matches === 0) {
+                mainHtml = `<div class="notice notice-info inline"><p>${__('✘ No matches found for this search term.', 'optistate')}</p></div>`;
+            } else {
+                let summary = '';
+                if (data.unique_rows !== undefined && data.unique_rows > 0) {
+                    summary = sprintf(__('✔ Found <strong>%s</strong> occurrences inside <strong>%s</strong> unique rows across <strong>%s</strong> tables.', 'optistate'), data.total_matches.toLocaleString(), data.unique_rows.toLocaleString(), data.tables_affected.toLocaleString());
+                    if (data.total_matches > data.unique_rows) {
+                        summary += ' ' + __('Multiple occurrences found in the same row.', 'optistate');
+                    }
+                    if (data.has_serialized_data) {
+                        summary += ' <br><small>⚠️ ' + __('Serialized data detected. The final replacement count may be slightly lower to prevent data corruption.', 'optistate') + '</small>';
+                    }
+                } else {
+                    summary = sprintf(__('Found %s matches across %s tables.', 'optistate'), data.total_matches.toLocaleString(), data.tables_affected.toLocaleString());
+                }
+                mainHtml = `<div class="optistate-success os-mb-15"><strong>${summary}</strong></div>`;
             }
-            previewHtml += '</tbody></table></div>';
-        } else if (data.total_matches > 0) {
-            previewHtml = `<p class="os-text-center">${__('Match count exceeds preview limit. No preview available.', 'optistate')}</p>`;
-        }
 
-        const fullHtml = mainHtml + cappedHtml + skippedHtml + previewHtml;
-        $results.html(fullHtml).slideDown(300);
-    };
+            let cappedHtml = '';
+            if (data.counts_capped && data.counts_capped_note) {
+                cappedHtml = '<div class="notice notice-warning inline"><p>⚠️ ' + esc_html(data.counts_capped_note) + '</p></div>';
+            }
 
-    $('#optistate-sr-search').on('input', function() {
-        const searchVal = $(this).val().trim();
-        const $dryRunBtn = $('#optistate-sr-dry-run');
-        const $executeBtn = $('#optistate-sr-execute');
-        $dryRunBtn.prop('disabled', searchVal === '');
-        if (searchVal === '') {
-            $executeBtn.prop('disabled', true);
-        }
-    });
-    $('#optistate-sr-search').trigger('input');
+            let skippedHtml = '';
+            const skippedNonTrans = data.skipped_non_transactional || [];
+            const skippedComp = data.skipped_composite || [];
+            if (skippedNonTrans.length > 0 || skippedComp.length > 0) {
+                skippedHtml += '<div class="notice notice-info inline"><p><strong>𝒊 ' + __('Some tables were not scanned:', 'optistate') + '</strong></p><ul style="margin-top:0; list-style:disc; padding-left:20px;">';
+                if (skippedNonTrans.length > 0) {
+                    skippedHtml += '<li>' + sprintf(__('%s table(s) with non‑transactional storage engines: %s', 'optistate'), skippedNonTrans.length, skippedNonTrans.map(t => '<code>' + esc_html(t) + '</code>').join(', ')) + '</li>';
+                }
+                if (skippedComp.length > 0) {
+                    skippedHtml += '<li>' + sprintf(__('%s table(s) with composite primary keys: %s', 'optistate'), skippedComp.length, skippedComp.map(t => '<code>' + esc_html(t) + '</code>').join(', ')) + '</li>';
+                }
+                skippedHtml += '</ul><p><em>' + __('These tables will be excluded from the search & replace operation to ensure data integrity.', 'optistate') + '</em></p></div>';
+            }
 
-    $('#optistate-sr-dry-run').on('click', function() {
-        const search = $('#optistate-sr-search').val();
-        if (!search) return showToast(__('Please enter a search term.', 'optistate'), 'error');
-        const $btn = $(this);
-        const $loading = $('#optistate-sr-loading');
-        const $results = $('#optistate-sr-results');
-        $btn.prop('disabled', true);
-        $('#optistate-sr-execute').prop('disabled', true);
-        $loading.show().find('.sr-status-text').text(__('Initializing scan...', 'optistate'));
-        $loading.find('.spinner').addClass('os-spinner-inline-margin');
-        $results.slideUp(200).empty();
-        processSRChunk('optistate_search_replace_dry_run', {
-            search,
-            tables: $('#optistate-sr-tables').val(),
-            case_sensitive: $('#optistate-sr-case-sensitive').is(':checked') ? 1 : 0,
-            partial_match: $('#optistate-sr-partial-match').is(':checked') ? 1 : 0,
-            reset: true
-        }, $btn, $loading, $results, $loading.find('.sr-status-text'));
-    });
+            let previewHtml = '';
+            if (data.total_matches > 0 && data.preview?.length > 0) {
+                previewHtml += `<div class="os-search-container"><table class="widefat striped os-border-none"><thead><tr><th>${__('Table', 'optistate')}</th><th>${__('Column', 'optistate')}</th><th>${__('ID', 'optistate')}</th><th>${__('Content Preview', 'optistate')}</th></tr></thead><tbody>`;
+                data.preview.forEach(item => {
+                    previewHtml += `<tr><td>${esc_html(item.table)}</td><td>${esc_html(item.column)}</td><td>${esc_html(item.id)}</td><td class="os-font-12-mono">${item.content}</td></tr>`;
+                });
+                const occurrencesShown = data.preview_occurrences !== undefined ? data.preview_occurrences : (data.preview?.length || 0);
+                if (data.total_matches > occurrencesShown) {
+                    previewHtml += `<tr><td colspan="4" class="os-text-center"><em>${sprintf(__('%s more matches...', 'optistate'), (data.total_matches - occurrencesShown).toLocaleString())}</em></td></tr>`;
+                }
+                previewHtml += '</tbody></table></div>';
+            } else if (data.total_matches > 0) {
+                previewHtml = `<p class="os-text-center">${__('Match count exceeds preview limit. No preview available.', 'optistate')}</p>`;
+            }
 
-    $('#optistate-sr-execute').on('click', function() {
-        const search = $('#optistate-sr-search').val();
-        const replace = $('#optistate-sr-replace').val();
-        if (!search) return;
-        const $btn = $(this);
-        showOPTISTATEModal(`↳↰ ${__('Confirm Search & Replace', 'optistate')}`, `⚠️ <strong>${__('CRITICAL WARNING: Database Modification', 'optistate')}</strong><br><br>${sprintf(__('You are about to replace <code>%s</code> with <code>%s</code>.', 'optistate'), esc_html(search), esc_html(replace))}<br><br>${__('• Please create a backup first.', 'optistate')}<br>${__('• This is irreversible.', 'optistate')}<br><br>${__('Are you absolutely sure?', 'optistate')}`, function() {
+            const fullHtml = mainHtml + cappedHtml + skippedHtml + previewHtml;
+            $results.html(fullHtml).slideDown(300);
+        };
+
+        $('#optistate-sr-search').on('input', function() {
+            const searchVal = $(this).val().trim();
+            const $dryRunBtn = $('#optistate-sr-dry-run');
+            const $executeBtn = $('#optistate-sr-execute');
+            $dryRunBtn.prop('disabled', searchVal === '');
+            if (searchVal === '') {
+                $executeBtn.prop('disabled', true);
+            }
+        });
+        $('#optistate-sr-search').trigger('input');
+
+        $('#optistate-sr-dry-run').on('click', function() {
+            const search = $('#optistate-sr-search').val();
+            if (!search) return showToast(__('Please enter a search term.', 'optistate'), 'error');
+            const $btn = $(this);
+            const $loading = $('#optistate-sr-loading');
+            const $results = $('#optistate-sr-results');
             $btn.prop('disabled', true);
-            $('#optistate-sr-dry-run').prop('disabled', true);
-            const $loading = $('#optistate-sr-loading').show();
-            const $statusText = $loading.find('.sr-status-text');
-            $statusText.text(__('Initializing replacement...', 'optistate'));
+            $('#optistate-sr-execute').prop('disabled', true);
+            $loading.show().find('.sr-status-text').text(__('Initializing scan...', 'optistate'));
             $loading.find('.spinner').addClass('os-spinner-inline-margin');
-            processSRChunk('optistate_search_replace_execute', {
+            $results.slideUp(200).empty();
+            processSRChunk('optistate_search_replace_dry_run', {
                 search,
-                replace,
                 tables: $('#optistate-sr-tables').val(),
                 case_sensitive: $('#optistate-sr-case-sensitive').is(':checked') ? 1 : 0,
                 partial_match: $('#optistate-sr-partial-match').is(':checked') ? 1 : 0,
                 reset: true
-            }, $btn, $loading, $('#optistate-sr-results'), $statusText);
-        }, true);
-    });
-}
+            }, $btn, $loading, $results, $loading.find('.sr-status-text'));
+        });
+
+        $('#optistate-sr-execute').on('click', function() {
+            const search = $('#optistate-sr-search').val();
+            const replace = $('#optistate-sr-replace').val();
+            if (!search) return;
+            const $btn = $(this);
+            showOPTISTATEModal(`↳↰ ${__('Confirm Search & Replace', 'optistate')}`, `⚠️ <strong>${__('CRITICAL WARNING: Database Modification', 'optistate')}</strong><br><br>${sprintf(__('You are about to replace <code>%s</code> with <code>%s</code>.', 'optistate'), esc_html(search), esc_html(replace))}<br><br>${__('• Please create a backup first.', 'optistate')}<br>${__('• This is irreversible.', 'optistate')}<br><br>${__('Are you absolutely sure?', 'optistate')}`, function() {
+                $btn.prop('disabled', true);
+                $('#optistate-sr-dry-run').prop('disabled', true);
+                const $loading = $('#optistate-sr-loading').show();
+                const $statusText = $loading.find('.sr-status-text');
+                $statusText.text(__('Initializing replacement...', 'optistate'));
+                $loading.find('.spinner').addClass('os-spinner-inline-margin');
+                processSRChunk('optistate_search_replace_execute', {
+                    search,
+                    replace,
+                    tables: $('#optistate-sr-tables').val(),
+                    case_sensitive: $('#optistate-sr-case-sensitive').is(':checked') ? 1 : 0,
+                    partial_match: $('#optistate-sr-partial-match').is(':checked') ? 1 : 0,
+                    reset: true
+                }, $btn, $loading, $('#optistate-sr-results'), $statusText);
+            }, true);
+        });
+    }
 
     function initTabs() {
         const activeTab = localStorage.getItem('optistate_active_tab') || '#tab-backups';

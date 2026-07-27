@@ -910,11 +910,157 @@ class OPTISTATE_Performance_Manager
         }
         return $schedules;
     }
-    private function is_protected_hook(string $hook): bool
+    private function get_hook_callbacks($hook)
     {
-        return self::_str_starts_with($hook, "optistate_");
+        global $wp_filter;
+        $infos = [];
+
+        if (empty($wp_filter[$hook])) {
+            return $infos;
+        }
+
+        $hook_obj = $wp_filter[$hook];
+        try {
+            $reflection = new ReflectionObject($hook_obj);
+            $prop = $reflection->getProperty("callbacks");
+            $prop->setAccessible(true);
+            $callbacks = $prop->getValue($hook_obj);
+        } catch (ReflectionException $e) {
+            if (method_exists($hook_obj, "callbacks")) {
+                $callbacks = $hook_obj->callbacks();
+            } else {
+                $callbacks = $hook_obj->callbacks ?? [];
+            }
+        }
+
+        if (empty($callbacks) || !is_array($callbacks)) {
+            return $infos;
+        }
+
+        foreach ($callbacks as $priority => $list) {
+            if (!is_array($list)) {
+                continue;
+            }
+            foreach ($list as $cb) {
+                $func = $cb["function"] ?? null;
+                if (!$func) {
+                    continue;
+                }
+
+                $info = $this->describe_callback($func);
+                if ($info) {
+                    $infos[] = $info;
+                }
+            }
+        }
+
+        return $infos;
     }
-    public function get_cron_jobs(bool $force = false): array
+    private function describe_callback($callback)
+    {
+        try {
+            if (is_string($callback) && function_exists($callback)) {
+                $ref = new ReflectionFunction($callback);
+                return [
+                    "function" => $callback,
+                    "file" => $ref->getFileName() ?: "",
+                    "line" => $ref->getStartLine() ?: 0,
+                ];
+            }
+
+            if (is_array($callback) && count($callback) === 2) {
+                $class = is_object($callback[0])
+                    ? get_class($callback[0])
+                    : $callback[0];
+                $method = $callback[1];
+                if (class_exists($class) && method_exists($class, $method)) {
+                    $ref = new ReflectionMethod($class, $method);
+                    return [
+                        "function" => $class . "::" . $method,
+                        "file" => $ref->getFileName() ?: "",
+                        "line" => $ref->getStartLine() ?: 0,
+                    ];
+                }
+                return [
+                    "function" => $class . "::" . $method,
+                    "file" => "",
+                    "line" => 0,
+                ];
+            }
+
+            if (is_object($callback) && $callback instanceof Closure) {
+                $ref = new ReflectionFunction($callback);
+                return [
+                    "function" => "Closure",
+                    "file" => $ref->getFileName() ?: "",
+                    "line" => $ref->getStartLine() ?: 0,
+                ];
+            }
+
+            if (is_object($callback) && method_exists($callback, "__invoke")) {
+                $ref = new ReflectionMethod($callback, "__invoke");
+                return [
+                    "function" => get_class($callback) . "::__invoke",
+                    "file" => $ref->getFileName() ?: "",
+                    "line" => $ref->getStartLine() ?: 0,
+                ];
+            }
+            if (
+                is_object($callback) &&
+                method_exists($callback, "__toString")
+            ) {
+                return [
+                    "function" => (string) $callback,
+                    "file" => "",
+                    "line" => 0,
+                ];
+            }
+
+            return null;
+        } catch (ReflectionException $e) {
+            return [
+                "function" => "Reflection error",
+                "file" => "",
+                "line" => 0,
+            ];
+        }
+    }
+    private function is_protected_hook($hook): bool
+    {
+        return strpos($hook, "optistate_") === 0;
+    }
+    private function is_deletable_hook($hook): bool
+    {
+        if (strpos($hook, "optistate_") === 0) {
+            return false;
+        }
+        $non_deletable = [
+            "wp_version_check",
+            "wp_update_plugins",
+            "wp_update_themes",
+            "wp_maybe_auto_update",
+            "wp_scheduled_delete",
+            "wp_scheduled_auto_draft_delete",
+            "delete_expired_transients",
+            "wp_privacy_delete_old_export_files",
+            "recovery_mode_clean_expired_keys",
+            "wp_delete_temp_updater_backups",
+            "wp_site_health_scheduled_check",
+            "wp_https_detection",
+            "wp_update_user_counts",
+            "wp_update_network_counts",
+            "wp_maybe_update_network_site_counts",
+            "wp_rotate_application_password_hashes",
+        ];
+
+        $non_deletable = apply_filters(
+            "optistate_non_deletable_cron_hooks",
+            $non_deletable
+        );
+
+        return !in_array($hook, $non_deletable, true);
+    }
+    public function get_cron_jobs($force = false): array
     {
         $cache_key = "optistate_cron_jobs_cache";
         if (!$force) {
@@ -923,12 +1069,14 @@ class OPTISTATE_Performance_Manager
                 return $cached;
             }
         }
+
         $cron = get_option("cron", []);
         $state = $this->_cron_manager_get_state($force);
         $jobs = [];
         $job_id_map = [];
         $now = time();
         $visibility_cutoff = $now - 7 * DAY_IN_SECONDS;
+
         foreach ($cron as $timestamp => $hooks) {
             if (!is_array($hooks) || $timestamp < $visibility_cutoff) {
                 continue;
@@ -945,6 +1093,7 @@ class OPTISTATE_Performance_Manager
                         ? (int) $event["interval"]
                         : 0;
                     $next_run = (int) $timestamp;
+
                     $job = [
                         "id" => $id,
                         "hook" => $hook,
@@ -953,7 +1102,12 @@ class OPTISTATE_Performance_Manager
                         "interval" => $interval,
                         "next_run" => $next_run,
                         "state" => "normal",
+                        "can_slow_down" => false,
+                        "protected" => $this->is_protected_hook($hook),
+                        "deletable" => $this->is_deletable_hook($hook),
+                        "callback_info" => $this->get_hook_callbacks($hook),
                     ];
+
                     if (isset($state[$id])) {
                         $st = $state[$id];
                         if (isset($st["paused"]) && $st["paused"]) {
@@ -970,21 +1124,26 @@ class OPTISTATE_Performance_Manager
                                 $st["original_interval"];
                         }
                     }
+
                     if ($job["state"] === "normal" && $next_run < $now) {
                         $job["state"] = "missed";
                     }
+
                     $multiplier = $this->_get_slowdown_multiplier($interval);
                     $job["can_slow_down"] =
                         $schedule !== false &&
                         $multiplier > 1 &&
                         !isset($state[$id]["slowed"]);
+
                     if ($this->is_protected_hook($job["hook"])) {
                         $job["protected"] = true;
                         $job["can_slow_down"] = false;
                     }
+
                     if ($job["state"] === "missed") {
                         $job["can_slow_down"] = false;
                     }
+
                     $jobs[] = $job;
                     $job_id_map[$id] = true;
                 }
@@ -1011,6 +1170,7 @@ class OPTISTATE_Performance_Manager
                 if ($next_run < $now) {
                     $next_run = $now + 60;
                 }
+
                 $job = [
                     "id" => $id,
                     "hook" => $hook,
@@ -1020,14 +1180,20 @@ class OPTISTATE_Performance_Manager
                     "next_run" => $next_run,
                     "state" => "paused",
                     "can_slow_down" => false,
+                    "protected" => $this->is_protected_hook($hook),
+                    "deletable" => $this->is_deletable_hook($hook),
+                    "callback_info" => $this->get_hook_callbacks($hook),
                 ];
+
                 if ($this->is_protected_hook($hook)) {
                     $job["protected"] = true;
                     $job["can_slow_down"] = false;
                 }
+
                 $jobs[] = $job;
             }
         }
+
         usort($jobs, function (array $a, array $b): int {
             $diff = $a["next_run"] <=> $b["next_run"];
             if ($diff !== 0) {
@@ -1035,6 +1201,7 @@ class OPTISTATE_Performance_Manager
             }
             return strcmp((string) $a["id"], (string) $b["id"]);
         });
+
         set_transient($cache_key, $jobs, 24 * HOUR_IN_SECONDS);
         return $jobs;
     }
@@ -1058,7 +1225,7 @@ class OPTISTATE_Performance_Manager
         if (
             !in_array(
                 $action,
-                ["pause", "resume", "slowdown", "restore", "run_now"],
+                ["pause", "resume", "slowdown", "restore", "run_now", "delete"],
                 true
             ) ||
             empty($event_id)
@@ -1070,7 +1237,7 @@ class OPTISTATE_Performance_Manager
         }
 
         global $wpdb;
-        $lock_name = $wpdb->prefix . "optistate_cron_lock";
+        $lock_name = "optistate_cron_lock";
         $lock_acquired = $wpdb->get_var(
             $wpdb->prepare("SELECT GET_LOCK(%s, 3)", $lock_name)
         );
@@ -1218,7 +1385,7 @@ class OPTISTATE_Performance_Manager
 
                     $new_interval = $interval * $multiplier;
                     $new_schedule =
-                        "optistate_slowed_" .
+                        "slowed_" .
                         substr(md5($event_id . $new_interval), 0, 12);
 
                     add_filter("cron_schedules", function (
@@ -1438,8 +1605,93 @@ class OPTISTATE_Performance_Manager
                         ),
                     ]);
                     return;
+
+                case "delete":
+                    if (!$this->is_deletable_hook($hook)) {
+                        throw new Exception(
+                            __(
+                                "This cron job is protected and cannot be deleted.",
+                                "optistate"
+                            )
+                        );
+                    }
+
+                    $cron = get_option("cron", []);
+                    $found = false;
+
+                    foreach ($cron as $timestamp => &$hooks) {
+                        foreach ($hooks as $hook_name => &$events) {
+                            foreach ($events as $args_key => &$event) {
+                                $args = isset($event["args"])
+                                    ? (array) $event["args"]
+                                    : [];
+                                $id = md5($hook_name . serialize($args));
+                                if ($id === $event_id) {
+                                    unset($events[$args_key]);
+                                    if (empty($events)) {
+                                        unset($hooks[$hook_name]);
+                                    }
+                                    if (empty($hooks)) {
+                                        unset($cron[$timestamp]);
+                                    }
+                                    $found = true;
+                                    break 3;
+                                }
+                            }
+                        }
+                    }
+                    if (!$found && isset($state[$event_id])) {
+                        unset($state[$event_id]);
+                        $this->_cron_manager_set_state($state);
+                        $this->main_plugin->log_entry(
+                            sprintf(
+                                '🗑️ Paused cron event "%s" deleted by {username}',
+                                $hook
+                            )
+                        );
+                        delete_transient("optistate_cron_jobs_cache");
+                        OPTISTATE_Utils::send_json_success([
+                            "message" => __(
+                                "Paused cron event deleted successfully.",
+                                "optistate"
+                            ),
+                        ]);
+                        return;
+                    }
+
+                    if (!$found) {
+                        throw new Exception(
+                            __("Event not found.", "optistate")
+                        );
+                    }
+
+                    update_option("cron", $cron);
+                    if (isset($state[$event_id])) {
+                        unset($state[$event_id]);
+                        $this->_cron_manager_set_state($state);
+                    }
+
+                    delete_transient("optistate_cron_jobs_cache");
+
+                    $this->main_plugin->log_entry(
+                        sprintf(
+                            '🗑️ Cron event "%s" deleted by {username}',
+                            $hook
+                        )
+                    );
+
+                    OPTISTATE_Utils::send_json_success([
+                        "message" => __(
+                            "Cron event deleted successfully.",
+                            "optistate"
+                        ),
+                    ]);
+                    return;
+
+                default:
+                    throw new Exception(__("Unsupported action.", "optistate"));
             }
-        } catch (\Throwable $e) {
+        } catch (Throwable $e) {
             OPTISTATE_Utils::log_critical_error("Cron manager action failed", [
                 "action" => $action,
                 "event_id" => $event_id,
