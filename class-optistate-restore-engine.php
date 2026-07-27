@@ -193,7 +193,9 @@ class OPTISTATE_Restore_Engine
                 "safety_backup_key" => $safety_transient_key,
                 "restore_key" => null,
                 "button_selector" => $button_selector,
-                "backup_charset" => $verification["metadata"] ?? null,
+                "backup_charset" => isset($verification["charset"])
+                    ? ["charset" => $verification["charset"]]
+                    : null,
             ];
             $this->process_store->set(
                 $master_restore_key,
@@ -228,7 +230,9 @@ class OPTISTATE_Restore_Engine
                     ? false
                     : true,
                 "security_disabled" => $security_disabled,
-                "backup_charset" => $verification["metadata"] ?? null,
+                "backup_charset" => isset($verification["charset"])
+                    ? ["charset" => $verification["charset"]]
+                    : null,
             ];
             if (!empty($uploaded_file_info)) {
                 $allowed_overrides = [
@@ -918,6 +922,46 @@ class OPTISTATE_Restore_Engine
         OPTISTATE_DB_Wrapper::get_instance()->close();
         $this->restore_db = null;
     }
+    private function get_server_charsets(): array
+    {
+        static $charsets = null;
+        if ($charsets !== null) {
+            return $charsets;
+        }
+        global $wpdb;
+        $suppress = $wpdb->suppress_errors(true);
+        $rows = $wpdb->get_col("SHOW CHARACTER SET");
+        $wpdb->suppress_errors($suppress);
+        $charsets = [];
+        foreach ((array) $rows as $row) {
+            $name = (string) $row;
+            if ($name !== "") {
+                $charsets[strtolower($name)] = $name;
+            }
+        }
+        return $charsets;
+    }
+
+    private function resolve_server_charset(string $charset): ?string
+    {
+        $available = $this->get_server_charsets();
+        if (empty($available)) {
+            return null;
+        }
+        $key = strtolower($charset);
+        if (isset($available[$key])) {
+            return $available[$key];
+        }
+        $aliases = ["utf8" => "utf8mb3", "utf8mb3" => "utf8"];
+        if (
+            isset($aliases[$key]) &&
+            isset($available[$aliases[$key]])
+        ) {
+            return $available[$aliases[$key]];
+        }
+        return null;
+    }
+
     private function validate_charset_compatibility(
         ?array $backup_charset_info,
         string $current_db_charset
@@ -954,6 +998,20 @@ class OPTISTATE_Restore_Engine
                 ),
             ];
         }
+        $resolved_charset = $this->resolve_server_charset($backup_charset);
+        if ($resolved_charset === null) {
+            return [
+                "compatible" => true,
+                "action" => "use_database_charset",
+                "warning" => sprintf(
+                    __(
+                        "Backup charset '%s' is not available on this server - using database default",
+                        "optistate"
+                    ),
+                    $backup_normalized
+                ),
+            ];
+        }
         if (
             $backup_normalized === "utf8" &&
             $current_normalized === "utf8mb4"
@@ -961,6 +1019,7 @@ class OPTISTATE_Restore_Engine
             return [
                 "compatible" => true,
                 "action" => "use_backup_charset",
+                "charset" => $resolved_charset,
                 "message" => __(
                     "Backup is UTF8, will restore as UTF8 (compatible with current UTF8MB4 database)",
                     "optistate"
@@ -970,9 +1029,10 @@ class OPTISTATE_Restore_Engine
         return [
             "compatible" => true,
             "action" => "use_backup_charset",
+            "charset" => $resolved_charset,
             "message" => sprintf(
                 __("Charset compatible: %s", "optistate"),
-                $backup_normalized
+                $resolved_charset
             ),
         ];
     }
@@ -1172,8 +1232,7 @@ class OPTISTATE_Restore_Engine
                     }
                     $this->configure_db_session(
                         $db_connection,
-                        $charset_check,
-                        $backup_charset_info
+                        $charset_check
                     );
                     $state["status"] = "running";
                     $state["charset_locked"] = true;
@@ -2742,16 +2801,15 @@ class OPTISTATE_Restore_Engine
 
     private function configure_db_session(
         $db,
-        ?array $charset_check = null,
-        ?array $backup_charset_info = null
+        ?array $charset_check = null
     ): void {
         $db_wrapper = OPTISTATE_DB_Wrapper::get_instance();
         if ($charset_check && isset($charset_check["action"])) {
             if (
                 $charset_check["action"] === "use_backup_charset" &&
-                $backup_charset_info
+                !empty($charset_check["charset"])
             ) {
-                $charset = $backup_charset_info["charset"];
+                $charset = $charset_check["charset"];
             } else {
                 global $wpdb;
                 $charset = $wpdb->get_var("SELECT @@character_set_database");

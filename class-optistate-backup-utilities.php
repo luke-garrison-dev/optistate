@@ -386,7 +386,7 @@ class OPTISTATE_Backup_Utilities
                 "Backup verified successfully.",
                 "optistate"
             ),
-            "metadata" => $metadata ?? null,
+            "charset" => $scan["charset"],
         ];
     }
 
@@ -402,6 +402,7 @@ class OPTISTATE_Backup_Utilities
             "db_name" => null,
             "core_tables" => ["options" => false, "posts" => false, "users" => false],
             "truncated" => false,
+            "charset" => null,
         ];
 
         $handle = $is_gzipped
@@ -435,6 +436,9 @@ class OPTISTATE_Backup_Utilities
                     (string) $header
                 );
             }
+            $result["charset"] = self::extract_charset_from_header(
+                (string) $header
+            );
 
             if (!$need_core_tables) {
                 return $result;
@@ -520,6 +524,20 @@ class OPTISTATE_Backup_Utilities
             )
         ) {
             return $matches[1];
+        }
+        return null;
+    }
+
+    private static function extract_charset_from_header(string $header): ?string
+    {
+        if (
+            preg_match(
+                '/SET\s+NAMES\s+[`\'"]?([A-Za-z0-9_]+)/i',
+                $header,
+                $matches
+            )
+        ) {
+            return strtolower($matches[1]);
         }
         return null;
     }
