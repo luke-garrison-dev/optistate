@@ -696,7 +696,7 @@ jQuery(document).ready(function($) {
             $button.prop('disabled', true).html('<span class="dashicons dashicons-yes-alt"></span> <strong>' + __('BACKUP COMPLETE!', 'optistate') + '</strong>');
             $(SELECTORS.globalButtons).prop('disabled', false);
             setTimeout(function() {
-                $button.prop('disabled', false).html('<span class="dashicons dashicons-plus-alt"></span> <strong>' + __('Create Backup Now', 'optistate') + '</strong>');
+                $button.prop('disabled', false).html('↪ <strong>' + __('Create Backup Now', 'optistate') + '</strong>');
                 $button.data('retry-count', 0);
             }, 5000);
             if (data.backups) updateBackupsList(data.backups);
@@ -704,7 +704,7 @@ jQuery(document).ready(function($) {
         };
         var onError = opts.onError || function(errorMsg) {
             showToast(errorMsg, 'error');
-            $button.prop('disabled', false).html('<span class="dashicons dashicons-plus-alt"></span> <strong>' + __('Create Backup Now', 'optistate') + '</strong>');
+            $button.prop('disabled', false).html('↪ <strong>' + __('Create Backup Now', 'optistate') + '</strong>');
             $button.data('retry-count', 0);
             if ($backupSpinner.length) $backupSpinner.hide();
             $(SELECTORS.globalButtons).prop('disabled', false);
@@ -952,14 +952,14 @@ jQuery(document).ready(function($) {
                                 pollBackupStatus(response.data.transient_key, $btn);
                             } else {
                                 showToast(response?.data?.message || __('Backup failed to start.', 'optistate'), 'error');
-                                $btn.prop('disabled', false).html(`<span class="dashicons dashicons-plus-alt"></span> <strong>${__('Create Backup Now', 'optistate')}</strong>`);
+                                $btn.prop('disabled', false).html(`↪ <strong>${__('Create Backup Now', 'optistate')}</strong>`);
                                 $backupSpinner.hide();
                                 $(SELECTORS.globalButtons).prop('disabled', false);
                             }
                         },
                         error: function(xhr) {
                             showToast(xhr.status === 429 ? (xhr.responseJSON?.data?.message || getRateLimitMessage(false)) : __('An error occurred while creating the backup.', 'optistate'), xhr.status === 429 ? 'warning' : 'error');
-                            $btn.prop('disabled', false).html(`<span class="dashicons dashicons-plus-alt"></span> <strong>${__('Create Backup Now', 'optistate')}</strong>`);
+                            $btn.prop('disabled', false).html(`↪ <strong>${__('Create Backup Now', 'optistate')}</strong>`);
                             $backupSpinner.hide();
                             $(SELECTORS.globalButtons).prop('disabled', false);
                         }
@@ -5508,7 +5508,7 @@ jQuery(document).ready(function($) {
         html += '<div class="optistate-chkbx-lbl" style="margin:12px 0 20px;">';
         html += '<label><strong>';
         html += '<input type="checkbox" id="one_click_backup" name="one_click_backup" value="1" ' + backupChecked + '> ';
-        html += __('↩ Activate preventive backup', 'optistate');
+        html += __('↪ Activate preventive backup', 'optistate');
         html += '</label></strong>';
         html += '</div>';
         html += '</div>';

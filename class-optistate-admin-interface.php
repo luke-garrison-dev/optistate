@@ -385,7 +385,7 @@ $last_strategy = isset($last_state["strategy"])
 ); ?><br> ℹ <?php esc_html_e(
     "Backups consume space: If you have limited storage capacity, keep only one or two backups.",
     "optistate"
-); ?> </p> </div> <button type="button" class="button button-large button-primary os-font-weight-500" id="create-backup-btn"> <span class="dashicons dashicons-plus-alt"></span><?php esc_html_e(
+); ?> </p> </div> <button type="button" class="button button-large button-primary os-font-weight-500" id="create-backup-btn">↪ <?php esc_html_e(
      "Create Backup Now",
      "optistate"
  ); ?> </button> </div> <div class="optistate-card os-mt-20"> <h2> <span><span class="dashicons dashicons-database-view"></span> <?php esc_html_e(
