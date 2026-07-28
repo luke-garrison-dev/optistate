@@ -846,8 +846,9 @@ class OPTISTATE_Backup_Manager
 
     public function ajax_check_restore_status(): void
     {
-        check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
-        $this->main_plugin->settings_manager->check_user_access();
+        if (!$this->main_plugin->verify_ajax_request()) {
+            return;
+        }
         try {
             $master_restore_key = $this->process_store->get(
                 "optistate_restore_in_progress"
