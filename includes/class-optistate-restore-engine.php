@@ -375,6 +375,9 @@ class OPTISTATE_Restore_Engine
                 "estimate_adjusted" => false,
                 "skipped_reschedules" => 0,
             ];
+            if (isset($uploaded_file_info["user_id"])) {
+                $state["user_id"] = (int) $uploaded_file_info["user_id"];
+            }
             $this->process_store->set($transient_key, $state, DAY_IN_SECONDS);
             return $transient_key;
         } catch (\Throwable $e) {
@@ -1237,9 +1240,6 @@ class OPTISTATE_Restore_Engine
                     );
                 }
 
-                $backup_has_transactions =
-                    $state["backup_has_transactions"] ?? true;
-
                 if ($state["status"] === "init") {
                     $current_db_charset = $wpdb->get_var(
                         "SELECT @@character_set_database"
@@ -1700,8 +1700,7 @@ class OPTISTATE_Restore_Engine
                             ],
                             true
                         ) &&
-                        !$db_wrapper->in_transaction() &&
-                        $backup_has_transactions
+                        !$db_wrapper->in_transaction()
                     ) {
                         $db_wrapper->begin_transaction();
                     }
@@ -1747,8 +1746,7 @@ class OPTISTATE_Restore_Engine
                                         "TRUNCATE",
                                     ],
                                     true
-                                ) &&
-                                $backup_has_transactions
+                                )
                             ) {
                                 $db_wrapper->begin_transaction();
                             }
@@ -1822,9 +1820,7 @@ class OPTISTATE_Restore_Engine
                     }
 
                     if ($requires_immediate_commit) {
-                        if ($backup_has_transactions) {
-                            $db_wrapper->begin_transaction();
-                        }
+                        $db_wrapper->begin_transaction();
                     } elseif ($should_commit && $db_wrapper->in_transaction()) {
                         $db_wrapper->commit();
                         $current_transaction_size = 0;
@@ -2430,8 +2426,10 @@ class OPTISTATE_Restore_Engine
             ($stmt_type === "CREATE" &&
                 strpos($error_msg, "already exists") !== false) ||
             strpos($error_msg, "Duplicate column") !== false ||
-            strpos($query_to_run, "DISABLE KEYS") !== false ||
-            strpos($query_to_run, "ENABLE KEYS") !== false ||
+            preg_match(
+                '/^\s*(?:\/\*!\d+\s+)?ALTER\s+TABLE\b[^;]*\b(?:DISABLE|ENABLE)\s+KEYS\s*(?:\*\/)?\s*;?\s*$/is',
+                $query_to_run
+            ) ||
             strpos($error_msg, "Duplicate key name") !== false ||
             strpos($error_msg, "already has a trigger") !== false ||
             strpos($error_msg, "Duplicate procedure") !== false ||

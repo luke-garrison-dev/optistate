@@ -1592,9 +1592,13 @@ class OPTISTATE_Backup_Manager
                 if (!empty($file_info["is_decompressed_backup"])) {
                     $uploaded_file_info["temp_filepath_to_delete"] = $filepath;
                 }
-                foreach (["security_disabled", "backup_charset"] as $forwarded) {
+                foreach (
+                    ["security_disabled", "backup_charset", "user_id"]
+                    as $forwarded
+                ) {
                     if (array_key_exists($forwarded, $file_info)) {
-                        $uploaded_file_info[$forwarded] = $file_info[$forwarded];
+                        $uploaded_file_info[$forwarded] =
+                            $file_info[$forwarded];
                     }
                 }
 
