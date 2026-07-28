@@ -339,8 +339,13 @@ class OPTISTATE_Backup_Manager
     public function ajax_create_backup(): void
     {
         try {
-            check_ajax_referer("optistate_backup_nonce", "nonce");
-            $this->main_plugin->settings_manager->check_user_access();
+            if (
+                !$this->main_plugin->verify_ajax_request(
+                    "optistate_backup_nonce"
+                )
+            ) {
+                return;
+            }
             OPTISTATE_Utils::clear_table_existence_cache();
             $this->main_plugin->clear_directory_existence_cache();
             $this->ensure_required_tables_exist();
@@ -408,10 +413,13 @@ class OPTISTATE_Backup_Manager
 
     public function ajax_check_backup_status(): void
     {
-        check_ajax_referer("optistate_backup_nonce", "nonce");
-        $this->main_plugin->settings_manager->check_user_access();
+        if (
+            !$this->main_plugin->verify_ajax_request("optistate_backup_nonce")
+        ) {
+            return;
+        }
         $transient_key = isset($_POST["transient_key"])
-            ? sanitize_text_field($_POST["transient_key"])
+            ? sanitize_text_field(wp_unslash($_POST["transient_key"]))
             : "";
         if (
             empty($transient_key) ||
@@ -489,8 +497,13 @@ class OPTISTATE_Backup_Manager
     public function ajax_restore_backup(): void
     {
         try {
-            check_ajax_referer("optistate_backup_nonce", "nonce");
-            $this->main_plugin->settings_manager->check_user_access();
+            if (
+                !$this->main_plugin->verify_ajax_request(
+                    "optistate_backup_nonce"
+                )
+            ) {
+                return;
+            }
             $this->ensure_required_tables_exist();
             if (is_multisite()) {
                 OPTISTATE_Utils::send_json_error(
@@ -503,7 +516,7 @@ class OPTISTATE_Backup_Manager
             }
             $this->clear_all_integrity_caches();
             $step = isset($_POST["step"])
-                ? sanitize_key($_POST["step"])
+                ? sanitize_key(wp_unslash($_POST["step"]))
                 : "init";
             if ($step !== "init") {
                 OPTISTATE_Utils::send_json_error(
@@ -732,8 +745,11 @@ class OPTISTATE_Backup_Manager
 
     public function ajax_delete_backup(): void
     {
-        check_ajax_referer("optistate_backup_nonce", "nonce");
-        $this->main_plugin->settings_manager->check_user_access();
+        if (
+            !$this->main_plugin->verify_ajax_request("optistate_backup_nonce")
+        ) {
+            return;
+        }
         try {
             $filename = isset($_POST["filename"])
                 ? basename(wp_unslash($_POST["filename"]))
@@ -927,8 +943,11 @@ class OPTISTATE_Backup_Manager
 
     public function ajax_check_manual_backup_on_load(): void
     {
-        check_ajax_referer("optistate_backup_nonce", "nonce");
-        $this->main_plugin->settings_manager->check_user_access();
+        if (
+            !$this->main_plugin->verify_ajax_request("optistate_backup_nonce")
+        ) {
+            return;
+        }
         $user_id = get_current_user_id();
         if ($user_id === 0) {
             OPTISTATE_Utils::send_json_success(["status" => "none"]);
@@ -1757,9 +1776,7 @@ class OPTISTATE_Backup_Manager
                 }
                 if (!empty($uploaded_file_info["temp_filepath_to_delete"])) {
                     $this->cleanup_all_temp_sql_files(
-                        basename(
-                            $uploaded_file_info["temp_filepath_to_delete"]
-                        )
+                        basename($uploaded_file_info["temp_filepath_to_delete"])
                     );
                 }
                 if (!empty($uploaded_file_info["temp_transient_to_delete"])) {
@@ -2413,8 +2430,11 @@ class OPTISTATE_Backup_Manager
 
     public function ajax_restore_from_file(): void
     {
-        check_ajax_referer("optistate_backup_nonce", "nonce");
-        $this->main_plugin->settings_manager->check_user_access();
+        if (
+            !$this->main_plugin->verify_ajax_request("optistate_backup_nonce")
+        ) {
+            return;
+        }
         $this->ensure_required_tables_exist();
 
         if (is_multisite()) {
@@ -2468,7 +2488,7 @@ class OPTISTATE_Backup_Manager
 
         try {
             $temp_filename = isset($_POST["temp_path"])
-                ? sanitize_text_field($_POST["temp_path"])
+                ? sanitize_text_field(wp_unslash($_POST["temp_path"]))
                 : "";
             $temp_filename = basename($temp_filename);
 
@@ -2667,11 +2687,14 @@ class OPTISTATE_Backup_Manager
 
     public function ajax_check_decompression_status(): void
     {
-        check_ajax_referer("optistate_backup_nonce", "nonce");
-        $this->main_plugin->settings_manager->check_user_access();
+        if (
+            !$this->main_plugin->verify_ajax_request("optistate_backup_nonce")
+        ) {
+            return;
+        }
 
         $decompression_key = isset($_POST["decompression_key"])
-            ? sanitize_text_field($_POST["decompression_key"])
+            ? sanitize_text_field(wp_unslash($_POST["decompression_key"]))
             : "";
         if (
             empty($decompression_key) ||
@@ -2748,11 +2771,14 @@ class OPTISTATE_Backup_Manager
 
     public function ajax_get_restore_status(): void
     {
-        check_ajax_referer("optistate_backup_nonce", "nonce");
-        $this->main_plugin->settings_manager->check_user_access();
+        if (
+            !$this->main_plugin->verify_ajax_request("optistate_backup_nonce")
+        ) {
+            return;
+        }
 
         $master_restore_key = isset($_POST["master_restore_key"])
-            ? sanitize_text_field($_POST["master_restore_key"])
+            ? sanitize_text_field(wp_unslash($_POST["master_restore_key"]))
             : "";
         if (
             empty($master_restore_key) ||

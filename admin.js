@@ -147,7 +147,7 @@ jQuery(document).ready(function($) {
                     if (cancelled || completed) return;
                     networkRetries = 0;
                     if (!response || !response.success) {
-                        const errMsg = response?.data?.message || 'Unknown error.';
+    const errMsg = (response && response.data && response.data.message) ? response.data.message : 'Unknown error.';
                         if (response && response.data && response.data.status === 'error') {
                             if (typeof onError === 'function') onError(errMsg);
                             stopPolling(true);
@@ -1716,7 +1716,11 @@ jQuery(document).ready(function($) {
 
     function handleAjaxError(xhr, customMsg, isSaveAction) {
         let errorMsg;
-        if (xhr.status === 429) errorMsg = xhr.responseJSON?.data?.message || getRateLimitMessage(isSaveAction);
+        if (xhr.status === 429) {
+    errorMsg = (xhr.responseJSON && xhr.responseJSON.data && xhr.responseJSON.data.message) 
+        ? xhr.responseJSON.data.message 
+        : getRateLimitMessage(isSaveAction);
+}
         else if (xhr.status === 403) errorMsg = __('Security session expired. Please refresh the page.', 'optistate');
         else errorMsg = xhr.responseJSON?.data?.message || customMsg || sprintf(__('An error occurred (Status: %d). Please try again.', 'optistate'), xhr.status);
         showToast(errorMsg, xhr.status === 429 ? 'warning' : 'error');
@@ -1761,8 +1765,8 @@ jQuery(document).ready(function($) {
                 if (!info.exists) {
                     valueHtml = `<span style="color:#d63638;">${__('Not found', 'optistate')}</span>`;
                 } else {
-                    const sizeText = info.size_formatted || __('N/A', 'optistate');
-                    const mtimeText = info.mtime_formatted || __('N/A', 'optistate');
+                    const sizeText = (info && info.size_formatted) ? info.size_formatted : __('N/A', 'optistate');
+const mtimeText = (info && info.mtime_formatted) ? info.mtime_formatted : __('N/A', 'optistate');
                     valueHtml = `<a href="#" class="optistate-download-htaccess os-no-decoration" title="${esc_attr(__('Click to download htaccess.txt', 'optistate'))}">${escapeHTML(sizeText)} ⬇</a>` + ` — ${__('Updated:', 'optistate')} ${escapeHTML(mtimeText)}`;
                 }
                 div.innerHTML = `<div class="optistate-stat-label">${escapeHTML(systemLabels[key])}</div><div class="optistate-stat-value">${valueHtml}</div>`;
@@ -4283,7 +4287,7 @@ jQuery(document).ready(function($) {
             writable: true,
             message: res.data.message
         }), jqXHR => {
-            const data = jqXHR?.responseJSON?.data;
+            const data = (jqXHR && jqXHR.responseJSON && jqXHR.responseJSON.data) ? jqXHR.responseJSON.data : null;
             return {
                 writable: false,
                 message: data?.message || __('Network error', 'optistate'),
@@ -4332,7 +4336,7 @@ jQuery(document).ready(function($) {
                 showToast(res.data.message, 'info');
                 pollPreloadStatus();
             } else {
-                showToast(res?.data?.message || __('Failed to start preload', 'optistate'), 'error');
+                showToast((res && res.data && res.data.message) ? res.data.message : __('Failed to start preload', 'optistate'), 'error');
                 $('#preload-progress-wrapper').slideUp(300);
             }
         }).fail(xhr => {
@@ -4349,7 +4353,7 @@ jQuery(document).ready(function($) {
                 action: 'optistate_get_preload_status',
                 nonce: optistate_Ajax.nonce
             }).done(res => {
-                if (res?.success && res.data.running) {
+                if (res && res.success && res.data && res.data.running) {
                     const d = res.data;
                     $('#preload-progress-wrapper').slideDown(300);
                     $('#preload-progress-bar').css('width', `${d.percentage || 0}%`).text(`${d.percentage || 0}%`);
@@ -4890,6 +4894,7 @@ jQuery(document).ready(function($) {
                 onSuccess: function(response) {
                     if (response.success) {
                         showToast(response.data.message, 'success');
+                        debouncedLoadOptimizationLog();
                     } else {
                         showToast(response.data.message, 'error');
                     }

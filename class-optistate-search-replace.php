@@ -1481,8 +1481,9 @@ class OPTISTATE_Search_Replace
 
     public function ajax_dry_run(): void
     {
-        check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
-        $this->main_plugin->settings_manager->check_user_access();
+        if (!$this->main_plugin->verify_ajax_request()) {
+            return;
+        }
         $reset = self::read_post_string("reset") === "true";
         if ($reset && !OPTISTATE_Utils::check_rate_limit("sr_dry_run", 5)) {
             OPTISTATE_Utils::send_rate_limit_error();
@@ -1880,8 +1881,9 @@ class OPTISTATE_Search_Replace
 
     public function ajax_execute(): void
     {
-        check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
-        $this->main_plugin->settings_manager->check_user_access();
+        if (!$this->main_plugin->verify_ajax_request()) {
+            return;
+        }
         $reset = self::read_post_string("reset") === "true";
         if ($reset && !OPTISTATE_Utils::check_rate_limit("sr_execute", 10)) {
             OPTISTATE_Utils::send_rate_limit_error();

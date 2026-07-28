@@ -1259,8 +1259,9 @@ class OPTISTATE_Performance_Manager
 
     public function ajax_cron_manager_action(): void
     {
-        check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
-        $this->main_plugin->settings_manager->check_user_access();
+        if (!$this->main_plugin->verify_ajax_request()) {
+            return;
+        }
 
         if (!OPTISTATE_Utils::check_rate_limit("cron_manager_action", 3)) {
             OPTISTATE_Utils::send_rate_limit_error();
@@ -1268,10 +1269,10 @@ class OPTISTATE_Performance_Manager
         }
 
         $action = isset($_POST["cron_action"])
-            ? sanitize_key($_POST["cron_action"])
+            ? sanitize_key(wp_unslash($_POST["cron_action"]))
             : "";
         $event_id = isset($_POST["event_id"])
-            ? sanitize_text_field($_POST["event_id"])
+            ? sanitize_text_field(wp_unslash($_POST["event_id"]))
             : "";
 
         if (
@@ -2550,8 +2551,9 @@ class OPTISTATE_Performance_Manager
 
     public function ajax_check_htaccess_status(): void
     {
-        check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
-        $this->main_plugin->settings_manager->check_user_access();
+        if (!$this->main_plugin->verify_ajax_request()) {
+            return;
+        }
         $info = $this->get_htaccess_info(true);
         if ($info["writable"]) {
             OPTISTATE_Utils::send_json_success([
@@ -2568,8 +2570,9 @@ class OPTISTATE_Performance_Manager
 
     public function ajax_get_performance_features(): void
     {
-        check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
-        $this->main_plugin->settings_manager->check_user_access();
+        if (!$this->main_plugin->verify_ajax_request()) {
+            return;
+        }
         $this->_ensure_config_constants_loaded();
         $force_refresh = isset($_POST["refresh"]) && $_POST["refresh"] === "1";
         if (
@@ -2609,8 +2612,9 @@ class OPTISTATE_Performance_Manager
 
     public function ajax_save_performance_features(): void
     {
-        check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
-        $this->main_plugin->settings_manager->check_user_access();
+        if (!$this->main_plugin->verify_ajax_request()) {
+            return;
+        }
         if (!OPTISTATE_Utils::check_rate_limit("save_settings", 3)) {
             OPTISTATE_Utils::send_rate_limit_error(true);
             return;

@@ -1390,9 +1390,9 @@ class OPTISTATE_Legacy_Scanner
             return;
         }
 
-        check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
-        $this->main_plugin->settings_manager->check_user_access();
-
+        if (!$this->main_plugin->verify_ajax_request()) {
+            return;
+        }
         if (!OPTISTATE_Utils::check_rate_limit("legacy_scan", 5)) {
             OPTISTATE_Utils::send_rate_limit_error();
 
@@ -2582,8 +2582,9 @@ class OPTISTATE_Legacy_Scanner
             return;
         }
 
-        check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
-        $this->main_plugin->settings_manager->check_user_access();
+        if (!$this->main_plugin->verify_ajax_request()) {
+            return;
+        }
         if (!OPTISTATE_Utils::check_rate_limit("legacy_delete", 1)) {
             OPTISTATE_Utils::send_rate_limit_error();
 

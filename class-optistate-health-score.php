@@ -21,9 +21,7 @@ class OPTISTATE_Health_Score
 
     public function ajax_get_health_score(): void
     {
-        check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
-        $access = $this->main_plugin->settings_manager->check_user_access();
-        if ($access === false) {
+        if (!$this->main_plugin->verify_ajax_request()) {
             return;
         }
         $force_refresh = false;

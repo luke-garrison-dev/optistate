@@ -819,12 +819,20 @@ class OPTISTATE_Utils
         }
     }
 
-    private static function get_derived_key(): string
-    {
+    private static function get_derived_key(
+        bool $include_siteurl = false
+    ): string {
         static $derived_key = null;
+        static $legacy_key = null;
 
-        if ($derived_key !== null) {
-            return $derived_key;
+        if ($include_siteurl) {
+            if ($legacy_key !== null) {
+                return $legacy_key;
+            }
+        } else {
+            if ($derived_key !== null) {
+                return $derived_key;
+            }
         }
 
         $salt_constants = [
@@ -835,15 +843,9 @@ class OPTISTATE_Utils
         ];
 
         $has_salts = false;
-
         foreach ($salt_constants as $constant) {
-            if (
-                defined($constant) &&
-                is_string(constant($constant)) &&
-                constant($constant) !== ""
-            ) {
+            if (defined($constant) && constant($constant) !== "") {
                 $has_salts = true;
-
                 break;
             }
         }
@@ -855,13 +857,14 @@ class OPTISTATE_Utils
             defined("NONCE_KEY") ? NONCE_KEY : "",
             defined("DB_NAME") ? DB_NAME : "",
             $GLOBALS["table_prefix"] ?? "",
-            get_option("siteurl"),
         ];
+        if ($include_siteurl) {
+            $salt_parts[] = get_option("siteurl");
+        }
 
         $secret = implode("|", $salt_parts);
         if (!$has_salts) {
             $fallback = get_option("optistate_fallback_encryption_key");
-
             if (!is_string($fallback) || $fallback === "") {
                 try {
                     $fallback = bin2hex(random_bytes(32));
@@ -873,31 +876,32 @@ class OPTISTATE_Utils
                             true
                         )
                     );
-
                     self::log_critical_error(
                         "random_bytes failed for fallback encryption key, using degraded entropy. Error: " .
                             $e->getMessage()
                     );
                 }
-
                 update_option(
                     "optistate_fallback_encryption_key",
                     $fallback,
                     false
                 );
             }
-
             $secret = $fallback;
-
             self::log_critical_error(
                 "No WordPress salts defined; using fallback encryption key stored in options. " .
                     "Please define AUTH_KEY, SECURE_AUTH_KEY, LOGGED_IN_KEY, and NONCE_KEY in wp-config.php."
             );
         }
 
-        $derived_key = hash("sha256", $secret, true);
-
-        return $derived_key;
+        $key = hash("sha256", $secret, true);
+        if ($include_siteurl) {
+            $legacy_key = $key;
+            return $legacy_key;
+        } else {
+            $derived_key = $key;
+            return $derived_key;
+        }
     }
 
     public static function encrypt_data($data)
@@ -955,15 +959,13 @@ class OPTISTATE_Utils
         }
 
         $method = "AES-256-CBC";
-        $key = self::get_derived_key();
+        $key = self::get_derived_key(false);
         $payload = base64_decode(substr($data, 4), true);
-
         if ($payload === false) {
             return $data;
         }
 
         $iv_length = (int) openssl_cipher_iv_length($method);
-
         if (strlen($payload) < $iv_length) {
             return $data;
         }
@@ -975,6 +977,16 @@ class OPTISTATE_Utils
             OPENSSL_RAW_DATA,
             substr($payload, 0, $iv_length)
         );
+        if ($decrypted === false) {
+            $legacy_key = self::get_derived_key(true);
+            $decrypted = openssl_decrypt(
+                substr($payload, $iv_length),
+                $method,
+                $legacy_key,
+                OPENSSL_RAW_DATA,
+                substr($payload, 0, $iv_length)
+            );
+        }
 
         if ($decrypted === false) {
             return $data;
@@ -1195,8 +1207,14 @@ class OPTISTATE_Utils
             $stop_callback === null &&
             self::is_function_available("shell_exec")
         ) {
+            $timeout_cmd = @is_executable("/usr/bin/timeout")
+                ? "/usr/bin/timeout 3 "
+                : "";
             $output = @shell_exec(
-                "du -sb " . escapeshellarg($path) . " 2>/dev/null"
+                $timeout_cmd .
+                    "du -sb " .
+                    escapeshellarg($path) .
+                    " 2>/dev/null"
             );
 
             if (
@@ -1204,7 +1222,6 @@ class OPTISTATE_Utils
                 preg_match("/^(\d+)\s+/", $output, $matches)
             ) {
                 $stats["size"] = (int) $matches[1];
-
                 return $stats;
             }
         }
@@ -1808,63 +1825,78 @@ class OPTISTATE_Utils
         return $final;
     }
 
-public static function get_ip_block_rules( string $raw_ips, bool $include_whitelist_bypass = true ): string {
-    $ips = array_filter( array_map( 'trim', explode( "\n", $raw_ips ) ) );
-    $ips = array_filter( $ips, [ __CLASS__, 'validate_ip_or_cidr' ] );
+    public static function get_ip_block_rules(
+        string $raw_ips,
+        bool $include_whitelist_bypass = true
+    ): string {
+        $ips = array_filter(array_map("trim", explode("\n", $raw_ips)));
+        $ips = array_filter($ips, [__CLASS__, "validate_ip_or_cidr"]);
 
-    if ( empty( $ips ) ) {
-        return '';
+        if (empty($ips)) {
+            return "";
+        }
+
+        $rules = "# BEGIN WP Optimal State IP Blocking" . PHP_EOL;
+        $rules .= "<IfModule mod_setenvif.c>" . PHP_EOL;
+
+        foreach ($ips as $ip) {
+            $safe_ip = preg_quote($ip, "/");
+            $safe_ip = str_replace('"', '\"', $safe_ip);
+
+            $rules .=
+                '  SetEnvIf X-Forwarded-For "^' .
+                $safe_ip .
+                '$" OptiBlockedIP' .
+                PHP_EOL;
+            $rules .=
+                '  SetEnvIf X-Real-IP "^' .
+                $safe_ip .
+                '$" OptiBlockedIP' .
+                PHP_EOL;
+            $rules .=
+                '  SetEnvIf CF-Connecting-IP "^' .
+                $safe_ip .
+                '$" OptiBlockedIP' .
+                PHP_EOL;
+        }
+
+        $rules .= "</IfModule>" . PHP_EOL;
+        $rules .= "<IfModule mod_authz_core.c>" . PHP_EOL;
+        $rules .= "  <RequireAny>" . PHP_EOL;
+
+        if ($include_whitelist_bypass) {
+            $rules .= "    Require env OptiWhitelisted" . PHP_EOL;
+        }
+
+        $rules .= "    <RequireAll>" . PHP_EOL;
+        $rules .= "      Require all granted" . PHP_EOL;
+
+        foreach ($ips as $ip) {
+            $rules .= "      Require not ip " . $ip . PHP_EOL;
+        }
+
+        $rules .= "      Require not env OptiBlockedIP" . PHP_EOL;
+        $rules .= "    </RequireAll>" . PHP_EOL;
+        $rules .= "  </RequireAny>" . PHP_EOL;
+        $rules .= "</IfModule>" . PHP_EOL;
+        $rules .= "<IfModule !mod_authz_core.c>" . PHP_EOL;
+        $rules .= "  Order Deny,Allow" . PHP_EOL;
+
+        foreach ($ips as $ip) {
+            $rules .= "  Deny from " . $ip . PHP_EOL;
+        }
+
+        $rules .= "  Deny from env=OptiBlockedIP" . PHP_EOL;
+
+        if ($include_whitelist_bypass) {
+            $rules .= "  Allow from env=OptiWhitelisted" . PHP_EOL;
+        }
+
+        $rules .= "</IfModule>" . PHP_EOL;
+        $rules .= "# END WP Optimal State IP Blocking";
+
+        return $rules;
     }
-
-    $rules = "# BEGIN WP Optimal State IP Blocking" . PHP_EOL;
-    $rules .= "<IfModule mod_setenvif.c>" . PHP_EOL;
-
-    foreach ( $ips as $ip ) {
-        $safe_ip = preg_quote( $ip, '/' );
-        $safe_ip = str_replace( '"', '\"', $safe_ip );
-
-        $rules .= '  SetEnvIf X-Forwarded-For "^' . $safe_ip . '$" OptiBlockedIP' . PHP_EOL;
-        $rules .= '  SetEnvIf X-Real-IP "^' . $safe_ip . '$" OptiBlockedIP' . PHP_EOL;
-        $rules .= '  SetEnvIf CF-Connecting-IP "^' . $safe_ip . '$" OptiBlockedIP' . PHP_EOL;
-    }
-
-    $rules .= "</IfModule>" . PHP_EOL;
-    $rules .= "<IfModule mod_authz_core.c>" . PHP_EOL;
-    $rules .= "  <RequireAny>" . PHP_EOL;
-
-    if ( $include_whitelist_bypass ) {
-        $rules .= "    Require env OptiWhitelisted" . PHP_EOL;
-    }
-
-    $rules .= "    <RequireAll>" . PHP_EOL;
-    $rules .= "      Require all granted" . PHP_EOL;
-
-    foreach ( $ips as $ip ) {
-        $rules .= "      Require not ip " . $ip . PHP_EOL;
-    }
-
-    $rules .= "      Require not env OptiBlockedIP" . PHP_EOL;
-    $rules .= "    </RequireAll>" . PHP_EOL;
-    $rules .= "  </RequireAny>" . PHP_EOL;
-    $rules .= "</IfModule>" . PHP_EOL;
-    $rules .= "<IfModule !mod_authz_core.c>" . PHP_EOL;
-    $rules .= "  Order Deny,Allow" . PHP_EOL;
-
-    foreach ( $ips as $ip ) {
-        $rules .= "  Deny from " . $ip . PHP_EOL;
-    }
-
-    $rules .= "  Deny from env=OptiBlockedIP" . PHP_EOL;
-
-    if ( $include_whitelist_bypass ) {
-        $rules .= "  Allow from env=OptiWhitelisted" . PHP_EOL;
-    }
-
-    $rules .= "</IfModule>" . PHP_EOL;
-    $rules .= "# END WP Optimal State IP Blocking";
-
-    return $rules;
-}
 
     public static function get_caching_rules(): string
     {

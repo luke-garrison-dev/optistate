@@ -14,10 +14,10 @@ class OPTISTATE_Backup_Upload
         ?object $wp_filesystem,
         string $backup_dir
     ) {
-        $this->main_plugin   = $main_plugin;
+        $this->main_plugin = $main_plugin;
         $this->process_store = $process_store;
         $this->wp_filesystem = $wp_filesystem;
-        $this->backup_dir    = $backup_dir;
+        $this->backup_dir = $backup_dir;
         $this->register_hooks();
     }
 
@@ -184,8 +184,9 @@ class OPTISTATE_Backup_Upload
 
     public function ajax_upload_restore_file(): void
     {
-        check_ajax_referer("optistate_backup_nonce", "nonce");
-        $this->main_plugin->settings_manager->check_user_access();
+        if (!$this->main_plugin->verify_ajax_request('optistate_backup_nonce')) {
+            return;
+        }
         $original_time_limit = (int) ini_get("max_execution_time");
         OPTISTATE_Utils::safe_set_time_limit(300);
         try {
@@ -195,15 +196,15 @@ class OPTISTATE_Backup_Upload
             $total_chunks = isset($_POST["total_chunks"])
                 ? absint($_POST["total_chunks"])
                 : 1;
-            $file_name_raw = isset($_POST["file_name"])
-                ? sanitize_text_field($_POST["file_name"])
+            $file_name = isset($_POST["file_name"])
+                ? sanitize_text_field(wp_unslash($_POST["file_name"]))
                 : "";
             $file_name = basename($file_name_raw);
             $file_size = isset($_POST["file_size"])
                 ? absint($_POST["file_size"])
                 : 0;
             $upload_id = isset($_POST["upload_id"])
-                ? sanitize_text_field($_POST["upload_id"])
+                ? sanitize_text_field(wp_unslash($_POST["upload_id"]))
                 : "";
             if (!preg_match('/^[a-f0-9]{32}$/', $upload_id)) {
                 OPTISTATE_Utils::send_json_error(

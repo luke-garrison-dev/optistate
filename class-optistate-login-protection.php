@@ -82,9 +82,9 @@ class OPTISTATE_Login_Protection
 
     public function ajax_save_settings(): void
     {
-        check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
-        $this->main_plugin->settings_manager->check_user_access();
-
+        if (!$this->main_plugin->verify_ajax_request()) {
+            return;
+        }
         if (!OPTISTATE_Utils::check_rate_limit("save_settings", 3)) {
             OPTISTATE_Utils::send_rate_limit_error(true);
             return;
@@ -863,8 +863,9 @@ class OPTISTATE_Login_Protection
 
     public function ajax_unblock_user(): void
     {
-        check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
-        $this->main_plugin->settings_manager->check_user_access();
+        if (!$this->main_plugin->verify_ajax_request()) {
+            return;
+        }
         if (!OPTISTATE_Utils::check_rate_limit("unblock_user", 10)) {
             OPTISTATE_Utils::send_rate_limit_error(true);
             return;
@@ -958,9 +959,9 @@ class OPTISTATE_Login_Protection
 
     public function ajax_save_ip_blocker(): void
     {
-        check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
-        $this->main_plugin->settings_manager->check_user_access();
-
+        if (!$this->main_plugin->verify_ajax_request()) {
+            return;
+        }
         if (!OPTISTATE_Utils::check_rate_limit("save_settings", 3)) {
             OPTISTATE_Utils::send_rate_limit_error(true);
             return;

@@ -168,9 +168,9 @@ class OPTISTATE_Cleanup_Functions
     }
     public function ajax_clean_item(): void
     {
-        check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
-        $this->main_plugin->settings_manager->check_user_access();
-
+        if (!$this->main_plugin->verify_ajax_request()) {
+            return;
+        }
         $item_type = isset($_POST["item_type"])
             ? sanitize_key(wp_unslash($_POST["item_type"]))
             : "";
@@ -286,9 +286,9 @@ class OPTISTATE_Cleanup_Functions
 
     public function ajax_one_click_optimize(): void
     {
-        check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
-        $this->main_plugin->settings_manager->check_user_access();
-
+        if (!$this->main_plugin->verify_ajax_request()) {
+            return;
+        }
         if (!OPTISTATE_Utils::check_rate_limit("one_click", 30)) {
             OPTISTATE_Utils::send_rate_limit_error();
             return;

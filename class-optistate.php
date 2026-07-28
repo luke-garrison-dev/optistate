@@ -188,7 +188,13 @@ final class OPTISTATE
             if ($is_admin_context) {
                 $this->register_ajax_handlers();
                 $this->maybe_verify_directories();
-                $this->instantiate_admin_services();
+                $is_our_ajax =
+                    !wp_doing_ajax() ||
+                    (isset($_REQUEST["action"]) &&
+                        strpos($_REQUEST["action"], "optistate_") === 0);
+                if ($is_our_ajax) {
+                    $this->instantiate_admin_services();
+                }
             }
 
             $this->performance_manager->apply_performance_optimizations();
@@ -913,6 +919,15 @@ final class OPTISTATE
         return empty($issues) ? true : $issues;
     }
 
+    public function verify_ajax_request(
+        string $nonce_action = self::NONCE_ACTION
+    ): bool {
+        if (!check_ajax_referer($nonce_action, "nonce", false)) {
+            wp_send_json_error(__("Security check failed.", "optistate"), 403);
+            return false;
+        }
+        return $this->settings_manager->check_user_access();
+    }
     private function get_store_table(): string
     {
         global $wpdb;
@@ -2588,8 +2603,9 @@ final class OPTISTATE
 
     public function ajax_get_stats(): void
     {
-        check_ajax_referer(self::NONCE_ACTION, "nonce");
-        $this->settings_manager->check_user_access();
+        if (!$this->verify_ajax_request()) {
+            return;
+        }
 
         $force_refresh =
             isset($_POST["force_refresh"]) &&
@@ -2629,8 +2645,9 @@ final class OPTISTATE
 
     public function ajax_get_optimization_log(): void
     {
-        check_ajax_referer(self::NONCE_ACTION, "nonce");
-        $this->settings_manager->check_user_access();
+        if (!$this->verify_ajax_request()) {
+            return;
+        }
 
         $is_manual_refresh =
             isset($_POST["manual_refresh"]) &&
@@ -2664,12 +2681,12 @@ final class OPTISTATE
 
     public function ajax_apply_preset(): void
     {
-        check_ajax_referer(self::NONCE_ACTION, "nonce");
-        $this->settings_manager->check_user_access();
+        if (!$this->verify_ajax_request()) {
+            return;
+        }
 
         if (!OPTISTATE_Utils::check_rate_limit("apply_preset", 5)) {
             OPTISTATE_Utils::send_rate_limit_error();
-
             return;
         }
 
@@ -2796,28 +2813,6 @@ final class OPTISTATE
         }
     }
 
-    private function guard_download_request(
-        string $rate_limit_key,
-        int $rate_limit_max
-    ): bool {
-        check_ajax_referer(self::NONCE_ACTION, "nonce");
-
-        if (!current_user_can("manage_options")) {
-            wp_die(esc_html__("Insufficient permissions.", "optistate"), 403);
-        }
-
-        $this->settings_manager->check_user_access();
-
-        if (
-            !OPTISTATE_Utils::check_rate_limit($rate_limit_key, $rate_limit_max)
-        ) {
-            OPTISTATE_Utils::send_rate_limit_error();
-            return false;
-        }
-
-        return true;
-    }
-
     private function prepare_download(
         string $content_type,
         string $filename,
@@ -2839,7 +2834,12 @@ final class OPTISTATE
 
     public function ajax_download_htaccess(): void
     {
-        if (!$this->guard_download_request("download_htaccess", 5)) {
+        if (!$this->verify_ajax_request()) {
+            return;
+        }
+
+        if (!OPTISTATE_Utils::check_rate_limit("download_htaccess", 5)) {
+            OPTISTATE_Utils::send_rate_limit_error();
             return;
         }
 
@@ -2879,7 +2879,12 @@ final class OPTISTATE
 
     public function ajax_download_error_log(): void
     {
-        if (!$this->guard_download_request("error_log", 5)) {
+        if (!$this->verify_ajax_request()) {
+            return;
+        }
+
+        if (!OPTISTATE_Utils::check_rate_limit("error_log", 5)) {
+            OPTISTATE_Utils::send_rate_limit_error();
             return;
         }
 
@@ -2971,7 +2976,12 @@ final class OPTISTATE
 
     public function ajax_download_activity_log(): void
     {
-        if (!$this->guard_download_request("activity_log", 3)) {
+        if (!$this->verify_ajax_request()) {
+            return;
+        }
+
+        if (!OPTISTATE_Utils::check_rate_limit("activity_log", 3)) {
+            OPTISTATE_Utils::send_rate_limit_error();
             return;
         }
 

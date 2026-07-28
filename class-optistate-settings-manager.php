@@ -73,6 +73,15 @@ class OPTISTATE_Settings_Manager
         wp_cache_set($cache_key, $return_data, "optistate", HOUR_IN_SECONDS);
         return $return_data;
     }
+    public function get_pagespeed_api_key(): string
+    {
+        $settings = $this->get_persistent_settings();
+        $encrypted = $settings["pagespeed_api_key"] ?? "";
+        if (empty($encrypted)) {
+            return "";
+        }
+        return OPTISTATE_Utils::decrypt_data($encrypted);
+    }
     public function save_persistent_settings(array $new_settings): bool
     {
         try {
@@ -505,15 +514,12 @@ class OPTISTATE_Settings_Manager
 
     private function guard_save_request(): bool
     {
-        check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
-
-        if (!$this->check_user_access()) {
+        if (!$this->main_plugin->verify_ajax_request()) {
             return false;
         }
 
         if (!OPTISTATE_Utils::check_rate_limit("save_settings", 3)) {
             OPTISTATE_Utils::send_rate_limit_error(true);
-
             return false;
         }
 
@@ -767,8 +773,7 @@ class OPTISTATE_Settings_Manager
     }
     public function ajax_export_settings(): void
     {
-        check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
-        if (!$this->check_user_access()) {
+        if (!$this->main_plugin->verify_ajax_request()) {
             return;
         }
         if (!OPTISTATE_Utils::check_rate_limit("impexp_settings", 5)) {
@@ -804,8 +809,7 @@ class OPTISTATE_Settings_Manager
     }
     public function ajax_import_settings(): void
     {
-        check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
-        if (!$this->check_user_access()) {
+        if (!$this->main_plugin->verify_ajax_request()) {
             return;
         }
         if (!OPTISTATE_Utils::check_rate_limit("impexp_settings", 5)) {
@@ -1050,7 +1054,7 @@ class OPTISTATE_Settings_Manager
             $raw_users =
                 isset($_POST["allowed_users"]) &&
                 is_array($_POST["allowed_users"])
-                    ? $_POST["allowed_users"]
+                    ? wp_unslash($_POST["allowed_users"])
                     : [];
             $user_ids = array_filter(array_map("absint", $raw_users), function (
                 $id
@@ -1237,7 +1241,7 @@ class OPTISTATE_Settings_Manager
         try {
             $items =
                 isset($_POST["items"]) && is_array($_POST["items"])
-                    ? $_POST["items"]
+                    ? wp_unslash($_POST["items"])
                     : [];
             $items = array_map("sanitize_key", $items);
             $one_click_backup =

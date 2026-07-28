@@ -108,9 +108,7 @@ class OPTISTATE_Tools_Utilities
         global $wpdb;
 
         try {
-            $wpdb->query(
-                $wpdb->prepare("SELECT RELEASE_LOCK(%s)", $lock_name)
-            );
+            $wpdb->query($wpdb->prepare("SELECT RELEASE_LOCK(%s)", $lock_name));
         } catch (\Throwable $e) {
             OPTISTATE_Utils::log_critical_error(
                 "Failed to release lock '{$lock_name}': " . $e->getMessage()
@@ -120,8 +118,7 @@ class OPTISTATE_Tools_Utilities
 
     public static function register_lock_release_on_shutdown(
         string $lock_name
-    ): void
-    {
+    ): void {
         register_shutdown_function(static function () use ($lock_name) {
             self::release_db_lock($lock_name);
         });
@@ -145,7 +142,9 @@ class OPTISTATE_Tools_Utilities
                 if (!isset($row[0])) {
                     continue;
                 }
-                $type = isset($row[1]) ? strtoupper((string) $row[1]) : "BASE TABLE";
+                $type = isset($row[1])
+                    ? strtoupper((string) $row[1])
+                    : "BASE TABLE";
                 if ($type === "VIEW") {
                     continue;
                 }
@@ -172,8 +171,7 @@ class OPTISTATE_Tools_Utilities
         OPTISTATE_Process_Store $process_store,
         string $key,
         array $state
-    ): bool
-    {
+    ): bool {
         return (bool) $process_store->set(
             $key,
             $state,
@@ -184,8 +182,7 @@ class OPTISTATE_Tools_Utilities
     public static function load_analyze_state(
         OPTISTATE_Process_Store $process_store,
         string $key
-    ): ?array
-    {
+    ): ?array {
         $state = $process_store->get($key);
 
         return is_array($state) ? $state : null;
@@ -194,8 +191,7 @@ class OPTISTATE_Tools_Utilities
     public static function delete_analyze_state(
         OPTISTATE_Process_Store $process_store,
         string $key
-    ): void
-    {
+    ): void {
         $process_store->delete($key);
         $process_store->delete(self::get_analyze_session_key());
     }
@@ -212,7 +208,9 @@ class OPTISTATE_Tools_Utilities
     public static function is_valid_analyze_key(string $key): bool
     {
         return (bool) preg_match(
-            '/^' . preg_quote(self::ANALYZE_KEY_PREFIX, "/") . '[a-f0-9]{28,32}$/',
+            "/^" .
+                preg_quote(self::ANALYZE_KEY_PREFIX, "/") .
+                '[a-f0-9]{28,32}$/',
             $key
         );
     }
@@ -224,8 +222,12 @@ class OPTISTATE_Tools_Utilities
         $is_ok = false;
 
         foreach ($rows as $check_row) {
-            $msg_type = strtolower(trim((string) ($check_row["Msg_type"] ?? "")));
-            $msg_text = strtolower(trim((string) ($check_row["Msg_text"] ?? "")));
+            $msg_type = strtolower(
+                trim((string) ($check_row["Msg_type"] ?? ""))
+            );
+            $msg_text = strtolower(
+                trim((string) ($check_row["Msg_text"] ?? ""))
+            );
 
             if ($msg_type === "status" && $msg_text === "ok") {
                 $is_ok = true;
@@ -233,8 +235,10 @@ class OPTISTATE_Tools_Utilities
             if (
                 strpos($msg_text, "doesn't support check") !== false ||
                 strpos($msg_text, "does not support check") !== false ||
-                strpos($msg_text, "the storage engine for the table doesn't") !==
-                    false
+                strpos(
+                    $msg_text,
+                    "the storage engine for the table doesn't"
+                ) !== false
             ) {
                 $is_ok = true;
                 continue;
@@ -256,12 +260,10 @@ class OPTISTATE_Tools_Utilities
             }
             if (
                 $msg_type !== "status" &&
-                (
-                    strpos($msg_text, "corrupt") !== false ||
+                (strpos($msg_text, "corrupt") !== false ||
                     strpos($msg_text, "crashed") !== false ||
                     strpos($msg_text, "repair by sort") !== false ||
-                    strpos($msg_text, "repair with keycache") !== false
-                )
+                    strpos($msg_text, "repair with keycache") !== false)
             ) {
                 $needs_repair = true;
                 if (!$error_message) {
@@ -302,8 +304,7 @@ class OPTISTATE_Tools_Utilities
     }
     public static function run_preview_autoload_options(
         OPTISTATE $main_plugin
-    ): void
-    {
+    ): void {
         check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
         $main_plugin->settings_manager->check_user_access();
 
@@ -341,9 +342,7 @@ class OPTISTATE_Tools_Utilities
         }
     }
 
-    public static function run_optimize_autoload(
-        OPTISTATE $main_plugin
-    ): void
+    public static function run_optimize_autoload(OPTISTATE $main_plugin): void
     {
         check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
         $main_plugin->settings_manager->check_user_access();
@@ -425,7 +424,10 @@ class OPTISTATE_Tools_Utilities
                           WHERE autoload IN ($autoload_in) AND option_id > %d
                           ORDER BY option_id ASC
                           LIMIT %d",
-                        ...array_merge($on_values, [$last_seen_id, $fetch_batch_size])
+                        ...array_merge($on_values, [
+                            $last_seen_id,
+                            $fetch_batch_size,
+                        ])
                     ),
                     ARRAY_A
                 );
@@ -578,8 +580,7 @@ class OPTISTATE_Tools_Utilities
 
     public static function run_restore_autoload_backup(
         OPTISTATE $main_plugin
-    ): void
-    {
+    ): void {
         check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
         $main_plugin->settings_manager->check_user_access();
 
@@ -658,14 +659,9 @@ class OPTISTATE_Tools_Utilities
         }
     }
 
-    public static function get_autoload_backup(
-        OPTISTATE $main_plugin
-    ): ?array
+    public static function get_autoload_backup(OPTISTATE $main_plugin): ?array
     {
-        $data = $main_plugin->get_store_data(
-            self::AUTOLOAD_BACKUP_KEY,
-            null
-        );
+        $data = $main_plugin->get_store_data(self::AUTOLOAD_BACKUP_KEY, null);
         return is_array($data) ? $data : null;
     }
     private static function compile_patterns(): void
@@ -689,9 +685,9 @@ class OPTISTATE_Tools_Utilities
             'show_on_front$',
             'page_on_front$',
             'page_for_posts$',
-            'theme_mods_',
-            'widget_',
-            'sidebars_widgets',
+            "theme_mods_",
+            "widget_",
+            "sidebars_widgets",
         ];
 
         self::$essential_regex =
@@ -848,7 +844,10 @@ class OPTISTATE_Tools_Utilities
                       WHERE autoload IN ($autoload_in) AND option_id > %d
                       ORDER BY option_id ASC
                       LIMIT %d",
-                    ...array_merge($on_values, [$last_seen_id, $fetch_batch_size])
+                    ...array_merge($on_values, [
+                        $last_seen_id,
+                        $fetch_batch_size,
+                    ])
                 ),
                 ARRAY_A
             );
@@ -964,8 +963,7 @@ class OPTISTATE_Tools_Utilities
     private static function save_autoload_backup(
         OPTISTATE $main_plugin,
         array $backup_data
-    ): bool
-    {
+    ): bool {
         if (empty($backup_data)) {
             return true;
         }
@@ -1061,9 +1059,7 @@ class OPTISTATE_Tools_Utilities
         }
     }
 
-    private static function delete_autoload_backup(
-        OPTISTATE $main_plugin
-    ): void
+    private static function delete_autoload_backup(OPTISTATE $main_plugin): void
     {
         $main_plugin->delete_store_data(self::AUTOLOAD_BACKUP_KEY);
     }
@@ -1224,7 +1220,9 @@ class OPTISTATE_Tools_Utilities
         }
 
         try {
-            $type = isset($_POST["type"]) ? sanitize_key($_POST["type"]) : "";
+            $type = isset($_POST["type"])
+                ? sanitize_key(wp_unslash($_POST["type"]))
+                : "";
             $rules = self::get_integrity_rules();
 
             if (!isset($rules[$type]) || !is_array($rules[$type])) {
@@ -1237,10 +1235,7 @@ class OPTISTATE_Tools_Utilities
             $rule = $rules[$type];
             if (!self::is_valid_integrity_rule($rule, $type)) {
                 OPTISTATE_Utils::send_json_error([
-                    "message" => __(
-                        "Invalid rule definition.",
-                        "optistate"
-                    ),
+                    "message" => __("Invalid rule definition.", "optistate"),
                 ]);
                 return;
             }
@@ -1587,8 +1582,8 @@ class OPTISTATE_Tools_Utilities
             : "";
         if ($extra_where !== "") {
             $ew_re =
-                '/^(\s*AND\s+[a-zA-Z_][a-zA-Z0-9_]*\.[a-zA-Z_][a-zA-Z0-9_]*'
-                . '\s*(?:=|!=|<>|>=|<=|>|<)\s*(?:\d+|\'[a-zA-Z0-9_\-]+\')\s*)+$/i';
+                "/^(\s*AND\s+[a-zA-Z_][a-zA-Z0-9_]*\.[a-zA-Z_][a-zA-Z0-9_]*" .
+                '\s*(?:=|!=|<>|>=|<=|>|<)\s*(?:\d+|\'[a-zA-Z0-9_\-]+\')\s*)+$/i';
             if (preg_match($ew_re, $extra_where) !== 1) {
                 return false;
             }
@@ -1607,7 +1602,10 @@ class OPTISTATE_Tools_Utilities
         global $wpdb;
 
         foreach ($rules as $type => $rule) {
-            if (!is_array($rule) || !self::is_valid_integrity_rule($rule, $type)) {
+            if (
+                !is_array($rule) ||
+                !self::is_valid_integrity_rule($rule, $type)
+            ) {
                 continue;
             }
             if (microtime(true) - $start_time > $max_exec) {
@@ -1681,9 +1679,7 @@ class OPTISTATE_Tools_Utilities
         );
     }
 
-    public static function check_disk_space_for_index(
-        string $table_name
-    ): array
+    public static function check_disk_space_for_index(string $table_name): array
     {
         global $wpdb;
         $result = [

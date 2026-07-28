@@ -181,7 +181,11 @@ class OPTISTATE_TwoFactor
 
     private function generate_secret(): string
     {
-        $bytes = random_bytes(16);
+        try {
+            $bytes = random_bytes(16);
+        } catch (Throwable $e) {
+            $bytes = openssl_random_pseudo_bytes(16);
+        }
         return $this->base32_encode($bytes);
     }
 
@@ -679,7 +683,6 @@ exit();
                 );
                 return;
             }
-            $this->main_plugin->settings_manager->check_user_access();
             $target_user_id = isset($_POST["user_id"])
                 ? absint($_POST["user_id"])
                 : 0;
@@ -689,10 +692,13 @@ exit();
                 );
                 return;
             }
-            check_ajax_referer(
-                "optistate_2fa_admin_reset_" . $target_user_id,
-                "nonce"
-            );
+            if (
+                !$this->main_plugin->verify_ajax_request(
+                    "optistate_2fa_admin_reset_" . $target_user_id
+                )
+            ) {
+                return;
+            }
             if ($target_user_id === get_current_user_id()) {
                 OPTISTATE_Utils::send_json_error(
                     __(
@@ -1054,9 +1060,9 @@ if ($enabled) {
     public function ajax_save_global_setting(): void
     {
         try {
-            check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
-            $this->main_plugin->settings_manager->check_user_access();
-
+            if (!$this->main_plugin->verify_ajax_request()) {
+                return;
+            }
             if (!OPTISTATE_Utils::check_rate_limit("save_settings", 3)) {
                 OPTISTATE_Utils::send_rate_limit_error(true);
                 return;
