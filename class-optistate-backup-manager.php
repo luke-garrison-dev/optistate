@@ -201,7 +201,7 @@ class OPTISTATE_Backup_Manager
             }
         }
         $backup_list = [];
-        $download_nonce = wp_create_nonce("optistate_backup_nonce");
+        $download_nonce = wp_create_nonce(OPTISTATE::BACKUP_NONCE_ACTION);
         foreach ($dirlist as $filename => $fileinfo) {
             if (
                 $fileinfo["type"] !== "f" ||
@@ -340,9 +340,7 @@ class OPTISTATE_Backup_Manager
     {
         try {
             if (
-                !$this->main_plugin->verify_ajax_request(
-                    "optistate_backup_nonce"
-                )
+                !$this->main_plugin->verify_ajax_request(OPTISTATE::BACKUP_NONCE_ACTION)
             ) {
                 return;
             }
@@ -414,7 +412,7 @@ class OPTISTATE_Backup_Manager
     public function ajax_check_backup_status(): void
     {
         if (
-            !$this->main_plugin->verify_ajax_request("optistate_backup_nonce")
+            !$this->main_plugin->verify_ajax_request(OPTISTATE::BACKUP_NONCE_ACTION)
         ) {
             return;
         }
@@ -498,9 +496,7 @@ class OPTISTATE_Backup_Manager
     {
         try {
             if (
-                !$this->main_plugin->verify_ajax_request(
-                    "optistate_backup_nonce"
-                )
+                !$this->main_plugin->verify_ajax_request(OPTISTATE::BACKUP_NONCE_ACTION)
             ) {
                 return;
             }
@@ -746,7 +742,7 @@ class OPTISTATE_Backup_Manager
     public function ajax_delete_backup(): void
     {
         if (
-            !$this->main_plugin->verify_ajax_request("optistate_backup_nonce")
+            !$this->main_plugin->verify_ajax_request(OPTISTATE::BACKUP_NONCE_ACTION)
         ) {
             return;
         }
@@ -945,7 +941,7 @@ class OPTISTATE_Backup_Manager
     public function ajax_check_manual_backup_on_load(): void
     {
         if (
-            !$this->main_plugin->verify_ajax_request("optistate_backup_nonce")
+            !$this->main_plugin->verify_ajax_request(OPTISTATE::BACKUP_NONCE_ACTION)
         ) {
             return;
         }
@@ -2432,7 +2428,7 @@ class OPTISTATE_Backup_Manager
     public function ajax_restore_from_file(): void
     {
         if (
-            !$this->main_plugin->verify_ajax_request("optistate_backup_nonce")
+            !$this->main_plugin->verify_ajax_request(OPTISTATE::BACKUP_NONCE_ACTION)
         ) {
             return;
         }
@@ -2448,7 +2444,9 @@ class OPTISTATE_Backup_Manager
             return;
         }
 
-        $step = isset($_POST["step"]) ? sanitize_key($_POST["step"]) : "init";
+        $step = isset($_POST["step"])
+            ? sanitize_key(wp_unslash($_POST["step"]))
+            : "init";
         if ($step !== "init") {
             OPTISTATE_Utils::send_json_error(
                 __("Invalid request step.", "optistate")
@@ -2689,7 +2687,7 @@ class OPTISTATE_Backup_Manager
     public function ajax_check_decompression_status(): void
     {
         if (
-            !$this->main_plugin->verify_ajax_request("optistate_backup_nonce")
+            !$this->main_plugin->verify_ajax_request(OPTISTATE::BACKUP_NONCE_ACTION)
         ) {
             return;
         }
@@ -2773,7 +2771,7 @@ class OPTISTATE_Backup_Manager
     public function ajax_get_restore_status(): void
     {
         if (
-            !$this->main_plugin->verify_ajax_request("optistate_backup_nonce")
+            !$this->main_plugin->verify_ajax_request(OPTISTATE::BACKUP_NONCE_ACTION)
         ) {
             return;
         }

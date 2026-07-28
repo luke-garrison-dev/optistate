@@ -184,7 +184,7 @@ class OPTISTATE_Backup_Upload
 
     public function ajax_upload_restore_file(): void
     {
-        if (!$this->main_plugin->verify_ajax_request('optistate_backup_nonce')) {
+        if (!$this->main_plugin->verify_ajax_request(OPTISTATE::BACKUP_NONCE_ACTION)) {
             return;
         }
         $original_time_limit = (int) ini_get("max_execution_time");

@@ -1380,11 +1380,7 @@ class OPTISTATE_Search_Replace
     {
         $network_id = is_multisite() ? (int) get_current_network_id() : 0;
         if ($overflow) {
-            $can_flush_group =
-                function_exists("wp_cache_supports") &&
-                function_exists("wp_cache_flush_group") &&
-                wp_cache_supports("flush_group");
-            if ($can_flush_group) {
+            if (OPTISTATE_Utils::can_flush_cache_group()) {
                 wp_cache_flush_group("options");
                 if ($network_id > 0) {
                     wp_cache_flush_group("site-options");

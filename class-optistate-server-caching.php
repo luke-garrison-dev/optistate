@@ -1195,8 +1195,9 @@ class OPTISTATE_Server_Caching
 
     public function ajax_purge_page_cache(): void
     {
-        check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
-        $this->main_plugin->settings_manager->check_user_access();
+        if (!$this->main_plugin->verify_ajax_request()) {
+            return;
+        }
         if (!OPTISTATE_Utils::check_rate_limit("purge_cache", 30)) {
             OPTISTATE_Utils::send_rate_limit_error();
             return;
@@ -1231,8 +1232,9 @@ class OPTISTATE_Server_Caching
 
     public function ajax_get_cache_stats(): void
     {
-        check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
-        $this->main_plugin->settings_manager->check_user_access();
+        if (!$this->main_plugin->verify_ajax_request()) {
+            return;
+        }
         try {
             $filesystem = $this->main_plugin->get_filesystem();
         } catch (RuntimeException $e) {
@@ -1941,8 +1943,9 @@ class OPTISTATE_Server_Caching
 
     public function ajax_start_preload(): void
     {
-        check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
-        $this->main_plugin->settings_manager->check_user_access();
+        if (!$this->main_plugin->verify_ajax_request()) {
+            return;
+        }
         try {
             if (get_transient("optistate_preload_running")) {
                 OPTISTATE_Utils::send_json_error([
@@ -2227,8 +2230,9 @@ class OPTISTATE_Server_Caching
 
     public function ajax_stop_preload(): void
     {
-        check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
-        $this->main_plugin->settings_manager->check_user_access();
+        if (!$this->main_plugin->verify_ajax_request()) {
+            return;
+        }
         $processed = (int) (get_transient("optistate_preload_processed") ?: 0);
         $total = (int) (get_transient("optistate_preload_total") ?: 0);
         $this->reset_preload_state();
@@ -2252,8 +2256,9 @@ class OPTISTATE_Server_Caching
 
     public function ajax_get_preload_status(): void
     {
-        check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
-        $this->main_plugin->settings_manager->check_user_access();
+        if (!$this->main_plugin->verify_ajax_request()) {
+            return;
+        }
         $running = get_transient("optistate_preload_running");
         $processed = (int) (get_transient("optistate_preload_processed") ?: 0);
         $total = (int) (get_transient("optistate_preload_total") ?: 0);

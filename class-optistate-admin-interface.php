@@ -209,7 +209,7 @@ class OPTISTATE_Admin_Interface
      "Google API Key (Optional but Recommended)",
      "optistate"
  ); ?></label> <div class="os-flex-gap-10"> <div class="os-flex-1-relative"> <input type="password" id="optistate_pagespeed_key" value="<?php echo esc_attr(
-    $settings["pagespeed_api_key"] ?? ""
+    $plugin->settings_manager->get_pagespeed_api_key()
 ); ?>" class="os-input-password-padded" placeholder="<?php esc_attr_e(
     "Enter API Key",
     "optistate"

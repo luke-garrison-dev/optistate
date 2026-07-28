@@ -7,6 +7,11 @@ if (!defined("ABSPATH")) {
 
 class OPTISTATE_Utils
 {
+    private const ENC_PREFIX_LEGACY = "enc:";
+    private const ENC_PREFIX_GCM = "encg:";
+    private const ENC_PREFIX_CBC_HMAC = "ench:";
+    private const ENC_CIPHER_GCM = "aes-256-gcm";
+    private const ENC_CIPHER_CBC = "aes-256-cbc";
     const LCP_IMAGE_THRESHOLD = 2;
 
     private const CACHED_OPTIONS_LIMIT = 100;
@@ -149,6 +154,11 @@ class OPTISTATE_Utils
         self::$cached_options[$option_name] = $value;
 
         return $value;
+    }
+
+    public static function get_autoload_off_value(): string
+    {
+        return function_exists("wp_autoload_values_to_autoload") ? "off" : "no";
     }
 
     public static function get_mysql_version(): string
@@ -844,7 +854,11 @@ class OPTISTATE_Utils
 
         $has_salts = false;
         foreach ($salt_constants as $constant) {
-            if (defined($constant) && constant($constant) !== "") {
+            if (
+                defined($constant) &&
+                is_string(constant($constant)) &&
+                constant($constant) !== ""
+            ) {
                 $has_salts = true;
                 break;
             }
@@ -904,6 +918,105 @@ class OPTISTATE_Utils
         }
     }
 
+    private static function get_mac_key(): string
+    {
+        static $mac_key = null;
+
+        if ($mac_key === null) {
+            $mac_key = hash_hmac(
+                "sha256",
+                "optistate-mac-v1",
+                self::get_derived_key(),
+                true
+            );
+        }
+
+        return $mac_key;
+    }
+
+    private static function get_random_iv(int $length): string
+    {
+        $iv = "";
+
+        try {
+            $iv = random_bytes($length);
+        } catch (\Throwable $e) {
+            self::log_critical_error(
+                "random_bytes failed while generating an IV, falling back to OpenSSL: " .
+                    $e->getMessage()
+            );
+
+            if (function_exists("openssl_random_pseudo_bytes")) {
+                $fallback_iv = openssl_random_pseudo_bytes($length);
+
+                if (is_string($fallback_iv)) {
+                    $iv = $fallback_iv;
+                }
+            }
+        }
+
+        return strlen($iv) === $length ? $iv : "";
+    }
+
+    private static function is_gcm_available(): bool
+    {
+        static $available = null;
+
+        if ($available === null) {
+            $available =
+                function_exists("openssl_get_cipher_methods") &&
+                in_array(
+                    self::ENC_CIPHER_GCM,
+                    array_map(
+                        "strtolower",
+                        (array) openssl_get_cipher_methods()
+                    ),
+                    true
+                );
+        }
+
+        return $available;
+    }
+
+    public static function is_encrypted($data): bool
+    {
+        if (!is_string($data) || $data === "") {
+            return false;
+        }
+
+        return strpos($data, self::ENC_PREFIX_GCM) === 0 ||
+            strpos($data, self::ENC_PREFIX_CBC_HMAC) === 0 ||
+            strpos($data, self::ENC_PREFIX_LEGACY) === 0;
+    }
+
+    public static function is_legacy_encrypted($data): bool
+    {
+        return is_string($data) &&
+            strpos($data, self::ENC_PREFIX_LEGACY) === 0;
+    }
+
+    private static function is_plausible_plaintext(string $value): bool
+    {
+        if ($value === "") {
+            return false;
+        }
+
+        if (preg_match('/[\x00-\x08\x0B\x0C\x0E-\x1F]/', $value) === 1) {
+            return false;
+        }
+
+        return function_exists("mb_check_encoding")
+            ? mb_check_encoding($value, "UTF-8")
+            : (bool) preg_match("//u", $value);
+    }
+
+    private static function report_decryption_failure(string $reason): ?string
+    {
+        self::log_critical_error("Decryption failed: " . $reason);
+
+        return null;
+    }
+
     public static function encrypt_data($data)
     {
         if (empty($data) || !is_string($data)) {
@@ -911,88 +1024,212 @@ class OPTISTATE_Utils
         }
 
         if (!function_exists("openssl_encrypt")) {
+            self::log_critical_error(
+                "openssl_encrypt is unavailable; the value was stored unencrypted."
+            );
+
             return $data;
         }
 
-        $method = "AES-256-CBC";
         $key = self::get_derived_key();
-        $iv_length = (int) openssl_cipher_iv_length($method);
 
-        try {
-            $iv = random_bytes($iv_length);
-        } catch (\Throwable $e) {
-            $iv = openssl_random_pseudo_bytes($iv_length);
+        if (self::is_gcm_available()) {
+            $iv = self::get_random_iv(12);
 
+            if ($iv !== "") {
+                $tag = "";
+
+                $encrypted = openssl_encrypt(
+                    $data,
+                    self::ENC_CIPHER_GCM,
+                    $key,
+                    OPENSSL_RAW_DATA,
+                    $iv,
+                    $tag,
+                    "",
+                    16
+                );
+
+                if ($encrypted !== false && strlen($tag) === 16) {
+                    return self::ENC_PREFIX_GCM .
+                        base64_encode($iv . $tag . $encrypted);
+                }
+            }
+        }
+
+        $iv = self::get_random_iv(16);
+
+        if ($iv === "") {
             self::log_critical_error(
-                "random_bytes failed in encrypt_data, using fallback IV: " .
-                    $e->getMessage()
+                "No secure IV could be generated; the value was stored unencrypted."
             );
+
+            return $data;
         }
 
         $encrypted = openssl_encrypt(
             $data,
-            $method,
+            self::ENC_CIPHER_CBC,
             $key,
             OPENSSL_RAW_DATA,
             $iv
         );
 
         if ($encrypted === false) {
+            self::log_critical_error(
+                "openssl_encrypt failed; the value was stored unencrypted."
+            );
+
             return $data;
         }
 
-        return "enc:" . base64_encode($iv . $encrypted);
+        $mac = hash_hmac(
+            "sha256",
+            $iv . $encrypted,
+            self::get_mac_key(),
+            true
+        );
+
+        return self::ENC_PREFIX_CBC_HMAC .
+            base64_encode($iv . $mac . $encrypted);
     }
 
     public static function decrypt_data($data)
     {
-        if (empty($data) || !is_string($data)) {
+        if (!is_string($data) || $data === "") {
             return $data;
         }
 
-        if (strpos($data, "enc:") !== 0) {
+        if (!self::is_encrypted($data)) {
             return $data;
         }
 
         if (!function_exists("openssl_decrypt")) {
-            return $data;
-        }
-
-        $method = "AES-256-CBC";
-        $key = self::get_derived_key(false);
-        $payload = base64_decode(substr($data, 4), true);
-        if ($payload === false) {
-            return $data;
-        }
-
-        $iv_length = (int) openssl_cipher_iv_length($method);
-        if (strlen($payload) < $iv_length) {
-            return $data;
-        }
-
-        $decrypted = openssl_decrypt(
-            substr($payload, $iv_length),
-            $method,
-            $key,
-            OPENSSL_RAW_DATA,
-            substr($payload, 0, $iv_length)
-        );
-        if ($decrypted === false) {
-            $legacy_key = self::get_derived_key(true);
-            $decrypted = openssl_decrypt(
-                substr($payload, $iv_length),
-                $method,
-                $legacy_key,
-                OPENSSL_RAW_DATA,
-                substr($payload, 0, $iv_length)
+            return self::report_decryption_failure(
+                "openssl_decrypt is unavailable on this server."
             );
         }
 
-        if ($decrypted === false) {
-            return $data;
+        if (strpos($data, self::ENC_PREFIX_GCM) === 0) {
+            return self::decrypt_gcm(
+                substr($data, strlen(self::ENC_PREFIX_GCM))
+            );
         }
 
-        return $decrypted;
+        if (strpos($data, self::ENC_PREFIX_CBC_HMAC) === 0) {
+            return self::decrypt_cbc_hmac(
+                substr($data, strlen(self::ENC_PREFIX_CBC_HMAC))
+            );
+        }
+
+        return self::decrypt_legacy_cbc(
+            substr($data, strlen(self::ENC_PREFIX_LEGACY))
+        );
+    }
+
+    private static function decrypt_gcm(string $payload): ?string
+    {
+        $raw = base64_decode($payload, true);
+
+        if ($raw === false || strlen($raw) < 29) {
+            return self::report_decryption_failure("malformed GCM payload.");
+        }
+
+        $decrypted = openssl_decrypt(
+            substr($raw, 28),
+            self::ENC_CIPHER_GCM,
+            self::get_derived_key(),
+            OPENSSL_RAW_DATA,
+            substr($raw, 0, 12),
+            substr($raw, 12, 16)
+        );
+
+        return $decrypted === false
+            ? self::report_decryption_failure("GCM authentication failed.")
+            : $decrypted;
+    }
+
+    private static function decrypt_cbc_hmac(string $payload): ?string
+    {
+        $raw = base64_decode($payload, true);
+
+        if ($raw === false || strlen($raw) < 64) {
+            return self::report_decryption_failure(
+                "malformed CBC/HMAC payload."
+            );
+        }
+
+        $iv = substr($raw, 0, 16);
+        $mac = substr($raw, 16, 32);
+        $ciphertext = substr($raw, 48);
+
+        $expected_mac = hash_hmac(
+            "sha256",
+            $iv . $ciphertext,
+            self::get_mac_key(),
+            true
+        );
+
+        if (!hash_equals($expected_mac, $mac)) {
+            return self::report_decryption_failure(
+                "CBC/HMAC authentication failed."
+            );
+        }
+
+        $decrypted = openssl_decrypt(
+            $ciphertext,
+            self::ENC_CIPHER_CBC,
+            self::get_derived_key(),
+            OPENSSL_RAW_DATA,
+            $iv
+        );
+
+        return $decrypted === false
+            ? self::report_decryption_failure("CBC/HMAC decryption failed.")
+            : $decrypted;
+    }
+
+    private static function decrypt_legacy_cbc(string $payload): ?string
+    {
+        $raw = base64_decode($payload, true);
+
+        if ($raw === false) {
+            return self::report_decryption_failure(
+                "malformed legacy payload."
+            );
+        }
+
+        $iv_length = (int) openssl_cipher_iv_length(self::ENC_CIPHER_CBC);
+
+        if ($iv_length <= 0 || strlen($raw) <= $iv_length) {
+            return self::report_decryption_failure(
+                "truncated legacy payload."
+            );
+        }
+
+        $iv = substr($raw, 0, $iv_length);
+        $ciphertext = substr($raw, $iv_length);
+        foreach ([false, true] as $include_site_url) {
+            $decrypted = openssl_decrypt(
+                $ciphertext,
+                self::ENC_CIPHER_CBC,
+                self::get_derived_key($include_site_url),
+                OPENSSL_RAW_DATA,
+                $iv
+            );
+
+            if (
+                $decrypted !== false &&
+                self::is_plausible_plaintext($decrypted)
+            ) {
+                return $decrypted;
+            }
+        }
+
+        return self::report_decryption_failure(
+            "the legacy encryption key no longer matches. This happens when the site URL, " .
+                "the database name or the table prefix changed after the value was stored."
+        );
     }
 
     public static function send_rate_limit_error(bool $is_save = false): void
@@ -2594,68 +2831,68 @@ class OPTISTATE_Utils
         $query,
         string $query_type
     ): string {
-        $relevant_keys = [
-            "post_type",
-            "p",
-            "page_id",
-            "category__in",
-            "tag__in",
-            "posts_per_page",
-            "orderby",
-            "order",
-            "paged",
-            "s",
-            "meta_key",
-            "meta_value",
-            "meta_compare",
-            "tax_query",
-            "post__in",
-            "post__not_in",
-            "year",
-            "monthnum",
-            "day",
-            "author",
-            "author__in",
-            "author__not_in",
-            "category_name",
-            "tag",
-            "tag_id",
-            "cat",
-            "category__and",
-            "category__not_in",
-            "tag__and",
-            "tag__not_in",
-            "post_parent",
-            "post_parent__in",
-            "post_parent__not_in",
-            "post_status",
-            "has_password",
-            "post_mime_type",
-            "perm",
-            "comment_count",
+        $ignored_vars = [
+            "cache_results" => true,
+            "update_post_meta_cache" => true,
+            "update_post_term_cache" => true,
+            "update_menu_item_cache" => true,
+            "lazy_load_term_meta" => true,
+            "suppress_filters" => true,
         ];
 
-        $filtered = array_intersect_key(
-            $query->query_vars,
-            array_flip($relevant_keys)
-        );
+        $vars = isset($query->query_vars) && is_array($query->query_vars)
+            ? array_diff_key($query->query_vars, $ignored_vars)
+            : [];
 
-        foreach ($filtered as $key => $value) {
-            if (is_array($value)) {
-                $filtered[$key] = wp_json_encode($value);
-            }
-        }
+        $vars = self::normalize_cache_key_vars($vars);
 
         $context = [
             "v" => self::get_version($query_type),
-            "vars" => $filtered,
+            "vars" => $vars,
             "blog" => get_current_blog_id(),
         ];
 
-        return "os_q_" .
-            $query_type .
-            "_" .
-            md5((string) wp_json_encode($context));
+        $encoded = wp_json_encode($context);
+
+        if (!is_string($encoded)) {
+            $encoded = serialize($context);
+        }
+
+        return "os_q_" . $query_type . "_" . md5($encoded);
+    }
+
+    private static function normalize_cache_key_vars(
+        $value,
+        int $depth = 0
+    ) {
+        if ($depth > 10) {
+            return "__optistate_depth_limit__";
+        }
+
+        if (is_object($value)) {
+            $value = get_object_vars($value);
+        }
+
+        if (!is_array($value)) {
+            if (is_scalar($value) || $value === null) {
+                return $value;
+            }
+
+            return gettype($value);
+        }
+
+        $normalized = [];
+
+        foreach ($value as $key => $item) {
+            $normalized[$key] = self::normalize_cache_key_vars(
+                $item,
+                $depth + 1
+            );
+        }
+
+        ksort($normalized);
+
+        return $normalized;
     }
 
     private static function get_version(string $type): int
@@ -2676,6 +2913,20 @@ class OPTISTATE_Utils
         self::$version_cache[$type] = $version;
 
         return $version;
+    }
+
+    public static function can_flush_cache_group(): bool
+    {
+        static $supported = null;
+
+        if ($supported === null) {
+            $supported =
+                function_exists("wp_cache_flush_group") &&
+                function_exists("wp_cache_supports") &&
+                wp_cache_supports("flush_group");
+        }
+
+        return $supported;
     }
 
     public static function flush_cache_group_main(): void

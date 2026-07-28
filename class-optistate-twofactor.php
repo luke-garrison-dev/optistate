@@ -125,11 +125,29 @@ class OPTISTATE_TwoFactor
             return self::$secret_cache[$user_id];
         }
         $encrypted = get_user_meta($user_id, "optistate_2fa_secret", true);
-        if (empty($encrypted)) {
+        if (empty($encrypted) || !is_string($encrypted)) {
             self::$secret_cache[$user_id] = null;
             return null;
         }
         $secret = OPTISTATE_Utils::decrypt_data($encrypted);
+        if (!is_string($secret) || $secret === "") {
+            OPTISTATE_Utils::log_critical_error(
+                "The stored two-factor secret could not be decrypted; the user must re-enrol.",
+                ["user_id" => $user_id]
+            );
+            self::$secret_cache[$user_id] = null;
+            return null;
+        }
+        if (OPTISTATE_Utils::is_legacy_encrypted($encrypted)) {
+            $reencrypted = OPTISTATE_Utils::encrypt_data($secret);
+            if (OPTISTATE_Utils::is_encrypted($reencrypted)) {
+                update_user_meta(
+                    $user_id,
+                    "optistate_2fa_secret",
+                    $reencrypted
+                );
+            }
+        }
         self::$secret_cache[$user_id] = $secret;
         return $secret;
     }
@@ -181,11 +199,34 @@ class OPTISTATE_TwoFactor
 
     private function generate_secret(): string
     {
+        $bytes = "";
+
         try {
             $bytes = random_bytes(16);
         } catch (Throwable $e) {
-            $bytes = openssl_random_pseudo_bytes(16);
+            OPTISTATE_Utils::log_critical_error(
+                "random_bytes failed while generating a two-factor secret: " .
+                    $e->getMessage()
+            );
+
+            if (function_exists("openssl_random_pseudo_bytes")) {
+                $fallback = openssl_random_pseudo_bytes(16, $strong);
+
+                if (is_string($fallback) && $strong) {
+                    $bytes = $fallback;
+                }
+            }
         }
+
+        if (strlen($bytes) !== 16) {
+            throw new RuntimeException(
+                __(
+                    "A cryptographically secure secret could not be generated on this server.",
+                    "optistate"
+                )
+            );
+        }
+
         return $this->base32_encode($bytes);
     }
 
@@ -809,9 +850,7 @@ if ($enabled) {
 
     private function profile_js(): void
     {
-        $nonce = wp_create_nonce(
-            "optistate_2fa_ajax"
-        ); ?> <script type="text/javascript"> var optistate2fa = { ajax_nonce: <?php echo wp_json_encode(
+        $nonce = wp_create_nonce(OPTISTATE::TWO_FACTOR_NONCE_ACTION); ?> <script type="text/javascript"> var optistate2fa = { ajax_nonce: <?php echo wp_json_encode(
      $nonce
  ); ?> }; </script> <script type="text/javascript"> jQuery(document).ready(function($) { function handleAjaxError(xhr, defaultMsg) { var msg = defaultMsg; if (xhr.responseJSON && xhr.responseJSON.data && xhr.responseJSON.data.message) { msg = xhr.responseJSON.data.message; } else if (xhr.responseJSON && xhr.responseJSON.message) { msg = xhr.responseJSON.message; } else if (xhr.status === 429) { msg = '<?php echo esc_js(
      __("Rate limit exceeded. Please wait a moment.", "optistate")
@@ -900,7 +939,7 @@ if ($enabled) {
                 );
                 return;
             }
-            check_ajax_referer("optistate_2fa_ajax", "nonce");
+            check_ajax_referer(OPTISTATE::TWO_FACTOR_NONCE_ACTION, "nonce");
             $user_id = get_current_user_id();
             if (!$user_id) {
                 wp_die(-1);
@@ -968,7 +1007,7 @@ if ($enabled) {
                 );
                 return;
             }
-            check_ajax_referer("optistate_2fa_ajax", "nonce");
+            check_ajax_referer(OPTISTATE::TWO_FACTOR_NONCE_ACTION, "nonce");
             $user_id = get_current_user_id();
             if (!$user_id) {
                 wp_die(-1);
@@ -1018,7 +1057,7 @@ if ($enabled) {
                 );
                 return;
             }
-            check_ajax_referer("optistate_2fa_ajax", "nonce");
+            check_ajax_referer(OPTISTATE::TWO_FACTOR_NONCE_ACTION, "nonce");
             $user_id = get_current_user_id();
             if (!$user_id) {
                 wp_die(-1);

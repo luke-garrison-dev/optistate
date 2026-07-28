@@ -2146,9 +2146,11 @@ class OPTISTATE_Cleanup_Functions
             function_exists("wp_using_ext_object_cache") &&
             wp_using_ext_object_cache()
         ) {
-            if (function_exists("wp_cache_flush_group")) {
-                $flushed_transient      = (bool) wp_cache_flush_group("transient");
-                $flushed_site_transient = (bool) wp_cache_flush_group("site-transient");
+            if (OPTISTATE_Utils::can_flush_cache_group()) {
+                $flushed_transient = (bool) wp_cache_flush_group("transient");
+                $flushed_site_transient = (bool) wp_cache_flush_group(
+                    "site-transient"
+                );
                 return $flushed_transient && $flushed_site_transient ? 1 : 0;
             } elseif (function_exists("wp_cache_flush")) {
                 return wp_cache_flush() ? 1 : 0;

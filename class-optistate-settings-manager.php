@@ -6,6 +6,7 @@ class OPTISTATE_Settings_Manager
 {
     private OPTISTATE $main_plugin;
     private ?array $settings_cache = null;
+    private ?string $api_key_cache = null;
     private static ?bool $table_exists_cache = null;
     const SETTINGS_CACHED_OPTION = "optistate_settings_cached";
     public function __construct(OPTISTATE $main_plugin)
@@ -42,11 +43,6 @@ class OPTISTATE_Settings_Manager
             $defaults = $this->get_default_settings();
             $settings = array_merge($defaults, $option_settings);
             $validated = $this->validate_settings($settings);
-            if (isset($validated["pagespeed_api_key"])) {
-                $validated["pagespeed_api_key"] = OPTISTATE_Utils::decrypt_data(
-                    $validated["pagespeed_api_key"]
-                );
-            }
             $this->settings_cache = $validated;
             wp_cache_set($cache_key, $validated, "optistate", HOUR_IN_SECONDS);
             return $validated;
@@ -63,24 +59,74 @@ class OPTISTATE_Settings_Manager
             $this->main_plugin->set_store_data("settings", $validated);
         }
         update_option(self::SETTINGS_CACHED_OPTION, $validated, true);
-        $return_data = $validated;
-        if (isset($return_data["pagespeed_api_key"])) {
-            $return_data["pagespeed_api_key"] = OPTISTATE_Utils::decrypt_data(
-                $return_data["pagespeed_api_key"]
-            );
-        }
-        $this->settings_cache = $return_data;
-        wp_cache_set($cache_key, $return_data, "optistate", HOUR_IN_SECONDS);
-        return $return_data;
+        $this->settings_cache = $validated;
+        wp_cache_set($cache_key, $validated, "optistate", HOUR_IN_SECONDS);
+        return $validated;
     }
     public function get_pagespeed_api_key(): string
     {
-        $settings = $this->get_persistent_settings();
-        $encrypted = $settings["pagespeed_api_key"] ?? "";
-        if (empty($encrypted)) {
-            return "";
+        if ($this->api_key_cache !== null) {
+            return $this->api_key_cache;
         }
-        return OPTISTATE_Utils::decrypt_data($encrypted);
+
+        $settings = $this->get_persistent_settings();
+        $stored = $settings["pagespeed_api_key"] ?? "";
+
+        if (!is_string($stored) || $stored === "") {
+            $this->api_key_cache = "";
+
+            return $this->api_key_cache;
+        }
+
+        if (!OPTISTATE_Utils::is_encrypted($stored)) {
+            $this->api_key_cache = trim($stored);
+
+            return $this->api_key_cache;
+        }
+
+        $decrypted = OPTISTATE_Utils::decrypt_data($stored);
+
+        if (!is_string($decrypted)) {
+            OPTISTATE_Utils::log_critical_error(
+                "The stored PageSpeed API key could not be decrypted; PageSpeed requests will run without a key."
+            );
+
+            $this->api_key_cache = "";
+
+            return $this->api_key_cache;
+        }
+
+        $this->api_key_cache = trim($decrypted);
+
+        return $this->api_key_cache;
+    }
+
+    private function migrate_legacy_encrypted_values(array $settings): array
+    {
+        if (
+            !isset($settings["pagespeed_api_key"]) ||
+            !OPTISTATE_Utils::is_legacy_encrypted(
+                $settings["pagespeed_api_key"]
+            )
+        ) {
+            return $settings;
+        }
+
+        $plain = OPTISTATE_Utils::decrypt_data($settings["pagespeed_api_key"]);
+
+        if (!is_string($plain) || $plain === "") {
+            OPTISTATE_Utils::log_critical_error(
+                "The stored PageSpeed API key could not be migrated to the authenticated encryption format and was reset to the default."
+            );
+
+            $settings["pagespeed_api_key"] = "";
+
+            return $settings;
+        }
+
+        $settings["pagespeed_api_key"] = $plain;
+
+        return $settings;
     }
     public function save_persistent_settings(array $new_settings): bool
     {
@@ -89,6 +135,7 @@ class OPTISTATE_Settings_Manager
 
             $current = $this->get_persistent_settings();
             $merged = array_merge($current, $new_settings);
+            $merged = $this->migrate_legacy_encrypted_values($merged);
             $validated = $this->validate_settings($merged);
 
             $old_version = $this->get_settings_version();
@@ -124,6 +171,7 @@ class OPTISTATE_Settings_Manager
             );
 
             $this->settings_cache = null;
+            $this->api_key_cache = null;
             $this->main_plugin->clear_directory_existence_cache();
             OPTISTATE_Utils::clear_table_existence_cache();
             $this->main_plugin->invalidate_plugin_caches();
@@ -235,10 +283,8 @@ class OPTISTATE_Settings_Manager
                     $key_val = trim((string) $value);
                     if (empty($key_val)) {
                         $key_val = $defaults["pagespeed_api_key"];
-                    } else {
-                        if (strpos($key_val, "enc:") !== 0) {
-                            $key_val = OPTISTATE_Utils::encrypt_data($key_val);
-                        }
+                    } elseif (!OPTISTATE_Utils::is_encrypted($key_val)) {
+                        $key_val = OPTISTATE_Utils::encrypt_data($key_val);
                     }
                     $validated[$key] = $key_val;
                     break;
@@ -446,6 +492,8 @@ class OPTISTATE_Settings_Manager
                     ["response" => 500]
                 );
             }
+            $settings["pagespeed_api_key"] = $this->get_pagespeed_api_key();
+
             $cron_state = $this->main_plugin->get_store_data(
                 "cron_manager_state",
                 []

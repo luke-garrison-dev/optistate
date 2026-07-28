@@ -458,16 +458,7 @@ class OPTISTATE_Trash_Manager
     }
     private function can_flush_cache_group(): bool
     {
-        static $supported = null;
-
-        if ($supported === null) {
-            $supported =
-                function_exists("wp_cache_flush_group") &&
-                function_exists("wp_cache_supports") &&
-                wp_cache_supports("flush_group");
-        }
-
-        return $supported;
+        return OPTISTATE_Utils::can_flush_cache_group();
     }
     private function is_inside_allowed_base(string $path): bool
     {

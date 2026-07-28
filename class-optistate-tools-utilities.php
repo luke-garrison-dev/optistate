@@ -305,8 +305,9 @@ class OPTISTATE_Tools_Utilities
     public static function run_preview_autoload_options(
         OPTISTATE $main_plugin
     ): void {
-        check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
-        $main_plugin->settings_manager->check_user_access();
+        if (!$main_plugin->verify_ajax_request()) {
+            return;
+        }
 
         if (!OPTISTATE_Utils::check_rate_limit("preview_autoload", 10)) {
             OPTISTATE_Utils::send_rate_limit_error();
@@ -344,8 +345,9 @@ class OPTISTATE_Tools_Utilities
 
     public static function run_optimize_autoload(OPTISTATE $main_plugin): void
     {
-        check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
-        $main_plugin->settings_manager->check_user_access();
+        if (!$main_plugin->verify_ajax_request()) {
+            return;
+        }
 
         if (!self::require_post()) {
             return;
@@ -581,8 +583,9 @@ class OPTISTATE_Tools_Utilities
     public static function run_restore_autoload_backup(
         OPTISTATE $main_plugin
     ): void {
-        check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
-        $main_plugin->settings_manager->check_user_access();
+        if (!$main_plugin->verify_ajax_request()) {
+            return;
+        }
 
         if (!self::require_post()) {
             return;
@@ -724,7 +727,7 @@ class OPTISTATE_Tools_Utilities
 
     private static function autoload_off_value(): string
     {
-        return function_exists("wp_autoload_values_to_autoload") ? "off" : "no";
+        return OPTISTATE_Utils::get_autoload_off_value();
     }
 
     private static function is_safe_to_optimize(
@@ -1065,8 +1068,9 @@ class OPTISTATE_Tools_Utilities
     }
     public static function run_scan_integrity(OPTISTATE $main_plugin): void
     {
-        check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
-        $main_plugin->settings_manager->check_user_access();
+        if (!$main_plugin->verify_ajax_request()) {
+            return;
+        }
 
         if (!OPTISTATE_Utils::check_rate_limit("scan_integrity", 10)) {
             OPTISTATE_Utils::send_rate_limit_error();
@@ -1207,8 +1211,9 @@ class OPTISTATE_Tools_Utilities
 
     public static function run_fix_integrity(OPTISTATE $main_plugin): void
     {
-        check_ajax_referer(OPTISTATE::NONCE_ACTION, "nonce");
-        $main_plugin->settings_manager->check_user_access();
+        if (!$main_plugin->verify_ajax_request()) {
+            return;
+        }
 
         if (!self::require_post()) {
             return;

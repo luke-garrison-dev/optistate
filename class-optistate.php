@@ -11,6 +11,7 @@ final class OPTISTATE
     const OPTION_NAME = "optistate_settings";
     const NONCE_ACTION = "optistate_nonce";
     const BACKUP_NONCE_ACTION = "optistate_backup_nonce";
+    const TWO_FACTOR_NONCE_ACTION = "optistate_2fa_ajax";
     const STATS_TRANSIENT = "optistate_db_metrics";
     const STATS_CACHE_DURATION = 12 * HOUR_IN_SECONDS;
 
@@ -188,11 +189,8 @@ final class OPTISTATE
             if ($is_admin_context) {
                 $this->register_ajax_handlers();
                 $this->maybe_verify_directories();
-                $is_our_ajax =
-                    !wp_doing_ajax() ||
-                    (isset($_REQUEST["action"]) &&
-                        strpos($_REQUEST["action"], "optistate_") === 0);
-                if ($is_our_ajax) {
+
+                if ($this->is_own_request()) {
                     $this->instantiate_admin_services();
                 }
             }
@@ -220,6 +218,28 @@ final class OPTISTATE
             );
         }
     }
+    private function is_own_request(): bool
+    {
+        if (!wp_doing_ajax()) {
+            return true;
+        }
+
+        if (wp_doing_cron() || (defined("WP_CLI") && WP_CLI)) {
+            return true;
+        }
+
+        if (
+            !isset($_REQUEST["action"]) ||
+            !is_scalar($_REQUEST["action"])
+        ) {
+            return false;
+        }
+
+        $action = sanitize_key(wp_unslash((string) $_REQUEST["action"]));
+
+        return strpos($action, "optistate_") === 0;
+    }
+
     private function instantiate_admin_services(): void
     {
         $services = [
@@ -627,7 +647,7 @@ final class OPTISTATE
 
         wp_cache_delete("alloptions", "options");
 
-        if (function_exists("wp_cache_flush_group")) {
+        if (OPTISTATE_Utils::can_flush_cache_group()) {
             wp_cache_flush_group("optistate_processes");
         }
     }
@@ -704,7 +724,7 @@ final class OPTISTATE
             )
         );
 
-        if (function_exists("wp_cache_flush_group")) {
+        if (OPTISTATE_Utils::can_flush_cache_group()) {
             wp_cache_flush_group("options");
         } else {
             wp_cache_delete("alloptions", "options");
@@ -924,6 +944,16 @@ final class OPTISTATE
     ): bool {
         if (!check_ajax_referer($nonce_action, "nonce", false)) {
             wp_send_json_error(__("Security check failed.", "optistate"), 403);
+            return false;
+        }
+        if (!$this->settings_manager instanceof OPTISTATE_Settings_Manager) {
+            wp_send_json_error(
+                __(
+                    "The plugin is not fully initialised. Please reload the page.",
+                    "optistate"
+                ),
+                503
+            );
             return false;
         }
         return $this->settings_manager->check_user_access();

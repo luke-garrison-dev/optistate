@@ -62,9 +62,10 @@ class OPTISTATE_Performance_Audit
 
         $mutex_acquired = (bool) $wpdb->query(
             $wpdb->prepare(
-                "INSERT IGNORE INTO {$wpdb->options} (option_name, option_value, autoload) VALUES (%s, %s, 'no')",
+                "INSERT IGNORE INTO {$wpdb->options} (option_name, option_value, autoload) VALUES (%s, %s, %s)",
                 $mutex_option,
-                (string) $mutex_expiry
+                (string) $mutex_expiry,
+                OPTISTATE_Utils::get_autoload_off_value()
             )
         );
 
