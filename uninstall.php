@@ -5,18 +5,12 @@
  * This file is executed when the plugin is deleted from the WordPress admin.
  * It removes ALL plugin data including files, folders, options, transients,
  * cron jobs, user meta, custom tables, and .htaccess rules.
- *
- * @package OptimalState
  */
 
-// Exit if accessed directly or if not uninstalling
 if (!defined('WP_UNINSTALL_PLUGIN')) {
     exit;
 }
 
-/**
- * Remove ALL plugin rules from .htaccess
- */
 function optistate_remove_htaccess_rules() {
     global $wp_filesystem;
     if (empty($wp_filesystem)) {
@@ -49,42 +43,33 @@ function optistate_remove_htaccess_rules() {
 
     $new_content = $current_content;
 
-    // Remove all specific blocks
     foreach ($blocks_to_remove as $block_name) {
         $pattern = '/# BEGIN ' . preg_quote($block_name, '/') . '.*?# END ' . preg_quote($block_name, '/') . '/is';
         $new_content = preg_replace($pattern, '', $new_content);
     }
 
-    // Remove lingering decorative separators
     $separator = '# ============================================================';
     $new_content = preg_replace('/^' . preg_quote($separator, '/') . '\s*$\r?\n?/m', '', $new_content);
 
-    // Clean up excessive empty lines
     $new_content = preg_replace("/\n{3,}/", "\n\n", trim($new_content)) . "\n";
 
-    // Only write to the file if changes were actually made
     if (trim($new_content) !== trim($current_content)) {
         $wp_filesystem->put_contents($htaccess_path, $new_content, FS_CHMOD_FILE);
     }
 }
 
-/**
- * Delete all plugin-specific directories and files
- */
 function optistate_delete_plugin_directories() {
     $upload_dir = wp_upload_dir();
 
-    // Directories created by the plugin
     $directories_to_delete = array(
-        trailingslashit($upload_dir['basedir']) . 'optistate-settings/',     // Settings and log files
-        trailingslashit($upload_dir['basedir']) . 'optistate/db-backups/',   // Database backups
-        trailingslashit($upload_dir['basedir']) . 'optistate/db-restore-temp/', // Temporary restore files
-        trailingslashit($upload_dir['basedir']) . 'optistate/page-cache/',   // Server-side cache directory
-        trailingslashit($upload_dir['basedir']) . 'optistate/trash/',        // Trash folder
-        trailingslashit($upload_dir['basedir']) . 'optistate/'              // Parent folder
+        trailingslashit($upload_dir['basedir']) . 'optistate-settings/',
+        trailingslashit($upload_dir['basedir']) . 'optistate/db-backups/',
+        trailingslashit($upload_dir['basedir']) . 'optistate/db-restore-temp/',
+        trailingslashit($upload_dir['basedir']) . 'optistate/page-cache/',
+        trailingslashit($upload_dir['basedir']) . 'optistate/trash/',
+        trailingslashit($upload_dir['basedir']) . 'optistate/'
     );
 
-    // Initialize WP_Filesystem
     global $wp_filesystem;
     if (empty($wp_filesystem)) {
         require_once ABSPATH . 'wp-admin/includes/file.php';
@@ -93,18 +78,14 @@ function optistate_delete_plugin_directories() {
 
     foreach ($directories_to_delete as $directory) {
         if ($wp_filesystem && $wp_filesystem->is_dir($directory)) {
-            $wp_filesystem->delete($directory, true); // true = recursive delete
+            $wp_filesystem->delete($directory, true);
         }
     }
 }
 
-/**
- * Delete all plugin-specific options, including transients and site transients.
- */
 function optistate_delete_all_options() {
     global $wpdb;
 
-    // Delete all regular options with 'optistate_' prefix
     $wpdb->query(
         $wpdb->prepare(
             "DELETE FROM {$wpdb->options} WHERE option_name LIKE %s",
@@ -112,7 +93,6 @@ function optistate_delete_all_options() {
         )
     );
 
-    // Delete all transients (standard and site) with 'optistate_' prefix
     $wpdb->query(
         $wpdb->prepare(
             "DELETE FROM {$wpdb->options} WHERE option_name LIKE %s OR option_name LIKE %s",
@@ -129,9 +109,6 @@ function optistate_delete_all_options() {
     );
 }
 
-/**
- * Delete all plugin-specific user meta.
- */
 function optistate_delete_user_meta() {
     global $wpdb;
     $wpdb->query(
@@ -142,22 +119,17 @@ function optistate_delete_user_meta() {
     );
 }
 
-/**
- * Drop all custom tables created by the plugin.
- */
 function optistate_drop_custom_tables() {
     global $wpdb;
 
     $tables_to_drop = [];
 
-    // 1. Main tables
     $tables_to_drop[] = $wpdb->prefix . 'optistate_processes';
     $tables_to_drop[] = $wpdb->prefix . 'optistate_backup_metadata';
     $tables_to_drop[] = $wpdb->prefix . 'optistate_login_protect';
     $tables_to_drop[] = $wpdb->prefix . 'optistate_core_data';
     $tables_to_drop[] = $wpdb->prefix . 'optistate_trash';
 
-    // 2. Stray tables (old_*, temp_*, trash_table_*)
     $stray_tables = $wpdb->get_col(
         $wpdb->prepare(
             "SELECT TABLE_NAME FROM information_schema.TABLES 
@@ -173,8 +145,7 @@ function optistate_drop_custom_tables() {
     if (!empty($stray_tables)) {
         $tables_to_drop = array_merge($tables_to_drop, $stray_tables);
     }
-
-    // Remove duplicates and ensure safe names
+	
     $tables_to_drop = array_unique($tables_to_drop);
     $safe_tables = array_map('esc_sql', $tables_to_drop);
     $safe_tables = array_filter($safe_tables, function($table) {
@@ -190,9 +161,6 @@ function optistate_drop_custom_tables() {
     }
 }
 
-/**
- * Clear all scheduled cron events that belong to the plugin.
- */
 function optistate_clear_all_cron_events() {
     $cron = _get_cron_array();
     if (empty($cron)) {
@@ -210,31 +178,50 @@ function optistate_clear_all_cron_events() {
     }
 }
 
-/**
- * Main uninstall execution
- */
-function optistate_uninstall() {
-    // Remove .htaccess rules first (before deleting directories, in case we need filesystem access)
-    optistate_remove_htaccess_rules();
+function optistate_uninstall_current_site() {
 
-    // Delete plugin directories and files (including page cache, backups, settings, trash)
     optistate_delete_plugin_directories();
 
-    // Delete all options, transients, and site transients
     optistate_delete_all_options();
 
-    // Delete user meta
-    optistate_delete_user_meta();
-
-    // Drop all custom tables
     optistate_drop_custom_tables();
 
-    // Clear all scheduled cron events
     optistate_clear_all_cron_events();
+}
 
-    // Clear any cached data
+function optistate_uninstall() {
+
+    optistate_remove_htaccess_rules();
+
+    if (is_multisite()) {
+        $batch_size = 100;
+        $offset = 0;
+
+        do {
+            $site_ids = get_sites(array(
+                'fields'                 => 'ids',
+                'number'                 => $batch_size,
+                'offset'                 => $offset,
+                'orderby'                => 'id',
+                'update_site_cache'      => false,
+                'update_site_meta_cache' => false,
+            ));
+
+            foreach ($site_ids as $site_id) {
+                switch_to_blog((int) $site_id);
+                optistate_uninstall_current_site();
+                restore_current_blog();
+            }
+
+            $offset += $batch_size;
+        } while (count($site_ids) === $batch_size);
+    } else {
+        optistate_uninstall_current_site();
+    }
+
+    optistate_delete_user_meta();
+
     wp_cache_flush();
 }
 
-// Execute the uninstall
 optistate_uninstall();
