@@ -340,7 +340,9 @@ class OPTISTATE_Backup_Manager
     {
         try {
             if (
-                !$this->main_plugin->verify_ajax_request(OPTISTATE::BACKUP_NONCE_ACTION)
+                !$this->main_plugin->verify_ajax_request(
+                    OPTISTATE::BACKUP_NONCE_ACTION
+                )
             ) {
                 return;
             }
@@ -412,7 +414,9 @@ class OPTISTATE_Backup_Manager
     public function ajax_check_backup_status(): void
     {
         if (
-            !$this->main_plugin->verify_ajax_request(OPTISTATE::BACKUP_NONCE_ACTION)
+            !$this->main_plugin->verify_ajax_request(
+                OPTISTATE::BACKUP_NONCE_ACTION
+            )
         ) {
             return;
         }
@@ -496,7 +500,9 @@ class OPTISTATE_Backup_Manager
     {
         try {
             if (
-                !$this->main_plugin->verify_ajax_request(OPTISTATE::BACKUP_NONCE_ACTION)
+                !$this->main_plugin->verify_ajax_request(
+                    OPTISTATE::BACKUP_NONCE_ACTION
+                )
             ) {
                 return;
             }
@@ -742,7 +748,9 @@ class OPTISTATE_Backup_Manager
     public function ajax_delete_backup(): void
     {
         if (
-            !$this->main_plugin->verify_ajax_request(OPTISTATE::BACKUP_NONCE_ACTION)
+            !$this->main_plugin->verify_ajax_request(
+                OPTISTATE::BACKUP_NONCE_ACTION
+            )
         ) {
             return;
         }
@@ -941,7 +949,9 @@ class OPTISTATE_Backup_Manager
     public function ajax_check_manual_backup_on_load(): void
     {
         if (
-            !$this->main_plugin->verify_ajax_request(OPTISTATE::BACKUP_NONCE_ACTION)
+            !$this->main_plugin->verify_ajax_request(
+                OPTISTATE::BACKUP_NONCE_ACTION
+            )
         ) {
             return;
         }
@@ -2428,7 +2438,9 @@ class OPTISTATE_Backup_Manager
     public function ajax_restore_from_file(): void
     {
         if (
-            !$this->main_plugin->verify_ajax_request(OPTISTATE::BACKUP_NONCE_ACTION)
+            !$this->main_plugin->verify_ajax_request(
+                OPTISTATE::BACKUP_NONCE_ACTION
+            )
         ) {
             return;
         }
@@ -2687,7 +2699,9 @@ class OPTISTATE_Backup_Manager
     public function ajax_check_decompression_status(): void
     {
         if (
-            !$this->main_plugin->verify_ajax_request(OPTISTATE::BACKUP_NONCE_ACTION)
+            !$this->main_plugin->verify_ajax_request(
+                OPTISTATE::BACKUP_NONCE_ACTION
+            )
         ) {
             return;
         }
@@ -2771,7 +2785,9 @@ class OPTISTATE_Backup_Manager
     public function ajax_get_restore_status(): void
     {
         if (
-            !$this->main_plugin->verify_ajax_request(OPTISTATE::BACKUP_NONCE_ACTION)
+            !$this->main_plugin->verify_ajax_request(
+                OPTISTATE::BACKUP_NONCE_ACTION
+            )
         ) {
             return;
         }

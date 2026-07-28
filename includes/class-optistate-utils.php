@@ -991,8 +991,7 @@ class OPTISTATE_Utils
 
     public static function is_legacy_encrypted($data): bool
     {
-        return is_string($data) &&
-            strpos($data, self::ENC_PREFIX_LEGACY) === 0;
+        return is_string($data) && strpos($data, self::ENC_PREFIX_LEGACY) === 0;
     }
 
     private static function is_plausible_plaintext(string $value): bool
@@ -1083,12 +1082,7 @@ class OPTISTATE_Utils
             return $data;
         }
 
-        $mac = hash_hmac(
-            "sha256",
-            $iv . $encrypted,
-            self::get_mac_key(),
-            true
-        );
+        $mac = hash_hmac("sha256", $iv . $encrypted, self::get_mac_key(), true);
 
         return self::ENC_PREFIX_CBC_HMAC .
             base64_encode($iv . $mac . $encrypted);
@@ -1194,17 +1188,13 @@ class OPTISTATE_Utils
         $raw = base64_decode($payload, true);
 
         if ($raw === false) {
-            return self::report_decryption_failure(
-                "malformed legacy payload."
-            );
+            return self::report_decryption_failure("malformed legacy payload.");
         }
 
         $iv_length = (int) openssl_cipher_iv_length(self::ENC_CIPHER_CBC);
 
         if ($iv_length <= 0 || strlen($raw) <= $iv_length) {
-            return self::report_decryption_failure(
-                "truncated legacy payload."
-            );
+            return self::report_decryption_failure("truncated legacy payload.");
         }
 
         $iv = substr($raw, 0, $iv_length);
@@ -2840,9 +2830,10 @@ class OPTISTATE_Utils
             "suppress_filters" => true,
         ];
 
-        $vars = isset($query->query_vars) && is_array($query->query_vars)
-            ? array_diff_key($query->query_vars, $ignored_vars)
-            : [];
+        $vars =
+            isset($query->query_vars) && is_array($query->query_vars)
+                ? array_diff_key($query->query_vars, $ignored_vars)
+                : [];
 
         $vars = self::normalize_cache_key_vars($vars);
 
@@ -2861,10 +2852,8 @@ class OPTISTATE_Utils
         return "os_q_" . $query_type . "_" . md5($encoded);
     }
 
-    private static function normalize_cache_key_vars(
-        $value,
-        int $depth = 0
-    ) {
+    private static function normalize_cache_key_vars($value, int $depth = 0)
+    {
         if ($depth > 10) {
             return "__optistate_depth_limit__";
         }

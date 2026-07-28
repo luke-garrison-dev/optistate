@@ -228,10 +228,7 @@ final class OPTISTATE
             return true;
         }
 
-        if (
-            !isset($_REQUEST["action"]) ||
-            !is_scalar($_REQUEST["action"])
-        ) {
+        if (!isset($_REQUEST["action"]) || !is_scalar($_REQUEST["action"])) {
             return false;
         }
 

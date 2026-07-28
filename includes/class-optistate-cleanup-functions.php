@@ -8,10 +8,10 @@ class OPTISTATE_Cleanup_Functions
     private OPTISTATE $main_plugin;
 
     private array $last_affected_ids = [
-        "post"    => [],
+        "post" => [],
         "comment" => [],
-        "term"    => [],
-        "user"    => [],
+        "term" => [],
+        "user" => [],
     ];
 
     public function __construct(OPTISTATE $main_plugin)
@@ -38,7 +38,8 @@ class OPTISTATE_Cleanup_Functions
         $max_exec = (int) ini_get("max_execution_time");
 
         if ($max_exec <= 0) {
-            $max_exec = (defined("WP_CLI") && WP_CLI) || wp_doing_cron() ? 300 : 30;
+            $max_exec =
+                (defined("WP_CLI") && WP_CLI) || wp_doing_cron() ? 300 : 30;
         }
 
         $limit = max(5, $max_exec - 10);
@@ -110,35 +111,41 @@ class OPTISTATE_Cleanup_Functions
         $default_flip = array_flip($default_keys);
 
         $all = [
-            "post_revisions"          => __("Post Revisions", "optistate"),
-            "auto_drafts"             => __("Auto Drafts", "optistate"),
-            "trashed_posts"           => __("Trashed Posts", "optistate"),
-            "spam_comments"           => __("Spam Comments", "optistate"),
-            "trashed_comments"        => __("Trashed Comments", "optistate"),
-            "orphaned_postmeta"       => __("Orphaned Post Meta", "optistate"),
-            "orphaned_commentmeta"    => __("Orphaned Comment Meta", "optistate"),
-            "orphaned_relationships"  => __("Orphaned Term Relationships", "optistate"),
-            "expired_transients"      => __("Expired Transients", "optistate"),
-            "all_transients"          => __("All Transients", "optistate"),
-            "duplicate_postmeta"      => __("Duplicate Post Meta", "optistate"),
-            "duplicate_commentmeta"   => __("Duplicate Comment Meta", "optistate"),
-            "duplicate_usermeta"      => __("Duplicate User Meta", "optistate"),
-            "duplicate_termmeta"      => __("Duplicate Term Meta", "optistate"),
-            "orphaned_usermeta"       => __("Orphaned User Meta", "optistate"),
-            "orphaned_termmeta"       => __("Orphaned Term Meta", "optistate"),
-            "unapproved_comments"     => __("Unapproved Comments", "optistate"),
-            "pingbacks"               => __("Pingbacks", "optistate"),
-            "trackbacks"              => __("Trackbacks", "optistate"),
-            "action_scheduler"        => __("Action Logs", "optistate"),
-            "oembed_cache"            => __("oEmbed Cache", "optistate"),
-            "woo_bloat"               => __("WooCommerce Sessions/Logs", "optistate"),
-            "empty_taxonomies"        => __("Empty Taxonomies", "optistate"),
+            "post_revisions" => __("Post Revisions", "optistate"),
+            "auto_drafts" => __("Auto Drafts", "optistate"),
+            "trashed_posts" => __("Trashed Posts", "optistate"),
+            "spam_comments" => __("Spam Comments", "optistate"),
+            "trashed_comments" => __("Trashed Comments", "optistate"),
+            "orphaned_postmeta" => __("Orphaned Post Meta", "optistate"),
+            "orphaned_commentmeta" => __("Orphaned Comment Meta", "optistate"),
+            "orphaned_relationships" => __(
+                "Orphaned Term Relationships",
+                "optistate"
+            ),
+            "expired_transients" => __("Expired Transients", "optistate"),
+            "all_transients" => __("All Transients", "optistate"),
+            "duplicate_postmeta" => __("Duplicate Post Meta", "optistate"),
+            "duplicate_commentmeta" => __(
+                "Duplicate Comment Meta",
+                "optistate"
+            ),
+            "duplicate_usermeta" => __("Duplicate User Meta", "optistate"),
+            "duplicate_termmeta" => __("Duplicate Term Meta", "optistate"),
+            "orphaned_usermeta" => __("Orphaned User Meta", "optistate"),
+            "orphaned_termmeta" => __("Orphaned Term Meta", "optistate"),
+            "unapproved_comments" => __("Unapproved Comments", "optistate"),
+            "pingbacks" => __("Pingbacks", "optistate"),
+            "trackbacks" => __("Trackbacks", "optistate"),
+            "action_scheduler" => __("Action Logs", "optistate"),
+            "oembed_cache" => __("oEmbed Cache", "optistate"),
+            "woo_bloat" => __("WooCommerce Sessions/Logs", "optistate"),
+            "empty_taxonomies" => __("Empty Taxonomies", "optistate"),
         ];
 
         $items = [];
         foreach ($all as $key => $label) {
             $items[$key] = [
-                "label"   => $label,
+                "label" => $label,
                 "default" => isset($default_flip[$key]),
             ];
         }
@@ -175,7 +182,7 @@ class OPTISTATE_Cleanup_Functions
             ? sanitize_key(wp_unslash($_POST["item_type"]))
             : "";
 
-        $cleaned       = 0;
+        $cleaned = 0;
 
         try {
             $cleaned = OPTISTATE_Utils::without_foreign_key_checks(
@@ -237,10 +244,10 @@ class OPTISTATE_Cleanup_Functions
             );
         } catch (Throwable $e) {
             $error_details = [
-                "operation"    => $item_type,
-                "message"      => $e->getMessage(),
-                "file"         => $e->getFile(),
-                "line"         => $e->getLine(),
+                "operation" => $item_type,
+                "message" => $e->getMessage(),
+                "file" => $e->getFile(),
+                "line" => $e->getLine(),
                 "memory_usage" => size_format(memory_get_usage(true), 2),
             ];
             $this->main_plugin->log_entry(
@@ -295,11 +302,13 @@ class OPTISTATE_Cleanup_Functions
         }
 
         try {
-            $cleaned       = $this->perform_optimizations(true);
+            $cleaned = $this->perform_optimizations(true);
             $total_cleaned = 0;
 
             if (is_array($cleaned)) {
-                array_walk_recursive($cleaned, function ($value) use (&$total_cleaned) {
+                array_walk_recursive($cleaned, function ($value) use (
+                    &$total_cleaned
+                ) {
                     if (is_numeric($value)) {
                         $total_cleaned += $value;
                     }
@@ -320,8 +329,12 @@ class OPTISTATE_Cleanup_Functions
             $this->main_plugin->clear_stats_cache();
             OPTISTATE_Utils::invalidate_table_cache();
 
-            $new_stats    = $this->main_plugin->get_combined_database_statistics(true);
-            $health_score = $this->main_plugin->health_score->calculate_health_score($new_stats);
+            $new_stats = $this->main_plugin->get_combined_database_statistics(
+                true
+            );
+            $health_score = $this->main_plugin->health_score->calculate_health_score(
+                $new_stats
+            );
 
             $cleaned["health_score"] = $health_score;
 
@@ -357,26 +370,32 @@ class OPTISTATE_Cleanup_Functions
                     wp_doing_cron() &&
                     (doing_action("optistate_scheduled_cleanup") ||
                         doing_action("optistate_async_backup_complete"));
-                $is_cli            = defined("WP_CLI") && WP_CLI;
-                $is_admin_request  = current_user_can("manage_options");
+                $is_cli = defined("WP_CLI") && WP_CLI;
+                $is_admin_request = current_user_can("manage_options");
 
                 if (!$is_automated && !$is_cli && !$is_admin_request) {
                     return $return_data ? [] : null;
                 }
 
                 $default_ops = self::get_default_one_click_operations();
-                $settings    = $this->main_plugin->settings_manager->get_persistent_settings();
-                $extra_keys  = $settings["one_click_extra_items"] ?? [];
-                $all_items   = self::get_all_cleanup_items();
+                $settings = $this->main_plugin->settings_manager->get_persistent_settings();
+                $extra_keys = $settings["one_click_extra_items"] ?? [];
+                $all_items = self::get_all_cleanup_items();
 
-                $extra_keys = array_filter($extra_keys, function ($key) use ($all_items) {
+                $extra_keys = array_filter($extra_keys, function ($key) use (
+                    $all_items
+                ) {
                     return isset($all_items[$key]);
                 });
 
-                $operation_keys = array_unique(array_merge($default_ops, $extra_keys));
+                $operation_keys = array_unique(
+                    array_merge($default_ops, $extra_keys)
+                );
 
                 if (in_array("all_transients", $operation_keys, true)) {
-                    $operation_keys = array_diff($operation_keys, ["expired_transients"]);
+                    $operation_keys = array_diff($operation_keys, [
+                        "expired_transients",
+                    ]);
                 }
 
                 $method_map = ["woo_bloat" => "clean_woocommerce_bloat"];
@@ -394,12 +413,18 @@ class OPTISTATE_Cleanup_Functions
                         $cleaned[$op_name] = $callback();
                     } catch (Throwable $e) {
                         $error_details = [
-                            "operation"    => $op_name,
-                            "message"      => $e->getMessage(),
-                            "file"         => $e->getFile(),
-                            "line"         => $e->getLine(),
-                            "memory_usage" => size_format(memory_get_usage(true), 2),
-                            "peak_memory"  => size_format(memory_get_peak_usage(true), 2),
+                            "operation" => $op_name,
+                            "message" => $e->getMessage(),
+                            "file" => $e->getFile(),
+                            "line" => $e->getLine(),
+                            "memory_usage" => size_format(
+                                memory_get_usage(true),
+                                2
+                            ),
+                            "peak_memory" => size_format(
+                                memory_get_peak_usage(true),
+                                2
+                            ),
                         ];
                         $this->main_plugin->log_entry(
                             "❌ " .
@@ -416,7 +441,8 @@ class OPTISTATE_Cleanup_Functions
                             $error_details
                         );
                         OPTISTATE_Utils::log_critical_error(
-                            "Optimization operation failed: " . $e->getMessage(),
+                            "Optimization operation failed: " .
+                                $e->getMessage(),
                             $error_details
                         );
                         $cleaned[$op_name] = 0;
@@ -431,13 +457,16 @@ class OPTISTATE_Cleanup_Functions
     }
     private function flush_collected_caches(): void
     {
-        $affected_post_ids    = $this->get_last_affected_ids("post");
+        $affected_post_ids = $this->get_last_affected_ids("post");
         $affected_comment_ids = $this->get_last_affected_ids("comment");
-        $affected_term_ids    = $this->get_last_affected_ids("term");
-        $affected_user_ids    = $this->get_last_affected_ids("user");
+        $affected_term_ids = $this->get_last_affected_ids("term");
+        $affected_user_ids = $this->get_last_affected_ids("user");
 
         if (!empty($affected_post_ids)) {
-            foreach (array_unique(array_map("absint", $affected_post_ids)) as $post_id) {
+            foreach (
+                array_unique(array_map("absint", $affected_post_ids))
+                as $post_id
+            ) {
                 clean_post_cache($post_id);
                 wp_cache_delete($post_id, "posts");
                 wp_cache_delete($post_id, "post_meta");
@@ -446,7 +475,10 @@ class OPTISTATE_Cleanup_Functions
         wp_cache_delete("last_changed", "posts");
 
         if (!empty($affected_comment_ids)) {
-            foreach (array_unique(array_map("absint", $affected_comment_ids)) as $comment_id) {
+            foreach (
+                array_unique(array_map("absint", $affected_comment_ids))
+                as $comment_id
+            ) {
                 clean_comment_cache($comment_id);
                 wp_cache_delete($comment_id, "comment_meta");
             }
@@ -454,12 +486,17 @@ class OPTISTATE_Cleanup_Functions
         wp_cache_delete("last_changed", "comments");
 
         if (!empty($affected_term_ids)) {
-            clean_term_cache(array_unique(array_map("absint", $affected_term_ids)));
+            clean_term_cache(
+                array_unique(array_map("absint", $affected_term_ids))
+            );
         }
         wp_cache_delete("last_changed", "terms");
 
         if (!empty($affected_user_ids)) {
-            foreach (array_unique(array_map("absint", $affected_user_ids)) as $user_id) {
+            foreach (
+                array_unique(array_map("absint", $affected_user_ids))
+                as $user_id
+            ) {
                 clean_user_cache($user_id);
                 wp_cache_delete($user_id, "user_meta");
             }
@@ -476,15 +513,15 @@ class OPTISTATE_Cleanup_Functions
     }
     private function run_batch_delete(
         string $query_template,
-        int    $batch_size  = 2000,
-        array  $parameters  = []
+        int $batch_size = 2000,
+        array $parameters = []
     ): int {
         global $wpdb;
 
         $total_cleaned = 0;
-        $start_time    = time();
-        $time_limit    = $this->get_time_limit();
-        $memory_limit  = wp_convert_hr_to_bytes(ini_get("memory_limit"));
+        $start_time = time();
+        $time_limit = $this->get_time_limit();
+        $memory_limit = wp_convert_hr_to_bytes(ini_get("memory_limit"));
         $adaptive_batch = $batch_size;
 
         if ($memory_limit > 0) {
@@ -496,7 +533,7 @@ class OPTISTATE_Cleanup_Functions
             }
         }
 
-        $has_limit    = strpos($query_template, "LIMIT %d") !== false;
+        $has_limit = strpos($query_template, "LIMIT %d") !== false;
         $last_elapsed = null;
 
         do {
@@ -511,16 +548,21 @@ class OPTISTATE_Cleanup_Functions
 
             if ($has_limit) {
                 $current_params = array_merge($parameters, [$current_batch]);
-                $query          = $wpdb->prepare($query_template, ...$current_params);
+                $query = $wpdb->prepare($query_template, ...$current_params);
             } else {
                 $query = $query_template;
             }
 
             try {
-                $cleaned = OPTISTATE_Utils::transaction(function () use ($wpdb, $query) {
+                $cleaned = OPTISTATE_Utils::transaction(function () use (
+                    $wpdb,
+                    $query
+                ) {
                     $result = $wpdb->query($query);
                     if ($result === false) {
-                        throw new \Exception("Batch delete failed: " . $wpdb->last_error);
+                        throw new \Exception(
+                            "Batch delete failed: " . $wpdb->last_error
+                        );
                     }
                     return $result;
                 });
@@ -529,15 +571,15 @@ class OPTISTATE_Cleanup_Functions
                     "Batch delete interrupted after partial progress",
                     [
                         "query_preview" => substr($query, 0, 200),
-                        "error"         => $e->getMessage(),
-                        "processed"     => $total_cleaned,
+                        "error" => $e->getMessage(),
+                        "processed" => $total_cleaned,
                     ]
                 );
                 break;
             }
 
             $total_cleaned += $cleaned;
-            $last_elapsed   = microtime(true) - $start_time;
+            $last_elapsed = microtime(true) - $start_time;
 
             if (!$has_limit || $cleaned < $current_batch) {
                 break;
@@ -552,7 +594,7 @@ class OPTISTATE_Cleanup_Functions
     {
         global $wpdb;
 
-        $registered  = array_keys(get_taxonomies());
+        $registered = array_keys(get_taxonomies());
         $all_db_slugs = $wpdb->get_col(
             "SELECT DISTINCT taxonomy FROM {$wpdb->term_taxonomy}"
         );
@@ -563,7 +605,10 @@ class OPTISTATE_Cleanup_Functions
             return ["registered" => $registered, "skip" => [], "orphan" => []];
         }
 
-        $placeholders = implode(", ", array_fill(0, count($unregistered), "%s"));
+        $placeholders = implode(
+            ", ",
+            array_fill(0, count($unregistered), "%s")
+        );
 
         $slugs_with_refs = $wpdb->get_col(
             $wpdb->prepare(
@@ -577,7 +622,7 @@ class OPTISTATE_Cleanup_Functions
         );
 
         $slugs_with_refs_index = array_flip($slugs_with_refs);
-        $skip   = [];
+        $skip = [];
         $orphan = [];
 
         foreach ($unregistered as $slug) {
@@ -590,8 +635,8 @@ class OPTISTATE_Cleanup_Functions
 
         return [
             "registered" => $registered,
-            "skip"       => $skip,
-            "orphan"     => $orphan,
+            "skip" => $skip,
+            "orphan" => $orphan,
         ];
     }
     private function clean_action_scheduler(): int
@@ -599,15 +644,15 @@ class OPTISTATE_Cleanup_Functions
         global $wpdb;
 
         $table_actions = $wpdb->prefix . "actionscheduler_actions";
-        $table_logs    = $wpdb->prefix . "actionscheduler_logs";
-        $table_claims  = $wpdb->prefix . "actionscheduler_claims";
-        $table_groups  = $wpdb->prefix . "actionscheduler_groups";
+        $table_logs = $wpdb->prefix . "actionscheduler_logs";
+        $table_claims = $wpdb->prefix . "actionscheduler_claims";
+        $table_groups = $wpdb->prefix . "actionscheduler_groups";
 
         if (!OPTISTATE_Utils::table_exists($table_actions)) {
             return 0;
         }
 
-        $cleaned    = 0;
+        $cleaned = 0;
         $batch_size = 2000;
 
         $cleaned += $this->run_batch_delete(
@@ -624,7 +669,13 @@ class OPTISTATE_Cleanup_Functions
             string $child_table,
             string $child_id_col,
             string $parent_id_col
-        ) use ($wpdb, $table_actions, $batch_size, $start_time, $time_limit): int {
+        ) use (
+            $wpdb,
+            $table_actions,
+            $batch_size,
+            $start_time,
+            $time_limit
+        ): int {
             $total = 0;
 
             if (!OPTISTATE_Utils::table_exists($child_table)) {
@@ -656,20 +707,23 @@ class OPTISTATE_Cleanup_Functions
                 $safe_ids = implode(",", array_map("absint", $ids));
 
                 try {
-                    $deleted = OPTISTATE_Utils::transaction(
-                        function () use ($wpdb, $child_table, $child_id_col, $safe_ids) {
-                            $deleted = $wpdb->query(
-                                "DELETE FROM {$child_table}
+                    $deleted = OPTISTATE_Utils::transaction(function () use (
+                        $wpdb,
+                        $child_table,
+                        $child_id_col,
+                        $safe_ids
+                    ) {
+                        $deleted = $wpdb->query(
+                            "DELETE FROM {$child_table}
                                  WHERE {$child_id_col} IN ($safe_ids)"
+                        );
+                        if ($deleted === false) {
+                            throw new \Exception(
+                                "Orphan cleanup failed for {$child_table}"
                             );
-                            if ($deleted === false) {
-                                throw new \Exception(
-                                    "Orphan cleanup failed for {$child_table}"
-                                );
-                            }
-                            return $deleted;
                         }
-                    );
+                        return $deleted;
+                    });
                 } catch (\Throwable $e) {
                     OPTISTATE_Utils::log_critical_error(
                         "Orphan cleanup interrupted",
@@ -690,9 +744,9 @@ class OPTISTATE_Cleanup_Functions
             return $total;
         };
 
-        $cleaned += $clean_orphans($table_logs,   "log_id",   "action_id");
-        $cleaned += $clean_orphans($table_claims,  "claim_id", "claim_id");
-        $cleaned += $clean_orphans($table_groups,  "group_id", "group_id");
+        $cleaned += $clean_orphans($table_logs, "log_id", "action_id");
+        $cleaned += $clean_orphans($table_claims, "claim_id", "claim_id");
+        $cleaned += $clean_orphans($table_groups, "group_id", "group_id");
 
         return $cleaned;
     }
@@ -700,10 +754,10 @@ class OPTISTATE_Cleanup_Functions
     {
         global $wpdb;
 
-        $batch_size  = 2000;
-        $total       = 0;
-        $start_time  = time();
-        $time_limit  = $this->get_time_limit();
+        $batch_size = 2000;
+        $total = 0;
+        $start_time = time();
+        $time_limit = $this->get_time_limit();
         $oembed_like = $wpdb->esc_like("_oembed_") . "%";
         do {
             if ($this->is_time_exceeded($start_time, $time_limit)) {
@@ -729,7 +783,10 @@ class OPTISTATE_Cleanup_Functions
             $safe_ids = implode(",", array_map("absint", $ids));
 
             try {
-                $deleted = OPTISTATE_Utils::transaction(function () use ($wpdb, $safe_ids) {
+                $deleted = OPTISTATE_Utils::transaction(function () use (
+                    $wpdb,
+                    $safe_ids
+                ) {
                     $deleted = $wpdb->query(
                         "DELETE FROM {$wpdb->postmeta} WHERE meta_id IN ($safe_ids)"
                     );
@@ -749,8 +806,9 @@ class OPTISTATE_Cleanup_Functions
             $total += $deleted;
             usleep(20000);
         } while (true);
-        $like_trans_oembed   = $wpdb->esc_like("_transient_oembed_") . "%";
-        $like_trans_timeout  = $wpdb->esc_like("_transient_timeout_oembed_") . "%";
+        $like_trans_oembed = $wpdb->esc_like("_transient_oembed_") . "%";
+        $like_trans_timeout =
+            $wpdb->esc_like("_transient_timeout_oembed_") . "%";
 
         do {
             if ($this->is_time_exceeded($start_time, $time_limit)) {
@@ -780,7 +838,10 @@ class OPTISTATE_Cleanup_Functions
             $safe_opt_ids = implode(",", array_map("absint", $opt_ids));
 
             try {
-                $deleted = OPTISTATE_Utils::transaction(function () use ($wpdb, $safe_opt_ids) {
+                $deleted = OPTISTATE_Utils::transaction(function () use (
+                    $wpdb,
+                    $safe_opt_ids
+                ) {
                     $deleted = $wpdb->query(
                         "DELETE FROM {$wpdb->options} WHERE option_id IN ($safe_opt_ids)"
                     );
@@ -808,24 +869,24 @@ class OPTISTATE_Cleanup_Functions
         global $wpdb;
 
         $total_cleaned = 0;
-        $now           = time();
-        $batch_size    = 500;
-        $start_time    = time();
-        $time_limit    = $this->get_time_limit();
+        $now = time();
+        $batch_size = 500;
+        $start_time = time();
+        $time_limit = $this->get_time_limit();
         $exclude_timeout_like = $wpdb->esc_like("_transient_timeout_") . "%";
         $exclude_expires_like = $wpdb->esc_like("_wc_session_expires_") . "%";
         $pairs = [
             [
                 "timeout" => "_transient_timeout_wc_",
-                "value"   => "_transient_wc_",
+                "value" => "_transient_wc_",
             ],
             [
                 "timeout" => "_transient_timeout_wc_var_",
-                "value"   => "_transient_wc_var_",
+                "value" => "_transient_wc_var_",
             ],
             [
                 "timeout" => "_wc_session_expires_",
-                "value"   => "_wc_session_",
+                "value" => "_wc_session_",
             ],
         ];
 
@@ -858,8 +919,11 @@ class OPTISTATE_Cleanup_Functions
                     $timeouts
                 );
 
-                $all_names    = array_merge($timeouts, $value_names);
-                $placeholders = implode(",", array_fill(0, count($all_names), "%s"));
+                $all_names = array_merge($timeouts, $value_names);
+                $placeholders = implode(
+                    ",",
+                    array_fill(0, count($all_names), "%s")
+                );
 
                 $deleted = $wpdb->query(
                     $wpdb->prepare(
@@ -880,15 +944,15 @@ class OPTISTATE_Cleanup_Functions
         }
         $orphan_patterns = [
             [
-                "value"   => "_transient_wc_",
+                "value" => "_transient_wc_",
                 "timeout" => "_transient_timeout_wc_",
             ],
             [
-                "value"   => "_transient_wc_var_",
+                "value" => "_transient_wc_var_",
                 "timeout" => "_transient_timeout_wc_var_",
             ],
             [
-                "value"   => "_wc_session_",
+                "value" => "_wc_session_",
                 "timeout" => "_wc_session_expires_",
             ],
         ];
@@ -923,7 +987,10 @@ class OPTISTATE_Cleanup_Functions
                     $candidates
                 );
 
-                $placeholders = implode(",", array_fill(0, count($timeout_candidates), "%s"));
+                $placeholders = implode(
+                    ",",
+                    array_fill(0, count($timeout_candidates), "%s")
+                );
 
                 $valid_timeouts = $wpdb->get_col(
                     $wpdb->prepare(
@@ -936,7 +1003,7 @@ class OPTISTATE_Cleanup_Functions
                 );
 
                 $valid_timeout_set = array_flip($valid_timeouts);
-                $orphan_names      = [];
+                $orphan_names = [];
 
                 foreach ($candidates as $idx => $value_name) {
                     $timeout_name = $timeout_candidates[$idx];
@@ -952,7 +1019,10 @@ class OPTISTATE_Cleanup_Functions
                     continue;
                 }
 
-                $orphan_placeholders = implode(",", array_fill(0, count($orphan_names), "%s"));
+                $orphan_placeholders = implode(
+                    ",",
+                    array_fill(0, count($orphan_names), "%s")
+                );
 
                 $deleted = $wpdb->query(
                     $wpdb->prepare(
@@ -1020,9 +1090,9 @@ class OPTISTATE_Cleanup_Functions
     {
         global $wpdb;
 
-        $buckets    = $this->get_taxonomy_buckets();
+        $buckets = $this->get_taxonomy_buckets();
         $registered = $buckets["registered"];
-        $orphan     = $buckets["orphan"];
+        $orphan = $buckets["orphan"];
         $actionable = array_merge($registered, $orphan);
 
         if (empty($actionable)) {
@@ -1030,14 +1100,14 @@ class OPTISTATE_Cleanup_Functions
         }
 
         $batch_limit = 500;
-        $count       = 0;
-        $start_time  = time();
-        $time_limit  = $this->get_time_limit();
-        $last_tt_id  = 0;
+        $count = 0;
+        $start_time = time();
+        $time_limit = $this->get_time_limit();
+        $last_tt_id = 0;
 
-        $orphan_index          = array_flip($orphan);
-        $placeholders          = implode(", ", array_fill(0, count($actionable), "%s"));
-        $affected_term_ids     = [];
+        $orphan_index = array_flip($orphan);
+        $placeholders = implode(", ", array_fill(0, count($actionable), "%s"));
+        $affected_term_ids = [];
         $affected_taxonomies_for_recount = [];
 
         do {
@@ -1065,7 +1135,7 @@ class OPTISTATE_Cleanup_Functions
                 break;
             }
 
-            $time_exceeded       = false;
+            $time_exceeded = false;
             $batch_orphan_tt_ids = [];
             $batch_orphan_term_ids = [];
 
@@ -1080,7 +1150,10 @@ class OPTISTATE_Cleanup_Functions
                 $affected_taxonomies_for_recount[$row->taxonomy] = true;
 
                 if (!isset($orphan_index[$row->taxonomy])) {
-                    $result = wp_delete_term((int) $row->term_id, $row->taxonomy);
+                    $result = wp_delete_term(
+                        (int) $row->term_id,
+                        $row->taxonomy
+                    );
 
                     if (!is_wp_error($result) && $result !== false) {
                         $count++;
@@ -1088,19 +1161,22 @@ class OPTISTATE_Cleanup_Functions
                         OPTISTATE_Utils::log_critical_error(
                             "Failed to delete empty term",
                             [
-                                "term_id"  => $row->term_id,
+                                "term_id" => $row->term_id,
                                 "taxonomy" => $row->taxonomy,
                             ]
                         );
                     }
                 } else {
-                    $batch_orphan_tt_ids[]                        = (int) $row->term_taxonomy_id;
-                    $batch_orphan_term_ids[(int) $row->term_id]   = true;
+                    $batch_orphan_tt_ids[] = (int) $row->term_taxonomy_id;
+                    $batch_orphan_term_ids[(int) $row->term_id] = true;
                 }
             }
             if (!empty($batch_orphan_tt_ids)) {
                 $candidate_term_ids = array_keys($batch_orphan_term_ids);
-                $tt_placeholders    = implode(", ", array_fill(0, count($batch_orphan_tt_ids), "%d"));
+                $tt_placeholders = implode(
+                    ", ",
+                    array_fill(0, count($batch_orphan_tt_ids), "%d")
+                );
 
                 try {
                     $tt_deleted_count = OPTISTATE_Utils::transaction(
@@ -1133,7 +1209,11 @@ class OPTISTATE_Cleanup_Functions
                             if (!empty($candidate_term_ids)) {
                                 $term_placeholders = implode(
                                     ", ",
-                                    array_fill(0, count($candidate_term_ids), "%d")
+                                    array_fill(
+                                        0,
+                                        count($candidate_term_ids),
+                                        "%d"
+                                    )
                                 );
 
                                 $still_used = $wpdb->get_col(
@@ -1145,8 +1225,10 @@ class OPTISTATE_Cleanup_Functions
                                     )
                                 );
 
-                                $still_used_index    = array_flip(array_map("intval", $still_used));
-                                $term_ids_to_delete  = array_filter(
+                                $still_used_index = array_flip(
+                                    array_map("intval", $still_used)
+                                );
+                                $term_ids_to_delete = array_filter(
                                     $candidate_term_ids,
                                     fn($id) => !isset($still_used_index[$id])
                                 );
@@ -1154,7 +1236,11 @@ class OPTISTATE_Cleanup_Functions
                                 if (!empty($term_ids_to_delete)) {
                                     $delete_placeholders = implode(
                                         ", ",
-                                        array_fill(0, count($term_ids_to_delete), "%d")
+                                        array_fill(
+                                            0,
+                                            count($term_ids_to_delete),
+                                            "%d"
+                                        )
                                     );
                                     $wpdb->query(
                                         $wpdb->prepare(
@@ -1210,7 +1296,10 @@ class OPTISTATE_Cleanup_Functions
                 }
             }
 
-            if (function_exists("clean_term_cache") && !empty($affected_term_ids)) {
+            if (
+                function_exists("clean_term_cache") &&
+                !empty($affected_term_ids)
+            ) {
                 clean_term_cache(array_unique($affected_term_ids));
             }
 
@@ -1232,12 +1321,12 @@ class OPTISTATE_Cleanup_Functions
     {
         global $wpdb;
 
-        $total               = 0;
-        $last_id             = 0;
-        $batch_size          = 2000;
+        $total = 0;
+        $last_id = 0;
+        $batch_size = 2000;
         $affected_parent_ids = [];
-        $start_time          = time();
-        $time_limit          = $this->get_time_limit();
+        $start_time = time();
+        $time_limit = $this->get_time_limit();
 
         do {
             if ($this->is_time_exceeded($start_time, $time_limit)) {
@@ -1266,12 +1355,15 @@ class OPTISTATE_Cleanup_Functions
                 $affected_parent_ids[] = (int) $revision->post_parent;
             }
 
-            $ids     = array_column($revisions, "ID");
+            $ids = array_column($revisions, "ID");
             $last_id = (int) end($ids);
             $safe_ids = implode(",", array_map("absint", $ids));
 
             try {
-                $deleted = OPTISTATE_Utils::transaction(function () use ($wpdb, $safe_ids) {
+                $deleted = OPTISTATE_Utils::transaction(function () use (
+                    $wpdb,
+                    $safe_ids
+                ) {
                     $meta_deleted = $wpdb->query(
                         "DELETE FROM {$wpdb->postmeta} WHERE post_id IN ($safe_ids)"
                     );
@@ -1283,7 +1375,9 @@ class OPTISTATE_Cleanup_Functions
                         "DELETE FROM {$wpdb->term_relationships} WHERE object_id IN ($safe_ids)"
                     );
                     if ($rel_deleted === false) {
-                        throw new \Exception("term_relationships delete failed");
+                        throw new \Exception(
+                            "term_relationships delete failed"
+                        );
                     }
 
                     $deleted = $wpdb->query(
@@ -1299,9 +1393,9 @@ class OPTISTATE_Cleanup_Functions
                 OPTISTATE_Utils::log_critical_error(
                     "clean_post_revisions interrupted",
                     [
-                        "error"      => $e->getMessage(),
-                        "processed"  => $total,
-                        "batch_ids"  => count($ids),
+                        "error" => $e->getMessage(),
+                        "processed" => $total,
+                        "batch_ids" => count($ids),
                     ]
                 );
                 break;
@@ -1312,7 +1406,9 @@ class OPTISTATE_Cleanup_Functions
         } while (count($ids) === $batch_size);
 
         if (!empty($affected_parent_ids)) {
-            $this->set_last_affected_post_ids(array_unique($affected_parent_ids));
+            $this->set_last_affected_post_ids(
+                array_unique($affected_parent_ids)
+            );
         }
 
         return $total;
@@ -1321,12 +1417,12 @@ class OPTISTATE_Cleanup_Functions
     {
         global $wpdb;
 
-        $total               = 0;
-        $last_id             = 0;
-        $batch_size          = 2000;
+        $total = 0;
+        $last_id = 0;
+        $batch_size = 2000;
         $affected_parent_ids = [];
-        $start_time          = time();
-        $time_limit          = $this->get_time_limit();
+        $start_time = time();
+        $time_limit = $this->get_time_limit();
 
         do {
             if ($this->is_time_exceeded($start_time, $time_limit)) {
@@ -1354,55 +1450,62 @@ class OPTISTATE_Cleanup_Functions
                 $affected_parent_ids[] = (int) $id;
             }
 
-            $last_id  = (int) end($ids);
+            $last_id = (int) end($ids);
             $safe_ids = implode(",", array_map("absint", $ids));
 
             try {
-                $deleted = OPTISTATE_Utils::transaction(
-                    function () use ($wpdb, $safe_ids, &$affected_parent_ids) {
-                        $meta_deleted = $wpdb->query(
-                            "DELETE FROM {$wpdb->postmeta} WHERE post_id IN ($safe_ids)"
-                        );
-                        if ($meta_deleted === false) {
-                            throw new \Exception("postmeta delete failed");
-                        }
+                $deleted = OPTISTATE_Utils::transaction(function () use (
+                    $wpdb,
+                    $safe_ids,
+                    &$affected_parent_ids
+                ) {
+                    $meta_deleted = $wpdb->query(
+                        "DELETE FROM {$wpdb->postmeta} WHERE post_id IN ($safe_ids)"
+                    );
+                    if ($meta_deleted === false) {
+                        throw new \Exception("postmeta delete failed");
+                    }
 
-                        $rel_deleted = $wpdb->query(
-                            "DELETE FROM {$wpdb->term_relationships} WHERE object_id IN ($safe_ids)"
+                    $rel_deleted = $wpdb->query(
+                        "DELETE FROM {$wpdb->term_relationships} WHERE object_id IN ($safe_ids)"
+                    );
+                    if ($rel_deleted === false) {
+                        throw new \Exception(
+                            "term_relationships delete failed"
                         );
-                        if ($rel_deleted === false) {
-                            throw new \Exception("term_relationships delete failed");
-                        }
-                        $child_ids = $wpdb->get_col(
-                            "SELECT ID FROM {$wpdb->posts} WHERE post_parent IN ($safe_ids)"
+                    }
+                    $child_ids = $wpdb->get_col(
+                        "SELECT ID FROM {$wpdb->posts} WHERE post_parent IN ($safe_ids)"
+                    );
+                    if (!empty($child_ids)) {
+                        $safe_child_ids = implode(
+                            ",",
+                            array_map("absint", $child_ids)
                         );
-                        if (!empty($child_ids)) {
-                            $safe_child_ids = implode(",", array_map("absint", $child_ids));
-                            $wpdb->query(
-                                "UPDATE {$wpdb->posts}
+                        $wpdb->query(
+                            "UPDATE {$wpdb->posts}
                                  SET post_parent = 0
                                  WHERE ID IN ($safe_child_ids)"
-                            );
-                            foreach ($child_ids as $cid) {
-                                $affected_parent_ids[] = (int) $cid;
-                            }
-                        }
-
-                        $deleted = $wpdb->query(
-                            "DELETE FROM {$wpdb->posts} WHERE ID IN ($safe_ids)"
                         );
-                        if ($deleted === false) {
-                            throw new \Exception("posts delete failed");
+                        foreach ($child_ids as $cid) {
+                            $affected_parent_ids[] = (int) $cid;
                         }
-
-                        return $deleted;
                     }
-                );
+
+                    $deleted = $wpdb->query(
+                        "DELETE FROM {$wpdb->posts} WHERE ID IN ($safe_ids)"
+                    );
+                    if ($deleted === false) {
+                        throw new \Exception("posts delete failed");
+                    }
+
+                    return $deleted;
+                });
             } catch (\Throwable $e) {
                 OPTISTATE_Utils::log_critical_error(
                     "clean_auto_drafts interrupted",
                     [
-                        "error"     => $e->getMessage(),
+                        "error" => $e->getMessage(),
                         "processed" => $total,
                         "batch_ids" => count($ids),
                     ]
@@ -1415,7 +1518,9 @@ class OPTISTATE_Cleanup_Functions
         } while (count($ids) === $batch_size);
 
         if (!empty($affected_parent_ids)) {
-            $this->set_last_affected_post_ids(array_unique($affected_parent_ids));
+            $this->set_last_affected_post_ids(
+                array_unique($affected_parent_ids)
+            );
         }
 
         return $total;
@@ -1424,14 +1529,14 @@ class OPTISTATE_Cleanup_Functions
     {
         global $wpdb;
 
-        $total                = 0;
-        $last_id              = 0;
-        $batch_size           = 500;
-        $affected_post_ids    = [];
+        $total = 0;
+        $last_id = 0;
+        $batch_size = 500;
+        $affected_post_ids = [];
         $affected_comment_ids = [];
-        $affected_taxonomies  = [];
-        $start_time           = time();
-        $time_limit           = $this->get_time_limit();
+        $affected_taxonomies = [];
+        $start_time = time();
+        $time_limit = $this->get_time_limit();
 
         do {
             if ($this->is_time_exceeded($start_time, $time_limit)) {
@@ -1459,7 +1564,7 @@ class OPTISTATE_Cleanup_Functions
                 $affected_post_ids[] = (int) $id;
             }
 
-            $last_id  = (int) end($ids);
+            $last_id = (int) end($ids);
             $safe_ids = implode(",", array_map("absint", $ids));
             $touched_taxonomies = $wpdb->get_col(
                 "SELECT DISTINCT tt.taxonomy
@@ -1480,71 +1585,74 @@ class OPTISTATE_Cleanup_Functions
             }
 
             try {
-                $deleted = OPTISTATE_Utils::transaction(
-                    function () use (
-                        $wpdb,
-                        $safe_ids,
-                        $all_comment_ids,
-                        &$affected_post_ids
-                    ) {
-                        $meta_deleted = $wpdb->query(
-                            "DELETE FROM {$wpdb->postmeta} WHERE post_id IN ($safe_ids)"
+                $deleted = OPTISTATE_Utils::transaction(function () use (
+                    $wpdb,
+                    $safe_ids,
+                    $all_comment_ids,
+                    &$affected_post_ids
+                ) {
+                    $meta_deleted = $wpdb->query(
+                        "DELETE FROM {$wpdb->postmeta} WHERE post_id IN ($safe_ids)"
+                    );
+                    if ($meta_deleted === false) {
+                        throw new \Exception("postmeta delete failed");
+                    }
+                    $rel_deleted = $wpdb->query(
+                        "DELETE FROM {$wpdb->term_relationships} WHERE object_id IN ($safe_ids)"
+                    );
+                    if ($rel_deleted === false) {
+                        throw new \Exception(
+                            "term_relationships delete failed"
                         );
-                        if ($meta_deleted === false) {
-                            throw new \Exception("postmeta delete failed");
-                        }
-                        $rel_deleted = $wpdb->query(
-                            "DELETE FROM {$wpdb->term_relationships} WHERE object_id IN ($safe_ids)"
+                    }
+                    $child_ids = $wpdb->get_col(
+                        "SELECT ID FROM {$wpdb->posts} WHERE post_parent IN ($safe_ids)"
+                    );
+                    if (!empty($child_ids)) {
+                        $safe_child_ids = implode(
+                            ",",
+                            array_map("absint", $child_ids)
                         );
-                        if ($rel_deleted === false) {
-                            throw new \Exception("term_relationships delete failed");
-                        }
-                        $child_ids = $wpdb->get_col(
-                            "SELECT ID FROM {$wpdb->posts} WHERE post_parent IN ($safe_ids)"
-                        );
-                        if (!empty($child_ids)) {
-                            $safe_child_ids = implode(",", array_map("absint", $child_ids));
-                            $wpdb->query(
-                                "UPDATE {$wpdb->posts}
+                        $wpdb->query(
+                            "UPDATE {$wpdb->posts}
                                  SET post_parent = 0
                                  WHERE ID IN ($safe_child_ids)"
-                            );
-                            foreach ($child_ids as $cid) {
-                                $affected_post_ids[] = (int) $cid;
-                            }
-                        }
-                        if (!empty($all_comment_ids)) {
-                            $safe_cids = implode(",", $all_comment_ids);
-
-                            $cm_deleted = $wpdb->query(
-                                "DELETE FROM {$wpdb->commentmeta} WHERE comment_id IN ($safe_cids)"
-                            );
-                            if ($cm_deleted === false) {
-                                throw new \Exception("commentmeta delete failed");
-                            }
-
-                            $comments_deleted = $wpdb->query(
-                                "DELETE FROM {$wpdb->comments} WHERE comment_ID IN ($safe_cids)"
-                            );
-                            if ($comments_deleted === false) {
-                                throw new \Exception("comments delete failed");
-                            }
-                        }
-                        $deleted = $wpdb->query(
-                            "DELETE FROM {$wpdb->posts} WHERE ID IN ($safe_ids)"
                         );
-                        if ($deleted === false) {
-                            throw new \Exception("posts delete failed");
+                        foreach ($child_ids as $cid) {
+                            $affected_post_ids[] = (int) $cid;
+                        }
+                    }
+                    if (!empty($all_comment_ids)) {
+                        $safe_cids = implode(",", $all_comment_ids);
+
+                        $cm_deleted = $wpdb->query(
+                            "DELETE FROM {$wpdb->commentmeta} WHERE comment_id IN ($safe_cids)"
+                        );
+                        if ($cm_deleted === false) {
+                            throw new \Exception("commentmeta delete failed");
                         }
 
-                        return $deleted;
+                        $comments_deleted = $wpdb->query(
+                            "DELETE FROM {$wpdb->comments} WHERE comment_ID IN ($safe_cids)"
+                        );
+                        if ($comments_deleted === false) {
+                            throw new \Exception("comments delete failed");
+                        }
                     }
-                );
+                    $deleted = $wpdb->query(
+                        "DELETE FROM {$wpdb->posts} WHERE ID IN ($safe_ids)"
+                    );
+                    if ($deleted === false) {
+                        throw new \Exception("posts delete failed");
+                    }
+
+                    return $deleted;
+                });
             } catch (\Throwable $e) {
                 OPTISTATE_Utils::log_critical_error(
                     "clean_trashed_posts interrupted",
                     [
-                        "error"     => $e->getMessage(),
+                        "error" => $e->getMessage(),
                         "processed" => $total,
                         "batch_ids" => count($ids),
                     ]
@@ -1578,13 +1686,16 @@ class OPTISTATE_Cleanup_Functions
             $this->set_last_affected_post_ids(array_unique($affected_post_ids));
         }
         if (!empty($affected_comment_ids)) {
-            $this->set_last_affected_comment_ids(array_unique($affected_comment_ids));
+            $this->set_last_affected_comment_ids(
+                array_unique($affected_comment_ids)
+            );
         }
 
         return $total;
     }
-    private function collect_comment_tree_for_posts(string $safe_post_ids): array
-    {
+    private function collect_comment_tree_for_posts(
+        string $safe_post_ids
+    ): array {
         global $wpdb;
 
         $root_ids = $wpdb->get_col(
@@ -1597,17 +1708,23 @@ class OPTISTATE_Cleanup_Functions
             return [];
         }
 
-        $all_cids  = array_map("absint", $root_ids);
-        $frontier  = $all_cids;
-        $depth     = 0;
+        $all_cids = array_map("absint", $root_ids);
+        $frontier = $all_cids;
+        $depth = 0;
         $max_depth = 20;
-        $max_ids   = 10000;
+        $max_ids = 10000;
 
-        while (!empty($frontier) && $depth < $max_depth && count($all_cids) < $max_ids) {
+        while (
+            !empty($frontier) &&
+            $depth < $max_depth &&
+            count($all_cids) < $max_ids
+        ) {
             $next_level = $wpdb->get_col(
                 "SELECT comment_ID
                  FROM {$wpdb->comments}
-                 WHERE comment_parent IN (" . implode(",", $frontier) . ")"
+                 WHERE comment_parent IN (" .
+                    implode(",", $frontier) .
+                    ")"
             );
 
             if (empty($next_level)) {
@@ -1620,7 +1737,7 @@ class OPTISTATE_Cleanup_Functions
             if (empty($next_level)) {
                 break;
             }
-            $remaining  = $max_ids - count($all_cids);
+            $remaining = $max_ids - count($all_cids);
             $next_level = array_slice($next_level, 0, $remaining);
 
             $all_cids = array_merge($all_cids, $next_level);
@@ -1632,16 +1749,16 @@ class OPTISTATE_Cleanup_Functions
     }
     private function clean_comments_by_condition(
         string $where_sql,
-        array  $where_params = []
+        array $where_params = []
     ): int {
         global $wpdb;
 
-        $total                = 0;
-        $last_id              = 0;
-        $batch_size           = 2000;
+        $total = 0;
+        $last_id = 0;
+        $batch_size = 2000;
         $affected_comment_ids = [];
-        $start_time           = time();
-        $time_limit           = $this->get_time_limit();
+        $start_time = time();
+        $time_limit = $this->get_time_limit();
 
         do {
             if ($this->is_time_exceeded($start_time, $time_limit)) {
@@ -1664,7 +1781,7 @@ class OPTISTATE_Cleanup_Functions
                 break;
             }
 
-            $last_id  = (int) end($ids);
+            $last_id = (int) end($ids);
             foreach ($ids as $id) {
                 $affected_comment_ids[] = (int) $id;
             }
@@ -1672,7 +1789,10 @@ class OPTISTATE_Cleanup_Functions
             $safe_ids = implode(",", array_map("absint", $ids));
 
             try {
-                $deleted = OPTISTATE_Utils::transaction(function () use ($wpdb, $safe_ids) {
+                $deleted = OPTISTATE_Utils::transaction(function () use (
+                    $wpdb,
+                    $safe_ids
+                ) {
                     $meta_deleted = $wpdb->query(
                         "DELETE FROM {$wpdb->commentmeta} WHERE comment_id IN ($safe_ids)"
                     );
@@ -1693,7 +1813,7 @@ class OPTISTATE_Cleanup_Functions
                     "clean_comments_by_condition interrupted",
                     [
                         "condition" => $where_sql,
-                        "error"     => $e->getMessage(),
+                        "error" => $e->getMessage(),
                         "processed" => $total,
                     ]
                 );
@@ -1705,7 +1825,9 @@ class OPTISTATE_Cleanup_Functions
         } while (count($ids) === $batch_size);
 
         if (!empty($affected_comment_ids)) {
-            $this->set_last_affected_comment_ids(array_unique($affected_comment_ids));
+            $this->set_last_affected_comment_ids(
+                array_unique($affected_comment_ids)
+            );
         }
 
         return $total;
@@ -1744,38 +1866,38 @@ class OPTISTATE_Cleanup_Functions
     ): int {
         global $wpdb;
         $allowed = [
-            $wpdb->postmeta    => [
-                "fk"     => "post_id",
-                "id"     => "meta_id",
+            $wpdb->postmeta => [
+                "fk" => "post_id",
+                "id" => "meta_id",
                 "parent" => $wpdb->posts,
-                "pid"    => "ID",
+                "pid" => "ID",
             ],
             $wpdb->commentmeta => [
-                "fk"     => "comment_id",
-                "id"     => "meta_id",
+                "fk" => "comment_id",
+                "id" => "meta_id",
                 "parent" => $wpdb->comments,
-                "pid"    => "comment_ID",
+                "pid" => "comment_ID",
             ],
-            $wpdb->usermeta    => [
-                "fk"     => "user_id",
-                "id"     => "umeta_id",
+            $wpdb->usermeta => [
+                "fk" => "user_id",
+                "id" => "umeta_id",
                 "parent" => $wpdb->users,
-                "pid"    => "ID",
+                "pid" => "ID",
             ],
-            $wpdb->termmeta    => [
-                "fk"     => "term_id",
-                "id"     => "meta_id",
+            $wpdb->termmeta => [
+                "fk" => "term_id",
+                "id" => "meta_id",
                 "parent" => $wpdb->terms,
-                "pid"    => "term_id",
+                "pid" => "term_id",
             ],
         ];
 
         if (
             !isset($allowed[$meta_table]) ||
-            $allowed[$meta_table]["fk"]     !== $meta_fk_col  ||
-            $allowed[$meta_table]["id"]     !== $meta_id_col  ||
+            $allowed[$meta_table]["fk"] !== $meta_fk_col ||
+            $allowed[$meta_table]["id"] !== $meta_id_col ||
             $allowed[$meta_table]["parent"] !== $parent_table ||
-            $allowed[$meta_table]["pid"]    !== $parent_id_col
+            $allowed[$meta_table]["pid"] !== $parent_id_col
         ) {
             OPTISTATE_Utils::log_critical_error(
                 "clean_orphaned_meta rejected unauthorized parameters",
@@ -1784,12 +1906,12 @@ class OPTISTATE_Cleanup_Functions
             return 0;
         }
 
-        $total               = 0;
-        $batch_size          = 2000;
-        $last_meta_id        = 0;
+        $total = 0;
+        $batch_size = 2000;
+        $last_meta_id = 0;
         $affected_parent_ids = [];
-        $start_time          = time();
-        $time_limit          = $this->get_time_limit();
+        $start_time = time();
+        $time_limit = $this->get_time_limit();
 
         while (true) {
             if ($this->is_time_exceeded($start_time, $time_limit)) {
@@ -1823,37 +1945,38 @@ class OPTISTATE_Cleanup_Functions
                 array_column($rows, $meta_fk_col)
             );
 
-            $placeholders = implode(",", array_fill(0, count($orphaned_ids), "%d"));
+            $placeholders = implode(
+                ",",
+                array_fill(0, count($orphaned_ids), "%d")
+            );
 
             try {
-                $deleted = OPTISTATE_Utils::transaction(
-                    function () use (
-                        $wpdb,
-                        $meta_table,
-                        $meta_id_col,
-                        $orphaned_ids,
-                        $placeholders
-                    ) {
-                        $deleted = $wpdb->query(
-                            $wpdb->prepare(
-                                "DELETE FROM {$meta_table}
+                $deleted = OPTISTATE_Utils::transaction(function () use (
+                    $wpdb,
+                    $meta_table,
+                    $meta_id_col,
+                    $orphaned_ids,
+                    $placeholders
+                ) {
+                    $deleted = $wpdb->query(
+                        $wpdb->prepare(
+                            "DELETE FROM {$meta_table}
                                  WHERE {$meta_id_col} IN ($placeholders)",
-                                ...$orphaned_ids
-                            )
-                        );
-                        if ($deleted === false) {
-                            throw new \Exception("orphaned meta delete failed");
-                        }
-                        return $deleted;
+                            ...$orphaned_ids
+                        )
+                    );
+                    if ($deleted === false) {
+                        throw new \Exception("orphaned meta delete failed");
                     }
-                );
+                    return $deleted;
+                });
             } catch (\Throwable $e) {
                 OPTISTATE_Utils::log_critical_error(
                     "clean_orphaned_meta interrupted",
                     [
                         "meta_table" => $meta_table,
-                        "error"      => $e->getMessage(),
-                        "processed"  => $total,
+                        "error" => $e->getMessage(),
+                        "processed" => $total,
                     ]
                 );
                 break;
@@ -1869,13 +1992,30 @@ class OPTISTATE_Cleanup_Functions
         }
 
         if ($meta_table === $wpdb->postmeta && !empty($affected_parent_ids)) {
-            $this->set_last_affected_post_ids(array_unique($affected_parent_ids));
-        } elseif ($meta_table === $wpdb->commentmeta && !empty($affected_parent_ids)) {
-            $this->set_last_affected_comment_ids(array_unique($affected_parent_ids));
-        } elseif ($meta_table === $wpdb->usermeta && !empty($affected_parent_ids)) {
-            $this->set_last_affected_user_ids(array_unique($affected_parent_ids));
-        } elseif ($meta_table === $wpdb->termmeta && !empty($affected_parent_ids)) {
-            $this->set_last_affected_term_ids(array_unique($affected_parent_ids));
+            $this->set_last_affected_post_ids(
+                array_unique($affected_parent_ids)
+            );
+        } elseif (
+            $meta_table === $wpdb->commentmeta &&
+            !empty($affected_parent_ids)
+        ) {
+            $this->set_last_affected_comment_ids(
+                array_unique($affected_parent_ids)
+            );
+        } elseif (
+            $meta_table === $wpdb->usermeta &&
+            !empty($affected_parent_ids)
+        ) {
+            $this->set_last_affected_user_ids(
+                array_unique($affected_parent_ids)
+            );
+        } elseif (
+            $meta_table === $wpdb->termmeta &&
+            !empty($affected_parent_ids)
+        ) {
+            $this->set_last_affected_term_ids(
+                array_unique($affected_parent_ids)
+            );
         }
 
         return $total;
@@ -1885,7 +2025,11 @@ class OPTISTATE_Cleanup_Functions
     {
         global $wpdb;
         return $this->clean_orphaned_meta(
-            $wpdb->postmeta, "post_id",    "meta_id",   $wpdb->posts,    "ID"
+            $wpdb->postmeta,
+            "post_id",
+            "meta_id",
+            $wpdb->posts,
+            "ID"
         );
     }
 
@@ -1893,7 +2037,11 @@ class OPTISTATE_Cleanup_Functions
     {
         global $wpdb;
         return $this->clean_orphaned_meta(
-            $wpdb->commentmeta, "comment_id", "meta_id",   $wpdb->comments, "comment_ID"
+            $wpdb->commentmeta,
+            "comment_id",
+            "meta_id",
+            $wpdb->comments,
+            "comment_ID"
         );
     }
 
@@ -1901,7 +2049,11 @@ class OPTISTATE_Cleanup_Functions
     {
         global $wpdb;
         return $this->clean_orphaned_meta(
-            $wpdb->usermeta, "user_id",    "umeta_id",  $wpdb->users,    "ID"
+            $wpdb->usermeta,
+            "user_id",
+            "umeta_id",
+            $wpdb->users,
+            "ID"
         );
     }
 
@@ -1909,20 +2061,24 @@ class OPTISTATE_Cleanup_Functions
     {
         global $wpdb;
         return $this->clean_orphaned_meta(
-            $wpdb->termmeta, "term_id",    "meta_id",   $wpdb->terms,    "term_id"
+            $wpdb->termmeta,
+            "term_id",
+            "meta_id",
+            $wpdb->terms,
+            "term_id"
         );
     }
     private function clean_orphaned_relationships(): int
     {
         global $wpdb;
 
-        $total               = 0;
-        $batch_size          = 2000;
-        $affected_term_ids   = [];
+        $total = 0;
+        $batch_size = 2000;
+        $affected_term_ids = [];
         $affected_taxonomies = [];
-        $start_time          = time();
-        $time_limit          = $this->get_time_limit();
-        $links_join       = isset($wpdb->links)
+        $start_time = time();
+        $time_limit = $this->get_time_limit();
+        $links_join = isset($wpdb->links)
             ? "LEFT JOIN {$wpdb->links} lnk ON lnk.link_id = tr.object_id"
             : "";
         $links_null_check = isset($wpdb->links)
@@ -1973,15 +2129,20 @@ class OPTISTATE_Cleanup_Functions
             }
 
             try {
-                $deleted = OPTISTATE_Utils::transaction(function () use ($wpdb, $values) {
+                $deleted = OPTISTATE_Utils::transaction(function () use (
+                    $wpdb,
+                    $values
+                ) {
                     $deleted = $wpdb->query(
                         "DELETE FROM {$wpdb->term_relationships}
                          WHERE (object_id, term_taxonomy_id) IN (" .
-                             implode(",", $values) .
-                             ")"
+                            implode(",", $values) .
+                            ")"
                     );
                     if ($deleted === false) {
-                        throw new \Exception("orphaned relationships delete failed");
+                        throw new \Exception(
+                            "orphaned relationships delete failed"
+                        );
                     }
                     return $deleted;
                 });
@@ -2010,7 +2171,10 @@ class OPTISTATE_Cleanup_Functions
                             )
                         );
                         if (!empty($term_taxonomy_ids)) {
-                            wp_update_term_count_now($term_taxonomy_ids, $taxonomy);
+                            wp_update_term_count_now(
+                                $term_taxonomy_ids,
+                                $taxonomy
+                            );
                         }
                     }
                 }
@@ -2020,7 +2184,10 @@ class OPTISTATE_Cleanup_Functions
                 clean_term_cache(array_unique($affected_term_ids));
             }
 
-            if (function_exists("clean_taxonomy_cache") && !empty($affected_taxonomies)) {
+            if (
+                function_exists("clean_taxonomy_cache") &&
+                !empty($affected_taxonomies)
+            ) {
                 foreach (array_keys($affected_taxonomies) as $tax) {
                     if (!empty($tax) && taxonomy_exists($tax)) {
                         clean_taxonomy_cache($tax);
@@ -2031,7 +2198,9 @@ class OPTISTATE_Cleanup_Functions
             wp_cache_delete("last_changed", "terms");
 
             if (!empty($affected_term_ids)) {
-                $this->set_last_affected_term_ids(array_unique($affected_term_ids));
+                $this->set_last_affected_term_ids(
+                    array_unique($affected_term_ids)
+                );
             }
         }
 
@@ -2045,17 +2214,17 @@ class OPTISTATE_Cleanup_Functions
 
         global $wpdb;
 
-        $now        = time();
+        $now = time();
         $batch_size = 2000;
-        $total      = 0;
+        $total = 0;
         $start_time = time();
         $time_limit = $this->get_time_limit();
-        $last_id    = 0;
+        $last_id = 0;
 
-        $prefix_timeout  = $wpdb->esc_like("_transient_timeout_") . "%";
+        $prefix_timeout = $wpdb->esc_like("_transient_timeout_") . "%";
         $prefix_site_time = $wpdb->esc_like("_site_transient_timeout_") . "%";
-        $exclude_wc      = $wpdb->esc_like("_transient_timeout_wc_") . "%";
-        $exclude_oembed  = $wpdb->esc_like("_transient_timeout_oembed_") . "%";
+        $exclude_wc = $wpdb->esc_like("_transient_timeout_wc_") . "%";
+        $exclude_oembed = $wpdb->esc_like("_transient_timeout_oembed_") . "%";
 
         $conditions = [
             $wpdb->prepare(
@@ -2098,21 +2267,32 @@ class OPTISTATE_Cleanup_Functions
                 break;
             }
 
-            $last_id      = (int) end($rows)->option_id;
-            $expired      = array_column($rows, "option_name");
+            $last_id = (int) end($rows)->option_id;
+            $expired = array_column($rows, "option_name");
             $expired_count = count($expired);
 
             $value_names = [];
             foreach ($expired as $name) {
                 if (strpos($name, "_transient_timeout_") === 0) {
-                    $value_names[] = str_replace("_transient_timeout_", "_transient_", $name);
+                    $value_names[] = str_replace(
+                        "_transient_timeout_",
+                        "_transient_",
+                        $name
+                    );
                 } elseif (strpos($name, "_site_transient_timeout_") === 0) {
-                    $value_names[] = str_replace("_site_transient_timeout_", "_site_transient_", $name);
+                    $value_names[] = str_replace(
+                        "_site_transient_timeout_",
+                        "_site_transient_",
+                        $name
+                    );
                 }
             }
 
-            $all_names    = array_merge($expired, $value_names);
-            $placeholders = implode(",", array_fill(0, count($all_names), "%s"));
+            $all_names = array_merge($expired, $value_names);
+            $placeholders = implode(
+                ",",
+                array_fill(0, count($all_names), "%s")
+            );
 
             $deleted = $wpdb->query(
                 $wpdb->prepare(
@@ -2167,10 +2347,10 @@ class OPTISTATE_Cleanup_Functions
         $like_transient = "_transient_%";
         $like_site_trans = "_site_transient_%";
         $total_value_count = 0;
-        $last_id           = 0;
-        $batch_size        = 2000;
-        $start_time        = time();
-        $time_limit        = $this->get_time_limit();
+        $last_id = 0;
+        $batch_size = 2000;
+        $start_time = time();
+        $time_limit = $this->get_time_limit();
 
         while (true) {
             if ($this->is_time_exceeded($start_time, $time_limit)) {
@@ -2199,7 +2379,7 @@ class OPTISTATE_Cleanup_Functions
                 break;
             }
 
-            $ids     = array_column($rows, "option_id");
+            $ids = array_column($rows, "option_id");
             $last_id = (int) end($ids);
 
             foreach ($rows as $row) {
@@ -2249,28 +2429,44 @@ class OPTISTATE_Cleanup_Functions
     ): int {
         global $wpdb;
         $allowed_params = [
-            $wpdb->postmeta    => ["group_cols" => ["post_id"],    "id_cols" => ["meta_id"]],
-            $wpdb->commentmeta => ["group_cols" => ["comment_id"], "id_cols" => ["meta_id"]],
-            $wpdb->usermeta    => ["group_cols" => ["user_id"],    "id_cols" => ["umeta_id"]],
-            $wpdb->termmeta    => ["group_cols" => ["term_id"],    "id_cols" => ["meta_id"]],
+            $wpdb->postmeta => [
+                "group_cols" => ["post_id"],
+                "id_cols" => ["meta_id"],
+            ],
+            $wpdb->commentmeta => [
+                "group_cols" => ["comment_id"],
+                "id_cols" => ["meta_id"],
+            ],
+            $wpdb->usermeta => [
+                "group_cols" => ["user_id"],
+                "id_cols" => ["umeta_id"],
+            ],
+            $wpdb->termmeta => [
+                "group_cols" => ["term_id"],
+                "id_cols" => ["meta_id"],
+            ],
         ];
 
         if (
             !isset($allowed_params[$table]) ||
-            !in_array($group_col,    $allowed_params[$table]["group_cols"], true) ||
-            !in_array($meta_id_col,  $allowed_params[$table]["id_cols"],    true)
+            !in_array(
+                $group_col,
+                $allowed_params[$table]["group_cols"],
+                true
+            ) ||
+            !in_array($meta_id_col, $allowed_params[$table]["id_cols"], true)
         ) {
             OPTISTATE_Utils::log_critical_error(
                 "clean_duplicate_meta rejected unauthorized parameters",
                 [
-                    "table"       => $table,
-                    "group_col"   => $group_col,
+                    "table" => $table,
+                    "group_col" => $group_col,
                     "meta_id_col" => $meta_id_col,
                 ]
             );
             return 0;
         }
-        $max_rows = defined('OPTISTATE::DUPLICATE_SCAN_MAX_ROWS')
+        $max_rows = defined("OPTISTATE::DUPLICATE_SCAN_MAX_ROWS")
             ? (int) OPTISTATE::DUPLICATE_SCAN_MAX_ROWS
             : 500000;
 
@@ -2281,18 +2477,18 @@ class OPTISTATE_Cleanup_Functions
             OPTISTATE_Utils::log_critical_error(
                 "Duplicate meta scan skipped: table row count exceeds safety limit",
                 [
-                    "label"  => $log_label,
-                    "rows"   => $row_estimate,
-                    "max"    => $max_rows,
+                    "label" => $log_label,
+                    "rows" => $row_estimate,
+                    "max" => $max_rows,
                 ]
             );
             return 0;
         }
 
-        $total_cleaned       = 0;
-        $start_time          = time();
-        $time_limit          = $this->get_time_limit();
-        $batch_size          = 500;
+        $total_cleaned = 0;
+        $start_time = time();
+        $time_limit = $this->get_time_limit();
+        $batch_size = 500;
         $affected_parent_ids = [];
 
         while (true) {
@@ -2330,18 +2526,28 @@ class OPTISTATE_Cleanup_Functions
             if (empty($duplicate_ids)) {
                 break;
             }
-            $id_placeholders = implode(",", array_fill(0, count($duplicate_ids), "%d"));
-            $parent_ids      = $wpdb->get_col(
+            $id_placeholders = implode(
+                ",",
+                array_fill(0, count($duplicate_ids), "%d")
+            );
+            $parent_ids = $wpdb->get_col(
                 $wpdb->prepare(
                     "SELECT {$group_col} FROM {$table}
                      WHERE {$meta_id_col} IN ($id_placeholders)",
                     ...$duplicate_ids
                 )
             );
-            $affected_parent_ids = array_merge($affected_parent_ids, $parent_ids);
+            $affected_parent_ids = array_merge(
+                $affected_parent_ids,
+                $parent_ids
+            );
 
-            $cleaned_batch   = $this->execute_meta_delete_batch($table, $meta_id_col, $duplicate_ids);
-            $total_cleaned  += $cleaned_batch;
+            $cleaned_batch = $this->execute_meta_delete_batch(
+                $table,
+                $meta_id_col,
+                $duplicate_ids
+            );
+            $total_cleaned += $cleaned_batch;
 
             if ($cleaned_batch === 0) {
                 break;
@@ -2385,18 +2591,21 @@ class OPTISTATE_Cleanup_Functions
     private function execute_meta_delete_batch(
         string $table_name,
         string $id_column,
-        array  $ids
+        array $ids
     ): int {
         global $wpdb;
 
         $allowed = [
-            $wpdb->postmeta    => "meta_id",
+            $wpdb->postmeta => "meta_id",
             $wpdb->commentmeta => "meta_id",
-            $wpdb->usermeta    => "umeta_id",
-            $wpdb->termmeta    => "meta_id",
+            $wpdb->usermeta => "umeta_id",
+            $wpdb->termmeta => "meta_id",
         ];
 
-        if (!isset($allowed[$table_name]) || $allowed[$table_name] !== $id_column) {
+        if (
+            !isset($allowed[$table_name]) ||
+            $allowed[$table_name] !== $id_column
+        ) {
             OPTISTATE_Utils::log_critical_error(
                 "execute_meta_delete_batch rejected unauthorized table/column",
                 ["table" => $table_name, "id_column" => $id_column]
@@ -2414,32 +2623,38 @@ class OPTISTATE_Cleanup_Functions
             return 0;
         }
 
-        $chunk_size    = 500;
+        $chunk_size = 500;
         $total_deleted = 0;
 
         foreach (array_chunk($safe_ids, $chunk_size) as $id_chunk) {
             $placeholders = implode(",", array_fill(0, count($id_chunk), "%d"));
 
             try {
-                $deleted = OPTISTATE_Utils::transaction(
-                    function () use ($wpdb, $table_name, $id_column, $id_chunk, $placeholders) {
-                        $query  = $wpdb->prepare(
-                            "DELETE FROM {$table_name} WHERE {$id_column} IN ($placeholders)",
-                            ...$id_chunk
+                $deleted = OPTISTATE_Utils::transaction(function () use (
+                    $wpdb,
+                    $table_name,
+                    $id_column,
+                    $id_chunk,
+                    $placeholders
+                ) {
+                    $query = $wpdb->prepare(
+                        "DELETE FROM {$table_name} WHERE {$id_column} IN ($placeholders)",
+                        ...$id_chunk
+                    );
+                    $result = $wpdb->query($query);
+                    if ($result === false) {
+                        throw new \Exception(
+                            "batch delete failed: " . $wpdb->last_error
                         );
-                        $result = $wpdb->query($query);
-                        if ($result === false) {
-                            throw new \Exception("batch delete failed: " . $wpdb->last_error);
-                        }
-                        return $result;
                     }
-                );
+                    return $result;
+                });
             } catch (\Throwable $e) {
                 OPTISTATE_Utils::log_critical_error(
                     "execute_meta_delete_batch interrupted",
                     [
-                        "table"      => $table_name,
-                        "error"      => $e->getMessage(),
+                        "table" => $table_name,
+                        "error" => $e->getMessage(),
                         "batch_size" => count($id_chunk),
                     ]
                 );
@@ -2455,24 +2670,44 @@ class OPTISTATE_Cleanup_Functions
     private function clean_duplicate_postmeta(): int
     {
         global $wpdb;
-        return $this->clean_duplicate_meta($wpdb->postmeta,    "post_id",    "meta_id",  "Post meta");
+        return $this->clean_duplicate_meta(
+            $wpdb->postmeta,
+            "post_id",
+            "meta_id",
+            "Post meta"
+        );
     }
 
     private function clean_duplicate_commentmeta(): int
     {
         global $wpdb;
-        return $this->clean_duplicate_meta($wpdb->commentmeta, "comment_id", "meta_id",  "Comment meta");
+        return $this->clean_duplicate_meta(
+            $wpdb->commentmeta,
+            "comment_id",
+            "meta_id",
+            "Comment meta"
+        );
     }
 
     private function clean_duplicate_usermeta(): int
     {
         global $wpdb;
-        return $this->clean_duplicate_meta($wpdb->usermeta,    "user_id",    "umeta_id", "User meta");
+        return $this->clean_duplicate_meta(
+            $wpdb->usermeta,
+            "user_id",
+            "umeta_id",
+            "User meta"
+        );
     }
 
     private function clean_duplicate_termmeta(): int
     {
         global $wpdb;
-        return $this->clean_duplicate_meta($wpdb->termmeta,    "term_id",    "meta_id",  "Term meta");
+        return $this->clean_duplicate_meta(
+            $wpdb->termmeta,
+            "term_id",
+            "meta_id",
+            "Term meta"
+        );
     }
 }
