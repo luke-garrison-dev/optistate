@@ -8,6 +8,30 @@ class OPTISTATE_Restore_Engine
     private OPTISTATE_Process_Store $process_store;
     private ?object $wp_filesystem;
     private ?object $restore_db = null;
+
+    private const ALLOWED_STATEMENT_TYPES = [
+        "INSERT",
+        "REPLACE",
+        "UPDATE",
+        "DELETE",
+        "TRUNCATE",
+        "CREATE",
+        "DROP T",
+        "ALTER ",
+        "SET ",
+        "COMMENT",
+    ];
+
+    private const DATA_STATEMENT_TYPES = [
+        "INSERT",
+        "REPLACE",
+        "UPDATE",
+        "DELETE",
+        "TRUNCATE",
+    ];
+
+    private const LITERAL_DATA_TYPES = ["INSERT", "REPLACE"];
+
     private int $last_transaction_commit_queries = 0;
 
     public function __construct(
@@ -330,6 +354,8 @@ class OPTISTATE_Restore_Engine
                 "file_pointer" => 0,
                 "total_size" => $total_size,
                 "temp_tables_created" => [],
+                "structure_statements" => 0,
+                "data_statements" => 0,
                 "temp_views_created" => [],
                 "deferred_views" => [],
                 "executed_queries" => 0,
@@ -953,10 +979,7 @@ class OPTISTATE_Restore_Engine
             return $available[$key];
         }
         $aliases = ["utf8" => "utf8mb3", "utf8mb3" => "utf8"];
-        if (
-            isset($aliases[$key]) &&
-            isset($available[$aliases[$key]])
-        ) {
+        if (isset($aliases[$key]) && isset($available[$aliases[$key]])) {
             return $available[$aliases[$key]];
         }
         return null;
@@ -1230,10 +1253,7 @@ class OPTISTATE_Restore_Engine
                     if (!$charset_check["compatible"]) {
                         throw new Exception($charset_check["error"]);
                     }
-                    $this->configure_db_session(
-                        $db_connection,
-                        $charset_check
-                    );
+                    $this->configure_db_session($db_connection, $charset_check);
                     $state["status"] = "running";
                     $state["charset_locked"] = true;
                 }
@@ -1357,6 +1377,65 @@ class OPTISTATE_Restore_Engine
                     if ($trim_line === "") {
                         continue;
                     }
+
+                    $stmt_type = OPTISTATE_Backup_Utilities::get_statement_type(
+                        $trim_line
+                    );
+
+                    if (!$security_disabled) {
+                        if (
+                            $this->is_dangerous_statement(
+                                $trim_line,
+                                !in_array(
+                                    $stmt_type,
+                                    self::LITERAL_DATA_TYPES,
+                                    true
+                                )
+                            )
+                        ) {
+                            throw new Exception(
+                                sprintf(
+                                    __(
+                                        "Restore aborted for security reasons. Unauthorized command detected: %s<br>No change has been made to your database.",
+                                        "optistate"
+                                    ),
+                                    esc_html(substr($trim_line, 0, 200))
+                                )
+                            );
+                        }
+
+                        if (
+                            !in_array(
+                                $stmt_type,
+                                self::ALLOWED_STATEMENT_TYPES,
+                                true
+                            )
+                        ) {
+                            if (!$this->is_ignored_statement($trim_line)) {
+                                throw new Exception(
+                                    sprintf(
+                                        __(
+                                            "Unrecognized command detected: %s<br>The backup may be corrupt or produced by an unsupported tool.<br>No change has been made to your database.",
+                                            "optistate"
+                                        ),
+                                        esc_html(substr($trim_line, 0, 200))
+                                    )
+                                );
+                            }
+                            continue;
+                        }
+                        if (
+                            !in_array(
+                                $stmt_type,
+                                self::DATA_STATEMENT_TYPES,
+                                true
+                            ) &&
+                            $this->is_ignored_statement($trim_line)
+                        ) {
+                            continue;
+                        }
+                    }
+
                     if (
                         preg_match(
                             "/^\s*CREATE\s+(?:OR\s+REPLACE\s+)?VIEW\s+/i",
@@ -1371,18 +1450,6 @@ class OPTISTATE_Restore_Engine
                         continue;
                     }
 
-                    if (
-                        !$this->should_process_statement(
-                            $trim_line,
-                            $security_disabled
-                        )
-                    ) {
-                        continue;
-                    }
-
-                    $stmt_type = OPTISTATE_Backup_Utilities::get_statement_type(
-                        $trim_line
-                    );
                     $query_to_run = $trim_line;
 
                     if ($stmt_type === "START " || $stmt_type === "COMMIT") {
@@ -1769,6 +1836,17 @@ class OPTISTATE_Restore_Engine
                         $executed_queries++;
                         $batch_counter++;
                         $current_transaction_size += strlen($query_to_run);
+
+                        if ($stmt_type === "CREATE") {
+                            $state["structure_statements"] =
+                                (int) ($state["structure_statements"] ?? 0) + 1;
+                        } elseif (
+                            $stmt_type === "INSERT" ||
+                            $stmt_type === "REPLACE"
+                        ) {
+                            $state["data_statements"] =
+                                (int) ($state["data_statements"] ?? 0) + 1;
+                        }
                     }
 
                     $last_stmt_type = $stmt_type;
@@ -1789,6 +1867,20 @@ class OPTISTATE_Restore_Engine
                                 $verification["message"]
                         );
                     }
+                    if (
+                        !$security_disabled &&
+                        (int) ($state["structure_statements"] ?? 0) === 0 &&
+                        (int) ($state["data_statements"] ?? 0) === 0
+                    ) {
+                        $this->cleanup_temp_tables($temp_tables_created);
+                        throw new Exception(
+                            __(
+                                "The file contains no table or data statements and is not a valid backup.<br>No change has been made to your database.",
+                                "optistate"
+                            )
+                        );
+                    }
+
                     $swap_result = $this->swap_temp_tables_to_live(
                         $db_connection,
                         $temp_tables_created
@@ -1796,135 +1888,140 @@ class OPTISTATE_Restore_Engine
                     if (!$swap_result["success"]) {
                         throw new Exception($swap_result["message"]);
                     }
-                if (function_exists("wp_cache_flush")) {
-                    wp_cache_flush();
-                }
-                wp_cache_delete("alloptions", "options");
-                wp_cache_delete("notoptions", "options");
-                $state["temp_tables_created"] = $temp_tables_created;
-                $state["temp_views_created"] = $temp_views_created;
-                $state["deferred_views"]      = $deferred_views;
-                $this->process_store->set(
-                    $restore_key_for_deferred,
-                    $state,
-                    DAY_IN_SECONDS
-                );
-
-                if (!empty($deferred_views)) {
-                    foreach ($deferred_views as $view_query) {
-                        $db_wrapper->query($view_query);
+                    if (function_exists("wp_cache_flush")) {
+                        wp_cache_flush();
                     }
-                }
-                $deferred_indexes_map = $this->collect_deferred_indexes(
-                    $restore_key_for_deferred
-                );
-                $index_result = ["success" => true];
-                if (!empty($deferred_indexes_map)) {
-                    $index_result = $this->apply_deferred_indexes(
-                        $db_connection,
-                        $deferred_indexes_map,
+                    wp_cache_delete("alloptions", "options");
+                    wp_cache_delete("notoptions", "options");
+                    $state["temp_tables_created"] = $temp_tables_created;
+                    $state["temp_views_created"] = $temp_views_created;
+                    $state["deferred_views"] = $deferred_views;
+                    $this->process_store->set(
                         $restore_key_for_deferred,
-                        $temp_tables_created
+                        $state,
+                        DAY_IN_SECONDS
                     );
-                    if (
-                        isset($index_result["status"]) &&
-                        $index_result["status"] === "partial"
-                    ) {
-                        wp_schedule_single_event(
-                            time() + 2,
-                            "optistate_apply_deferred_indexes",
-                            [$restore_key_for_deferred]
-                        );
-                        $state["status"] = "deferred_indexes_pending";
-                        $state["message"] = __(
-                            "Restore completed but some indexes are pending. They will be applied shortly.",
-                            "optistate"
-                        );
-                        $this->process_store->set(
-                            $restore_key_for_deferred,
-                            $state,
-                            DAY_IN_SECONDS
-                        );
-                        return [
-                            "status" => "running",
-                            "state" => $state,
-                            "message" => $state["message"],
-                        ];
+
+                    if (!empty($deferred_views)) {
+                        foreach ($deferred_views as $view_query) {
+                            $db_wrapper->query($view_query);
+                        }
                     }
-                }
-
-                $this->process_store->delete("optistate_restore_in_progress");
-                $this->main_plugin->log_entry(
-                    "🏁 " .
-                        sprintf(
-                            __("Database Restore Completed (%s)", "optistate"),
-                            $state["log_filename"]
-                        ),
-                    "scheduled",
-                    $state["log_filename"],
-                    ["queries_executed" => $executed_queries]
-                );
-
-                if (
-                    isset($state["decompressed_temp_file"]) &&
-                    $this->wp_filesystem->exists(
-                        $state["decompressed_temp_file"]
-                    )
-                ) {
-                    $this->wp_filesystem->delete(
-                        $state["decompressed_temp_file"]
+                    $deferred_indexes_map = $this->collect_deferred_indexes(
+                        $restore_key_for_deferred
                     );
-                }
-                $this->process_store->delete(
-                    "optistate_instant_rollback_tables"
-                );
-                $this->cleanup_old_tables_after_restore();
-                $this->close_restore_db();
-                $this->clear_trash_table_after_restore();
+                    $index_result = ["success" => true];
+                    if (!empty($deferred_indexes_map)) {
+                        $index_result = $this->apply_deferred_indexes(
+                            $db_connection,
+                            $deferred_indexes_map,
+                            $restore_key_for_deferred,
+                            $temp_tables_created
+                        );
+                        if (
+                            isset($index_result["status"]) &&
+                            $index_result["status"] === "partial"
+                        ) {
+                            wp_schedule_single_event(
+                                time() + 2,
+                                "optistate_apply_deferred_indexes",
+                                [$restore_key_for_deferred]
+                            );
+                            $state["status"] = "deferred_indexes_pending";
+                            $state["message"] = __(
+                                "Restore completed but some indexes are pending. They will be applied shortly.",
+                                "optistate"
+                            );
+                            $this->process_store->set(
+                                $restore_key_for_deferred,
+                                $state,
+                                DAY_IN_SECONDS
+                            );
+                            return [
+                                "status" => "running",
+                                "state" => $state,
+                                "message" => $state["message"],
+                            ];
+                        }
+                    }
 
-                $total_time = time() - $state["start_time"];
-                $message = sprintf(
-                    __(
-                        'Database restored successfully!<br>Completion time: %1$s seconds.<br>Restored tables: %2$s.<br>',
-                        "optistate"
-                    ),
-                    number_format_i18n($total_time),
-                    number_format_i18n(count($temp_tables_created))
-                );
-                if (!empty($index_result["warnings"])) {
-                    $message .= sprintf(
+                    $this->process_store->delete(
+                        "optistate_restore_in_progress"
+                    );
+                    $this->main_plugin->log_entry(
+                        "🏁 " .
+                            sprintf(
+                                __(
+                                    "Database Restore Completed (%s)",
+                                    "optistate"
+                                ),
+                                $state["log_filename"]
+                            ),
+                        "scheduled",
+                        $state["log_filename"],
+                        ["queries_executed" => $executed_queries]
+                    );
+
+                    if (
+                        isset($state["decompressed_temp_file"]) &&
+                        $this->wp_filesystem->exists(
+                            $state["decompressed_temp_file"]
+                        )
+                    ) {
+                        $this->wp_filesystem->delete(
+                            $state["decompressed_temp_file"]
+                        );
+                    }
+                    $this->process_store->delete(
+                        "optistate_instant_rollback_tables"
+                    );
+                    $this->cleanup_old_tables_after_restore();
+                    $this->close_restore_db();
+                    $this->clear_trash_table_after_restore();
+
+                    $total_time = time() - $state["start_time"];
+                    $message = sprintf(
                         __(
-                            "Warning: %s. See the error log for details.<br>",
+                            'Database restored successfully!<br>Completion time: %1$s seconds.<br>Restored tables: %2$s.<br>',
                             "optistate"
                         ),
-                        $index_result["warnings"]
+                        number_format_i18n($total_time),
+                        number_format_i18n(count($temp_tables_created))
                     );
+                    if (!empty($index_result["warnings"])) {
+                        $message .= sprintf(
+                            __(
+                                "Warning: %s. See the error log for details.<br>",
+                                "optistate"
+                            ),
+                            $index_result["warnings"]
+                        );
+                    }
+
+                    update_option(
+                        "optistate_restore_completed",
+                        [
+                            "timestamp" => time(),
+                            "filename" => $state["log_filename"],
+                            "queries" => $executed_queries,
+                            "tables" => count($temp_tables_created),
+                            "duration" => $total_time,
+                        ],
+                        false
+                    );
+
+                    if ($is_gzipped) {
+                        gzclose($handle);
+                    } else {
+                        fclose($handle);
+                    }
+
+                    return [
+                        "status" => "done",
+                        "state" => $state,
+                        "message" => $message,
+                    ];
                 }
-
-                update_option(
-                    "optistate_restore_completed",
-                    [
-                        "timestamp" => time(),
-                        "filename" => $state["log_filename"],
-                        "queries" => $executed_queries,
-                        "tables" => count($temp_tables_created),
-                        "duration" => $total_time,
-                    ],
-                    false
-                );
-
-                if ($is_gzipped) {
-                    gzclose($handle);
-                } else {
-                    fclose($handle);
-                }
-
-                return [
-                    "status" => "done",
-                    "state" => $state,
-                    "message" => $message,
-                ];
-              }
             } catch (Exception $e) {
                 $this->cleanup_temp_tables_on_failure(
                     $temp_tables_created ?? [],
@@ -2081,7 +2178,7 @@ class OPTISTATE_Restore_Engine
         }
     }
 
-        private function apply_deferred_indexes(
+    private function apply_deferred_indexes(
         $db,
         array $deferred_indexes,
         string $restore_key,
@@ -2194,121 +2291,133 @@ class OPTISTATE_Restore_Engine
         return ["success" => true];
     }
 
-    private function should_process_statement(
-        string $trim_line,
-        bool $security_disabled = false
+    private function is_dangerous_statement(
+        string $sql,
+        bool $check_embedded = true
     ): bool {
-        if ($security_disabled) {
-            return !empty(trim($trim_line));
-        }
-        if (empty($trim_line)) {
-            return false;
-        }
-        if (preg_match("/^\s*DROP\s+(DATABASE|SCHEMA)\s+/i", $trim_line)) {
+        $trim = ltrim($sql);
+
+        if ($trim === "") {
             return false;
         }
         if (
-            ($trim_line[0] === "I" || $trim_line[0] === "i") &&
-            stripos($trim_line, "INSERT") === 0
+            strncmp($trim, "/*!", 3) === 0 &&
+            preg_match(
+                '/^\/\*!\d*\s*(.+?)\s*\*\/\s*;?\s*$/s',
+                $trim,
+                $unwrapped
+            )
         ) {
+            $trim = ltrim($unwrapped[1]);
+        }
+
+        $anchored_patterns = [
+            "/^\s*DROP\s+(DATABASE|SCHEMA)\b/i",
+            "/^\s*CREATE\s+(DATABASE|SCHEMA)\b/i",
+            "/^\s*USE\s+/i",
+            "/^\s*SET\s+(GLOBAL|PERSIST|SESSION\s+SQL_LOG_BIN)\b/i",
+            "/^\s*SET\s+@@(GLOBAL|PERSIST)\./i",
+            "/^\s*SET\s+SQL_LOG_BIN\s*=/i",
+            "/^\s*SET\s+GTID_(NEXT|PURGED)\s*=/i",
+            "/^\s*SET\s+PASSWORD\b/i",
+            "/^\s*GRANT\s+/i",
+            "/^\s*REVOKE\s+/i",
+            "/^\s*CREATE\s+USER\b/i",
+            "/^\s*DROP\s+USER\b/i",
+            "/^\s*ALTER\s+USER\b/i",
+            "/^\s*RENAME\s+USER\b/i",
+            "/^\s*FLUSH\s+(PRIVILEGES|LOGS|HOSTS)\b/i",
+            "/^\s*RESET\s+(MASTER|SLAVE|REPLICA)\b/i",
+            "/^\s*PURGE\s+BINARY\s+LOGS\b/i",
+            "/^\s*(INSTALL|UNINSTALL)\s+(PLUGIN|COMPONENT)\b/i",
+            "/^\s*CREATE\s+(PROCEDURE|FUNCTION|TRIGGER|EVENT)\b/i",
+            "/^\s*CREATE\s+DEFINER\s*=/i",
+            "/^\s*(ALTER|DROP)\s+(PROCEDURE|FUNCTION|TRIGGER|EVENT)\b/i",
+            "/^\s*LOAD\s+(DATA|XML)\b/i",
+            "/^\s*(CALL|HANDLER|PREPARE|EXECUTE|DEALLOCATE)\s+/i",
+            "/^\s*DO\s+/i",
+            "/^\s*SHOW\s+GRANTS\b/i",
+            "/^\s*(CHANGE|START|STOP)\s+(MASTER|SLAVE|REPLICA)\b/i",
+            "/^\s*SHUTDOWN\b/i",
+        ];
+
+        foreach ($anchored_patterns as $pattern) {
+            if (preg_match($pattern, $trim)) {
+                return true;
+            }
+        }
+
+        if (!$check_embedded) {
+            return false;
+        }
+        $embedded_patterns = [
+            "/\bINTO\s+(OUT|DUMP)FILE\b/i",
+            "/\bLOAD_FILE\s*\(/i",
+            "/\bSQL\s+SECURITY\s+DEFINER\b/i",
+        ];
+
+        foreach ($embedded_patterns as $pattern) {
+            if (preg_match($pattern, $trim)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function is_ignored_statement(string $sql): bool
+    {
+        $trim = ltrim($sql);
+
+        if ($trim === "") {
             return true;
         }
-        $first_char = $trim_line[0];
-        if ($first_char === "-" && substr($trim_line, 0, 3) === "-- ") {
-            if (
-                strpos($trim_line, "-- phpMyAdmin SQL Dump") === 0 ||
-                strpos($trim_line, "-- Host:") === 0 ||
-                strpos($trim_line, "-- Generation Time:") === 0 ||
-                strpos($trim_line, "-- Server version:") === 0 ||
-                strpos($trim_line, "-- PHP Version:") === 0 ||
-                strpos($trim_line, "-- Database:") === 0
-            ) {
-                return false;
-            }
-        }
-        if (
-            $first_char === "/" &&
-            isset($trim_line[1]) &&
-            $trim_line[1] === "*" &&
-            isset($trim_line[2]) &&
-            $trim_line[2] === "!" &&
-            preg_match("/^\/\*!\d{5} SET @/", $trim_line)
-        ) {
+
+        $first = $trim[0];
+
+        if ($first === "-" || $first === "#") {
             return true;
         }
-        if ($first_char === "S" || $first_char === "s") {
-            if (stripos($trim_line, "SET ") === 0) {
-                $upper_line = strtoupper($trim_line);
-                if (
-                    strpos($upper_line, "SQL_LOG_BIN") !== false ||
-                    strpos($upper_line, "GLOBAL.") !== false ||
-                    strpos($upper_line, "SET GLOBAL") !== false ||
-                    strpos($upper_line, "GTID_NEXT") !== false ||
-                    strpos($upper_line, "GTID_PURGED") !== false ||
-                    strpos($upper_line, "@OLD_") !== false ||
-                    strpos($upper_line, "=@OLD_") !== false ||
-                    strpos($upper_line, "SET USER") !== false ||
-                    strpos($upper_line, "SET ROLE") !== false ||
-                    strpos($upper_line, "SET @") !== false ||
-                    $upper_line === "START TRANSACTION;" ||
-                    (strpos($upper_line, "USER") !== false &&
-                        strpos($upper_line, "SET ") !== false)
-                ) {
-                    return false;
-                }
+
+        if (strncmp($trim, "/*", 2) === 0 && strncmp($trim, "/*!", 3) !== 0) {
+            return true;
+        }
+
+        $upper = strtoupper($trim);
+
+        if (strncmp($upper, "DELIMITER", 9) === 0) {
+            return true;
+        }
+
+        $ignored_prefixes = [
+            "SET NAMES",
+            "SET CHARACTER_SET",
+            "SET COLLATION",
+            "SET @OLD_",
+            "SET @@OLD_",
+            "SET SQL_",
+            "SET TIME_ZONE",
+            "SET AUTOCOMMIT",
+            "SET FOREIGN_KEY_CHECKS",
+            "SET UNIQUE_CHECKS",
+            "START TRANSACTION",
+            "BEGIN",
+            "COMMIT",
+            "ROLLBACK",
+            "SAVEPOINT",
+            "RELEASE SAVEPOINT",
+            "LOCK TABLE",
+            "UNLOCK TABLE",
+            "FLUSH TABLE",
+        ];
+
+        foreach ($ignored_prefixes as $prefix) {
+            if (strncmp($upper, $prefix, strlen($prefix)) === 0) {
+                return true;
             }
         }
-        if ($first_char === "-" || $first_char === "/" || $first_char === "#") {
-            if (substr($trim_line, 0, 3) !== "/*!") {
-                return false;
-            }
-            $upper_trim = strtoupper($trim_line);
-            if (
-                strpos($upper_trim, "=@OLD_") !== false ||
-                strpos($upper_trim, "SET @OLD_") !== false ||
-                strpos($upper_trim, "@OLD_CHARACTER_SET") !== false ||
-                strpos($upper_trim, "@OLD_COLLATION") !== false ||
-                strpos($upper_trim, "SET NAMES") !== false ||
-                strpos($upper_trim, "SET CHARACTER_SET") !== false
-            ) {
-                return false;
-            }
-        }
-        if ($first_char === "C" || $first_char === "S" || $first_char === "U") {
-            $upper_trim = strtoupper($trim_line);
-            if (
-                $upper_trim === "COMMIT;" ||
-                $upper_trim === "START TRANSACTION;"
-            ) {
-                return false;
-            }
-            if (
-                strpos($upper_trim, "CREATE DATABASE") === 0 ||
-                strpos($upper_trim, "USE ") === 0
-            ) {
-                return false;
-            }
-        }
-        if ($first_char === "L" || $first_char === "U") {
-            $upper_6 = strtoupper(substr($trim_line, 0, 6));
-            if ($upper_6 === "LOCK T" || $upper_6 === "UNLOCK") {
-                return false;
-            }
-        }
-        if ($first_char === "C") {
-            $upper_query = strtoupper($trim_line);
-            if (
-                strpos($upper_query, "CREATE PROCEDURE") === 0 ||
-                strpos($upper_query, "CREATE FUNCTION") === 0 ||
-                strpos($upper_query, "CREATE TRIGGER") === 0 ||
-                strpos($upper_query, "CREATE EVENT") === 0 ||
-                strpos($upper_query, "CREATE DEFINER") === 0 ||
-                strpos($upper_query, "/*!50003 CREATE") === 0
-            ) {
-                return false;
-            }
-        }
-        return true;
+
+        return false;
     }
 
     private function is_ignorable_error(
