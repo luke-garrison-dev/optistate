@@ -5189,6 +5189,14 @@ const mtimeText = (info && info.mtime_formatted) ? info.mtime_formatted : __('N/
         const data = (payload && !Array.isArray(payload) && typeof payload === 'object') ? payload : {};
         const items = Array.isArray(payload) ? payload : (Array.isArray(data.items) ? data.items : []);
         const total = Number.isFinite(data.total) ? data.total : items.length;
+        const $countSpan = $('#optistate-trash-count');
+        if ($countSpan.length) {
+            if (total > 0) {
+                $countSpan.text('(' + total.toLocaleString() + ')');
+            } else {
+                $countSpan.text('');
+            }
+        }
         const $list = $('#optistate-trash-list');
         let $actions = $('#optistate-trash-actions');
         if (!$actions.length) {

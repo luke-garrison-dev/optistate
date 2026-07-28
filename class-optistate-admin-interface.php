@@ -319,36 +319,68 @@ $last_strategy = isset($last_state["strategy"])
 ); ?><br> </p> <div class="optistate-cleanup-grid" id="optistate-cleanup-items"></div> <div class="optistate-cleanup-actions"> <button type="button" class="button optistate-refresh-cleanup-btn">♻ <?php esc_html_e(
     "Refresh Cleanup Data",
     "optistate"
-); ?></button> </div> </div> <div class="optistate-card os-mt-20"> <h2> <span><span class="dashicons dashicons-plugins-checked"></span> <?php esc_html_e(
-    "Legacy Plugin Data Scanner",
-    "optistate"
-); ?></span> <a href="<?php echo esc_url(
-    $manual_base . "#ch-5-4"
-); ?>" class="optistate-info-link os-no-decoration" target="_blank" rel="noopener noreferrer" title="<?php esc_attr_e(
+); ?></button> </div> </div> <div class="optistate-card os-mt-20">
+    <h2>
+        <span><span class="dashicons dashicons-plugins-checked"></span> <?php esc_html_e(
+            "Legacy Plugin Data Scanner",
+            "optistate"
+        ); ?></span>
+        <a href="<?php echo esc_url(
+            $manual_base . "#ch-5-4"
+        ); ?>" class="optistate-info-link os-no-decoration" target="_blank" rel="noopener noreferrer" title="<?php esc_attr_e(
     "Read the Manual",
     "optistate"
-); ?>"><span class="dashicons dashicons-info"></span></a> </h2> <p class="os-mb-15-lh-relaxed"> 🕵️ <?php esc_html_e(
-    "Detects data left behind by plugins/themes you have uninstalled.",
+); ?>"><span class="dashicons dashicons-info"></span></a>
+    </h2>
+    <p class="os-mb-15-lh-relaxed">
+        🕵️ <?php esc_html_e(
+            "Detects data left behind by plugins/themes you have uninstalled.",
+            "optistate"
+        ); ?><br>
+        📉 <?php esc_html_e(
+            'Removing "Ghost Data" can significantly reduce database size and slightly improve your site\'s speed.',
+            "optistate"
+        ); ?><br>
+        🧩 <?php esc_html_e(
+            "Also run the Database Structure Analysis tool (Advanced tab) to identify and remove any additional unused tables.",
+            "optistate"
+        ); ?>
+    </p>
+    <button type="button" class="button button-secondary os-mb-5" id="optistate-scan-legacy-btn">🔎 <?php esc_html_e(
+        "Scan for Ghost Data",
+        "optistate"
+    ); ?></button>
+    <div id="optistate-legacy-results" class="os-display-none"></div>
+    <br><br><hr>
+    <div class="optistate-trash-section">
+        <?php
+        $trash_count = $this->main_plugin->trash_manager->count_trash_items();
+        $trash_label =
+            $trash_count > 0
+                ? sprintf(
+                    __("Trash (%s) - Recover Deleted Items", "optistate"),
+                    number_format_i18n($trash_count)
+                )
+                : __("Trash - Recover Deleted Items", "optistate");
+        ?>
+        <h3>
+    <span class="dashicons dashicons-trash"></span>
+    <?php esc_html_e("Trash", "optistate"); ?>
+    <span id="optistate-trash-count"></span>
+    - <?php esc_html_e("Recover Deleted Items", "optistate"); ?>
+</h3>
+        <p class="os-mb-15">
+            🕓 <?php esc_html_e(
+                "Deleted folders/tables/options/metas are moved here and kept for 14 days. You can restore them if needed.",
+                "optistate"
+            ); ?>
+        </p>
+        <div id="optistate-trash-list" class="os-mt-15"></div>
+    </div>
+</div><div id="tab-backups" class="optistate-tab-content"> <div class="optistate-card"> <h2> <span><span class="dashicons dashicons-database-export"></span> <?php esc_html_e(
+    "Create a Database Backup",
     "optistate"
-); ?><br> 📉 <?php esc_html_e(
-    'Removing "Ghost Data" can significantly reduce database size and slightly improve your site\'s speed.',
-    "optistate"
-); ?><br> 🧩 <?php esc_html_e(
-    "Also run the Database Structure Analysis tool (Advanced tab) to identify and remove any additional unused tables.",
-    "optistate"
-); ?> </p> <button type="button" class="button button-secondary os-mb-5" id="optistate-scan-legacy-btn">🔎 <?php esc_html_e(
-     "Scan for Ghost Data",
-     "optistate"
- ); ?></button> <div id="optistate-legacy-results" class="os-display-none"></div> <br><br><hr> <div class="optistate-trash-section"> <h3><span class="dashicons dashicons-trash"></span> <?php esc_html_e(
-    "Trash (Recover Deleted Items)",
-    "optistate"
-); ?></h3> <p class="os-mb-15"> 🕓 <?php esc_html_e(
-    "Deleted folders/tables/options/metas are moved here and kept for 14 days. You can restore them if needed.",
-    "optistate"
-); ?> </p> <div id="optistate-trash-list" class="os-mt-15"></div> </div> </div> </div><div id="tab-backups" class="optistate-tab-content"> <div class="optistate-card"> <h2> <span><span class="dashicons dashicons-database-export"></span> <?php esc_html_e(
-     "Create a Database Backup",
-     "optistate"
- ); ?></span> <a href="<?php echo esc_url(
+); ?></span> <a href="<?php echo esc_url(
     $manual_base . "#ch-4-1"
 ); ?>" class="optistate-info-link os-no-decoration" target="_blank" rel="noopener noreferrer" title="<?php esc_attr_e(
     "Read the Manual",
