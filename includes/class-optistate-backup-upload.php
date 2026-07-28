@@ -197,9 +197,8 @@ class OPTISTATE_Backup_Upload
                 ? absint($_POST["total_chunks"])
                 : 1;
             $file_name = isset($_POST["file_name"])
-                ? sanitize_text_field(wp_unslash($_POST["file_name"]))
+                ? basename(sanitize_text_field(wp_unslash($_POST["file_name"])))
                 : "";
-            $file_name = basename($file_name_raw);
             $file_size = isset($_POST["file_size"])
                 ? absint($_POST["file_size"])
                 : 0;
