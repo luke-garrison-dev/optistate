@@ -13,6 +13,7 @@ class OPTISTATE_Performance_Manager
     private ?string $compiled_bot_regex = null;
     private array $hook_callback_cache = [];
     private ?bool $config_constants_loaded = null;
+    private bool $cron_manager_bypass_pause_filter = false;
     private static function _str_contains(
         string $haystack,
         string $needle
@@ -848,6 +849,60 @@ class OPTISTATE_Performance_Manager
         return $this->main_plugin->set_store_data("cron_manager_state", $state);
     }
 
+    public function block_paused_cron_event($result, $event, $wp_error = false)
+    {
+        if ($result !== null) {
+            return $result;
+        }
+
+        if ($this->cron_manager_bypass_pause_filter) {
+            return $result;
+        }
+
+        if (!is_object($event) || empty($event->hook)) {
+            return $result;
+        }
+
+        $state = $this->_cron_manager_get_state();
+
+        if (empty($state)) {
+            return $result;
+        }
+
+        $incoming_args = $this->_canonicalize_args(
+            isset($event->args) ? (array) $event->args : []
+        );
+
+        foreach ($state as $entry) {
+            if (!is_array($entry) || empty($entry["paused"])) {
+                continue;
+            }
+
+            if (($entry["hook"] ?? "") !== $event->hook) {
+                continue;
+            }
+
+            if (
+                $this->_canonicalize_args((array) ($entry["args"] ?? [])) !==
+                $incoming_args
+            ) {
+                continue;
+            }
+
+            return $wp_error
+                ? new WP_Error(
+                    "optistate_cron_paused",
+                    __(
+                        "This cron event is paused by Optimal State.",
+                        "optistate"
+                    )
+                )
+                : false;
+        }
+
+        return $result;
+    }
+    
     public function cleanup_orphaned_cron_state(): void
     {
         $state = $this->_cron_manager_get_state(true);
@@ -1640,26 +1695,32 @@ class OPTISTATE_Performance_Manager
                     $orig_next_run = $stored["original_next_run"] ?? 0;
                     wp_clear_scheduled_hook($hook, $args);
 
-                    if ($orig_schedule !== false && $orig_interval > 0) {
-                        $scheduled = wp_schedule_event(
-                            time() + $orig_interval,
-                            $orig_schedule,
-                            $hook,
-                            $args
-                        );
-                    } elseif ($orig_next_run > time()) {
-                        $scheduled = wp_schedule_single_event(
-                            $orig_next_run,
-                            $hook,
-                            $args
-                        );
-                    } else {
-                        $scheduled = wp_schedule_single_event(
-                            time() + 60,
-                            $hook,
-                            $args
-                        );
+                    $this->cron_manager_bypass_pause_filter = true;
+                    try {
+                        if ($orig_schedule !== false && $orig_interval > 0) {
+                            $scheduled = wp_schedule_event(
+                                time() + $orig_interval,
+                                $orig_schedule,
+                                $hook,
+                                $args
+                            );
+                        } elseif ($orig_next_run > time()) {
+                            $scheduled = wp_schedule_single_event(
+                                $orig_next_run,
+                                $hook,
+                                $args
+                            );
+                        } else {
+                            $scheduled = wp_schedule_single_event(
+                                time() + 60,
+                                $hook,
+                                $args
+                            );
+                        }
+                    } finally {
+                        $this->cron_manager_bypass_pause_filter = false;
                     }
+
                     if (!$scheduled) {
                         throw new Exception(
                             __(
@@ -1845,6 +1906,7 @@ class OPTISTATE_Performance_Manager
             return;
         }
         $this->runtime_optimizations_applied = true;
+        add_filter("pre_schedule_event", [$this, "block_paused_cron_event"], 10, 3);
         $settings = $this->get_performance_settings();
         if (
             isset($settings["heartbeat_api"]) &&
