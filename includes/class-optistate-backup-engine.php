@@ -152,7 +152,6 @@ class OPTISTATE_Backup_Engine
                 "start_time" => time(),
                 "checksum" => "",
                 "user_id" => get_current_user_id(),
-                "backup_has_transactions" => true,
                 "state_version" => 0,
                 "active_worker" => null,
                 "worker_ping" => 0,

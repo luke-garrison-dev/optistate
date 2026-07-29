@@ -2943,14 +2943,13 @@ class OPTISTATE_Utils
 
         self::$version_cache[$type] = (int) $new_val;
     }
-
     public static function activate_maintenance_mode(): void
     {
-        update_option("optistate_maintenance_mode_active", true, false);
+        update_option("optistate_maintenance_mode_active", true, true);
     }
 
     public static function deactivate_maintenance_mode(): void
     {
-        delete_option("optistate_maintenance_mode_active");
+        update_option("optistate_maintenance_mode_active", false, true);
     }
 }

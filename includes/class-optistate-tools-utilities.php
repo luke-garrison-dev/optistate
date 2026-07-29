@@ -10,7 +10,7 @@ class OPTISTATE_Tools_Utilities
     private const AUTOLOAD_BACKUP_KEY = "optistate_autoload_backup";
     private const BATCH_SIZE_FETCH_STANDARD = 1000;
     private const BATCH_SIZE_FETCH_CLI = 2000;
-    private const BATCH_SIZE_UPDATE = 100;
+    private const BATCH_SIZE_UPDATE = 1000;
     private const DISK_SAFETY_BUFFER_BYTES = 100 * 1024 * 1024;
     private static $essential_regex = null;
     private static ?array $base_tables = null;
