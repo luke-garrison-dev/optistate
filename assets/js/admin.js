@@ -81,7 +81,7 @@ jQuery(document).ready(function($) {
         let running = false;
         let completed = false;
         const isBackupAction = /backup|restore|decompression/.test(action);
-        const targetUrl = config.url || (isBackupAction && (optistate_BackupMgr == null ? undefined : optistate_BackupMgr.ajax_url) ? optistate_BackupMgr.ajax_url : ((optistate_Ajax == null ? undefined : optistate_Ajax.ajaxurl) || ajaxurl));
+        const targetUrl = config.url || (isBackupAction && (optistate_BackupMgr == null ? undefined : optistate_BackupMgr.ajaxurl) ? optistate_BackupMgr.ajaxurl : ((optistate_Ajax == null ? undefined : optistate_Ajax.ajaxurl) || ajaxurl));
         const targetNonce = baseData.nonce || (isBackupAction ? (optistate_BackupMgr == null ? undefined : optistate_BackupMgr.nonce) : (optistate_Ajax == null ? undefined : optistate_Ajax.nonce));
         const visibilityHandler = () => {
             if (document.hidden) {
@@ -147,7 +147,7 @@ jQuery(document).ready(function($) {
                     if (cancelled || completed) return;
                     networkRetries = 0;
                     if (!response || !response.success) {
-    const errMsg = (response && response.data && response.data.message) ? response.data.message : 'Unknown error.';
+                        const errMsg = (response && response.data && response.data.message) ? response.data.message : 'Unknown error.';
                         if (response && response.data && response.data.status === 'error') {
                             if (typeof onError === 'function') onError(errMsg);
                             stopPolling(true);
@@ -931,7 +931,7 @@ jQuery(document).ready(function($) {
                 $(SELECTORS.globalButtons).prop('disabled', true);
                 setTimeout(() => {
                     $.ajax({
-                        url: optistate_BackupMgr.ajax_url,
+                        url: optistate_BackupMgr.ajaxurl,
                         type: 'POST',
                         data: {
                             action: 'optistate_create_backup',
@@ -958,7 +958,7 @@ jQuery(document).ready(function($) {
                             }
                         },
                         error: function(xhr) {
-                            showToast(xhr.status === 429 ? ((xhr.responseJSON == null || xhr.responseJSON.data == null ? undefined : xhr.responseJSON.data.message) || getRateLimitMessage(false)) : __('An error occurred while creating the backup.', 'optistate'), xhr.status === 429 ? 'warning' : 'error');
+                            showToast(xhr.status === 429 ? (osResponseMessage(xhr) || getRateLimitMessage(false)) : __('An error occurred while creating the backup.', 'optistate'), xhr.status === 429 ? 'warning' : 'error');
                             $btn.prop('disabled', false).html(`↪ <strong>${__('Create Backup Now', 'optistate')}</strong>`);
                             $backupSpinner.hide();
                             $(SELECTORS.globalButtons).prop('disabled', false);
@@ -975,7 +975,7 @@ jQuery(document).ready(function($) {
             const message = sprintf(__('Are you sure you want to delete this backup?', 'optistate') + '<br><br>' + __('%s', 'optistate') + '<br><br>' + __('This action cannot be undone.', 'optistate'), esc_html(filename));
             showOPTISTATEModal(__('🗑️ Confirm Deletion', 'optistate'), message, function() {
                 $btn.prop('disabled', true);
-                $.post(optistate_BackupMgr.ajax_url, {
+                $.post(optistate_BackupMgr.ajaxurl, {
                     action: 'optistate_delete_backup',
                     nonce: optistate_BackupMgr.nonce,
                     filename: filename
@@ -996,7 +996,7 @@ jQuery(document).ready(function($) {
                 }).fail(function(xhr) {
                     let msg;
                     if (xhr.status === 429) {
-                        msg = (xhr.responseJSON == null || xhr.responseJSON.data == null ? undefined : xhr.responseJSON.data.message) || getRateLimitMessage(false);
+                        msg = osResponseMessage(xhr) || getRateLimitMessage(false);
                         showToast(msg, 'warning');
                     } else {
                         msg = __('An error occurred while deleting the backup.', 'optistate');
@@ -1017,7 +1017,7 @@ jQuery(document).ready(function($) {
                 return;
             }
             localStorage.setItem('optistate_last_download_click', now);
-            const baseUrl = optistate_BackupMgr.ajax_url.replace('admin-ajax.php', '');
+            const baseUrl = optistate_BackupMgr.ajaxurl.replace('admin-ajax.php', '');
             window.location.href = add_query_arg({
                 action: 'optistate_backup_download',
                 file: filename,
@@ -1055,7 +1055,7 @@ jQuery(document).ready(function($) {
                 $btn.html(`<span class="spinner is-active os-spinner-inline"></span> <strong>${__('INITIATING ....', 'optistate')}</strong>`);
                 $btn.prop('disabled', true);
                 $.ajax({
-                    url: optistate_BackupMgr.ajax_url,
+                    url: optistate_BackupMgr.ajaxurl,
                     type: 'POST',
                     data: {
                         action: 'optistate_restore_backup',
@@ -1082,7 +1082,7 @@ jQuery(document).ready(function($) {
                         }
                     },
                     error: function(xhr) {
-                        showToast(xhr.status === 429 ? ((xhr.responseJSON == null || xhr.responseJSON.data == null ? undefined : xhr.responseJSON.data.message) || getRateLimitMessage(false)) : ((xhr.responseJSON == null || xhr.responseJSON.data == null ? undefined : xhr.responseJSON.data.message) || __('Failed to initiate safety backup (network error).', 'optistate')), xhr.status === 429 ? 'warning' : 'error');
+                        showToast(xhr.status === 429 ? (osResponseMessage(xhr) || getRateLimitMessage(false)) : (osResponseMessage(xhr) || __('Failed to initiate safety backup (network error).', 'optistate')), xhr.status === 429 ? 'warning' : 'error');
                         resetRestoreUI();
                     }
                 });
@@ -1145,7 +1145,7 @@ jQuery(document).ready(function($) {
         formData.append('file_size', file.size);
         formData.append('upload_id', uploadId);
         $.ajax({
-            url: optistate_BackupMgr.ajax_url,
+            url: optistate_BackupMgr.ajaxurl,
             type: 'POST',
             data: formData,
             processData: false,
@@ -1207,7 +1207,7 @@ jQuery(document).ready(function($) {
                     return;
                 }
                 const errCode = (xhr.responseJSON == null || xhr.responseJSON.data == null ? undefined : xhr.responseJSON.data.code) || '';
-                const errorMsg = (xhr.responseJSON == null || xhr.responseJSON.data == null ? undefined : xhr.responseJSON.data.message) || '';
+                const errorMsg = osResponseMessage(xhr) || '';
                 if (errCode === 'duplicate_chunk') {
                     currentUpload.retryCount = 0;
                     currentUpload.currentChunk++;
@@ -1441,7 +1441,7 @@ jQuery(document).ready(function($) {
                 $button.prop('disabled', true);
                 $wrapper.fadeIn(300);
                 $.ajax({
-                    url: optistate_BackupMgr.ajax_url,
+                    url: optistate_BackupMgr.ajaxurl,
                     type: 'POST',
                     data: {
                         action: 'optistate_restore_from_file',
@@ -1467,7 +1467,7 @@ jQuery(document).ready(function($) {
                         }
                     },
                     error: function(xhr) {
-                        showToast(xhr.status === 429 ? ((xhr.responseJSON == null || xhr.responseJSON.data == null ? undefined : xhr.responseJSON.data.message) || getRateLimitMessage(false)) : ((xhr.responseJSON == null || xhr.responseJSON.data == null ? undefined : xhr.responseJSON.data.message) || __('Restore failed to start. Please try again.', 'optistate')), xhr.status === 429 ? 'warning' : 'error');
+                        showToast(xhr.status === 429 ? (osResponseMessage(xhr) || getRateLimitMessage(false)) : (osResponseMessage(xhr) || __('Restore failed to start. Please try again.', 'optistate')), xhr.status === 429 ? 'warning' : 'error');
                         resetRestoreUI();
                     }
                 });
@@ -1714,15 +1714,17 @@ jQuery(document).ready(function($) {
         return isSaveAction ? optistate_Ajax.rate_limit_save_message : optistate_Ajax.rate_limit_message;
     }
 
+    function osResponseMessage(xhr) {
+        const data = (xhr && xhr.responseJSON && xhr.responseJSON.data) ? xhr.responseJSON.data : null;
+        return (data && data.message) ? data.message : '';
+    }
+
     function handleAjaxError(xhr, customMsg, isSaveAction) {
         let errorMsg;
         if (xhr.status === 429) {
-    errorMsg = (xhr.responseJSON && xhr.responseJSON.data && xhr.responseJSON.data.message) 
-        ? xhr.responseJSON.data.message 
-        : getRateLimitMessage(isSaveAction);
-}
-        else if (xhr.status === 403) errorMsg = __('Security session expired. Please refresh the page.', 'optistate');
-        else errorMsg = (xhr.responseJSON == null || xhr.responseJSON.data == null ? undefined : xhr.responseJSON.data.message) || customMsg || sprintf(__('An error occurred (Status: %d). Please try again.', 'optistate'), xhr.status);
+            errorMsg = osResponseMessage(xhr) || getRateLimitMessage(isSaveAction);
+        } else if (xhr.status === 403) errorMsg = __('Security session expired. Please refresh the page.', 'optistate');
+        else errorMsg = osResponseMessage(xhr) || customMsg || sprintf(__('An error occurred (Status: %d). Please try again.', 'optistate'), xhr.status);
         showToast(errorMsg, xhr.status === 429 ? 'warning' : 'error');
         isProcessing = false;
         $('.optistate-action-btn').prop('disabled', false);
@@ -1766,7 +1768,7 @@ jQuery(document).ready(function($) {
                     valueHtml = `<span style="color:#d63638;">${__('Not found', 'optistate')}</span>`;
                 } else {
                     const sizeText = (info && info.size_formatted) ? info.size_formatted : __('N/A', 'optistate');
-const mtimeText = (info && info.mtime_formatted) ? info.mtime_formatted : __('N/A', 'optistate');
+                    const mtimeText = (info && info.mtime_formatted) ? info.mtime_formatted : __('N/A', 'optistate');
                     valueHtml = `<a href="#" class="optistate-download-htaccess os-no-decoration" title="${esc_attr(__('Click to download htaccess.txt', 'optistate'))}">${escapeHTML(sizeText)} ⬇</a>` + ` — ${__('Updated:', 'optistate')} ${escapeHTML(mtimeText)}`;
                 }
                 div.innerHTML = `<div class="optistate-stat-label">${escapeHTML(systemLabels[key])}</div><div class="optistate-stat-value">${valueHtml}</div>`;
@@ -2273,7 +2275,7 @@ const mtimeText = (info && info.mtime_formatted) ? info.mtime_formatted : __('N/
                             showToast((optResponse == null || optResponse.data == null ? undefined : optResponse.data.message) || __('Optimization failed.', 'optistate'), 'error');
                         }
                     }).fail(function(xhr) {
-                        var errMsg = (xhr.responseJSON && xhr.responseJSON.data && xhr.responseJSON.data.message) ? xhr.responseJSON.data.message : (xhr.status === 429 ? getRateLimitMessage(false) : __('Network error.', 'optistate'));
+                        var errMsg = osResponseMessage(xhr) || (xhr.status === 429 ? getRateLimitMessage(false) : __('Network error.', 'optistate'));
                         showToast(errMsg, xhr.status === 429 ? 'warning' : 'error');
                     }).always(function() {
                         isProcessing = false;
@@ -2283,7 +2285,7 @@ const mtimeText = (info && info.mtime_formatted) ? info.mtime_formatted : __('N/
                 }, false);
             }).fail(function(xhr) {
                 $btn.prop('disabled', false).removeClass('loading').html('⚙️ ' + __('Optimize Autoloaded Options', 'optistate'));
-                var errMsg = (xhr.responseJSON && xhr.responseJSON.data && xhr.responseJSON.data.message) ? xhr.responseJSON.data.message : (xhr.status === 429 ? getRateLimitMessage(false) : __('Network error.', 'optistate'));
+                var errMsg = osResponseMessage(xhr) || (xhr.status === 429 ? getRateLimitMessage(false) : __('Network error.', 'optistate'));
                 showToast(errMsg, xhr.status === 429 ? 'warning' : 'error');
             });
         });
@@ -2324,7 +2326,7 @@ const mtimeText = (info && info.mtime_formatted) ? info.mtime_formatted : __('N/
             $btn.html('<span class="spinner is-active os-spinner-inline"></span> ' + __('Creating backup...', 'optistate'));
             $btn.prop('disabled', true);
             $.ajax({
-                url: optistate_BackupMgr.ajax_url,
+                url: optistate_BackupMgr.ajaxurl,
                 type: 'POST',
                 data: {
                     action: 'optistate_create_backup',
@@ -2356,7 +2358,7 @@ const mtimeText = (info && info.mtime_formatted) ? info.mtime_formatted : __('N/
                     }
                 },
                 error: function(xhr) {
-                    showToast(xhr.status === 429 ? ((xhr.responseJSON == null || xhr.responseJSON.data == null ? undefined : xhr.responseJSON.data.message) || getRateLimitMessage(false)) : __('An error occurred while creating the backup.', 'optistate'), xhr.status === 429 ? 'warning' : 'error');
+                    showToast(xhr.status === 429 ? (osResponseMessage(xhr) || getRateLimitMessage(false)) : __('An error occurred while creating the backup.', 'optistate'), xhr.status === 429 ? 'warning' : 'error');
                     resetOneClickButton($btn);
                 }
             });
@@ -2602,9 +2604,10 @@ const mtimeText = (info && info.mtime_formatted) ? info.mtime_formatted : __('N/
                 showToast(__('Failed to refresh log', 'optistate'), 'error');
             }
         }).fail(function(xhr) {
+            const serverMsg = osResponseMessage(xhr);
             let errorMsg = __('Failed to refresh log', 'optistate');
-            if (xhr.responseJSON && xhr.responseJSON.data && xhr.responseJSON.data.message) {
-                errorMsg = xhr.responseJSON.data.message;
+            if (serverMsg) {
+                errorMsg = serverMsg;
             } else if (xhr.status === 429) {
                 errorMsg = getRateLimitMessage(false);
             }
@@ -2654,12 +2657,13 @@ const mtimeText = (info && info.mtime_formatted) ? info.mtime_formatted : __('N/
             },
             error: function(xhr) {
                 if (xhr.status === 429) {
-                    showToast((xhr.responseJSON == null || xhr.responseJSON.data == null ? undefined : xhr.responseJSON.data.message) || getRateLimitMessage(false), 'warning');
+                    showToast(osResponseMessage(xhr) || getRateLimitMessage(false), 'warning');
                     return;
                 }
+                const serverMsg = osResponseMessage(xhr);
                 let errorMsg = __('Network error loading health score', 'optistate');
-                if ((xhr.responseJSON == null || xhr.responseJSON.data == null ? undefined : xhr.responseJSON.data.message)) {
-                    errorMsg = xhr.responseJSON.data.message;
+                if (serverMsg) {
+                    errorMsg = serverMsg;
                 }
                 showHealthScoreError(errorMsg);
             },
@@ -2757,7 +2761,7 @@ const mtimeText = (info && info.mtime_formatted) ? info.mtime_formatted : __('N/
                     showToast((response == null ? undefined : response.data) || __('Failed to analyze tables', 'optistate'), 'error');
                 }
             }).fail(function(xhr) {
-                showToast(xhr.status === 429 ? ((xhr.responseJSON == null || xhr.responseJSON.data == null ? undefined : xhr.responseJSON.data.message) || getRateLimitMessage(false)) : __('Network error while analyzing tables', 'optistate'), xhr.status === 429 ? 'warning' : 'error');
+                showToast(xhr.status === 429 ? (osResponseMessage(xhr) || getRateLimitMessage(false)) : __('Network error while analyzing tables', 'optistate'), xhr.status === 429 ? 'warning' : 'error');
             }).always(function() {
                 $loading.fadeOut(200);
                 $btn.prop('disabled', false);
@@ -2890,7 +2894,7 @@ const mtimeText = (info && info.mtime_formatted) ? info.mtime_formatted : __('N/
                     showToast((response == null || response.data == null ? undefined : response.data.message) || 'Analysis failed', 'error');
                 }
             }).fail(function(xhr) {
-                showToast(xhr.status === 429 ? ((xhr.responseJSON == null || xhr.responseJSON.data == null ? undefined : xhr.responseJSON.data.message) || getRateLimitMessage(false)) : __('Network error analyzing indexes.', 'optistate'), xhr.status === 429 ? 'warning' : 'error');
+                showToast(xhr.status === 429 ? (osResponseMessage(xhr) || getRateLimitMessage(false)) : __('Network error analyzing indexes.', 'optistate'), xhr.status === 429 ? 'warning' : 'error');
             }).always(() => {
                 $loading.fadeOut(200);
                 $btn.prop('disabled', false);
@@ -3008,7 +3012,7 @@ const mtimeText = (info && info.mtime_formatted) ? info.mtime_formatted : __('N/
                         isDeletingAll = false;
                     }
                 }).fail(function(xhr) {
-                    const msg = (xhr.responseJSON == null || xhr.responseJSON.data == null ? undefined : xhr.responseJSON.data.message) || __('Network error.', 'optistate');
+                    const msg = osResponseMessage(xhr) || __('Network error.', 'optistate');
                     showToast(msg, 'error');
                     $btn.prop('disabled', false).html(__('🗑 Delete All', 'optistate'));
                     isDeletingAll = false;
@@ -3149,7 +3153,7 @@ const mtimeText = (info && info.mtime_formatted) ? info.mtime_formatted : __('N/
             }).done(response => {
                 if (response.success) renderIntegrityResults(response.data);
                 else showToast(response.data.message || 'Scan failed', 'error');
-            }).fail(xhr => showToast(xhr.status === 429 ? ((xhr.responseJSON == null || xhr.responseJSON.data == null ? undefined : xhr.responseJSON.data.message) || getRateLimitMessage(false)) : __('Network error.', 'optistate'), xhr.status === 429 ? 'warning' : 'error')).always(() => {
+            }).fail(xhr => showToast(xhr.status === 429 ? (osResponseMessage(xhr) || getRateLimitMessage(false)) : __('Network error.', 'optistate'), xhr.status === 429 ? 'warning' : 'error')).always(() => {
                 $loading.fadeOut(200);
                 $btn.prop('disabled', false);
             });
@@ -3529,7 +3533,7 @@ const mtimeText = (info && info.mtime_formatted) ? info.mtime_formatted : __('N/
                 $btn.prop('disabled', false).html(originalText);
             }
         }).fail(function(xhr) {
-            const msg = (xhr.responseJSON == null || xhr.responseJSON.data == null ? undefined : xhr.responseJSON.data.message) || __('Network error.', 'optistate');
+            const msg = osResponseMessage(xhr) || __('Network error.', 'optistate');
             const type = xhr.status === 429 ? 'warning' : 'error';
             showToast(msg, type);
             $btn.prop('disabled', false).html(originalText);
@@ -4238,7 +4242,7 @@ const mtimeText = (info && info.mtime_formatted) ? info.mtime_formatted : __('N/
                             showToast(res.data.message || __('Cache successfully purged!', 'optistate'), 'success');
                             if (res.data.trigger_preload) setTimeout(() => startPreload(), 1000);
                         } else showToast((res == null || res.data == null ? undefined : res.data.message) || __('An error occurred.', 'optistate'), 'error');
-                    }).fail(xhr => showToast(xhr.status === 429 ? ((xhr.responseJSON == null || xhr.responseJSON.data == null ? undefined : xhr.responseJSON.data.message) || getRateLimitMessage(false)) : __('Network error.', 'optistate'), xhr.status === 429 ? 'warning' : 'error'))
+                    }).fail(xhr => showToast(xhr.status === 429 ? (osResponseMessage(xhr) || getRateLimitMessage(false)) : __('Network error.', 'optistate'), xhr.status === 429 ? 'warning' : 'error'))
                     .always(() => {
                         $btn.prop('disabled', false).html(`🗑️ ${__('Purge All Cache', 'optistate')}`);
                         loadCacheStats();
@@ -4272,7 +4276,7 @@ const mtimeText = (info && info.mtime_formatted) ? info.mtime_formatted : __('N/
                     isPreloadCancelled = false;
                 }
             }).fail(xhr => {
-                showToast(xhr.status === 429 ? ((xhr.responseJSON == null || xhr.responseJSON.data == null ? undefined : xhr.responseJSON.data.message) || getRateLimitMessage(false)) : ((xhr.responseJSON == null || xhr.responseJSON.data == null ? undefined : xhr.responseJSON.data.message) || __('Network error', 'optistate')), xhr.status === 429 ? 'warning' : 'error');
+                showToast(xhr.status === 429 ? (osResponseMessage(xhr) || getRateLimitMessage(false)) : (osResponseMessage(xhr) || __('Network error', 'optistate')), xhr.status === 429 ? 'warning' : 'error');
                 $btn.prop('disabled', false).html(`🟥 ${__('Stop', 'optistate')}`);
                 isPreloadCancelled = false;
             });
@@ -4384,7 +4388,7 @@ const mtimeText = (info && info.mtime_formatted) ? info.mtime_formatted : __('N/
                         $(this).html('').fadeIn(300);
                     }), 4000);
                 } else $status.html(`<p class="optistate-error">✗ ${res.data.message || 'Export failed'}</p>`);
-            }).fail(xhr => $status.html(`<p class="optistate-error">✗ ${(xhr.responseJSON == null || xhr.responseJSON.data == null ? undefined : xhr.responseJSON.data.message) || (xhr.status === 429 ? getRateLimitMessage(false) : __('Network error', 'optistate'))}</p>`)).always(() => $btn.prop('disabled', false));
+            }).fail(xhr => $status.html(`<p class="optistate-error">✗ ${osResponseMessage(xhr) || (xhr.status === 429 ? getRateLimitMessage(false) : __('Network error', 'optistate'))}</p>`)).always(() => $btn.prop('disabled', false));
         });
         $('#optistate-settings-file-input').on('change', function() {
             const file = this.files[0];
@@ -4464,7 +4468,7 @@ const mtimeText = (info && info.mtime_formatted) ? info.mtime_formatted : __('N/
                         }
                     },
                     error: xhr => {
-                        const errorMsg = (xhr.responseJSON && xhr.responseJSON.data && xhr.responseJSON.data.message) ? xhr.responseJSON.data.message : (xhr.status === 429 ? getRateLimitMessage(false) : __('Network error', 'optistate'));
+                        const errorMsg = osResponseMessage(xhr) || (xhr.status === 429 ? getRateLimitMessage(false) : __('Network error', 'optistate'));
                         $status.html(`<p class="optistate-error">✗ ${errorMsg}</p>`);
                         $btn.prop('disabled', false);
                     }
@@ -4590,7 +4594,7 @@ const mtimeText = (info && info.mtime_formatted) ? info.mtime_formatted : __('N/
                 }
             }).fail((xhr) => {
                 $checkbox.prop('disabled', false).prop('checked', !isChecked);
-                showToast(xhr.status === 429 ? getRateLimitMessage(true) : ((xhr.responseJSON == null || xhr.responseJSON.data == null ? undefined : xhr.responseJSON.data.message) || __('Network error.', 'optistate')), xhr.status === 429 ? 'warning' : 'error');
+                showToast(xhr.status === 429 ? getRateLimitMessage(true) : (osResponseMessage(xhr) || __('Network error.', 'optistate')), xhr.status === 429 ? 'warning' : 'error');
             });
         });
         $body.on('click', '#optistate-quick-enable-security', () => $('#disable_restore_security').prop('checked', false).trigger('change'));
@@ -4672,8 +4676,8 @@ const mtimeText = (info && info.mtime_formatted) ? info.mtime_formatted : __('N/
             }).fail(xhr => {
                 showToast(
                     xhr.status === 429 ?
-                    ((xhr.responseJSON == null || xhr.responseJSON.data == null ? undefined : xhr.responseJSON.data.message) || getRateLimitMessage(false)) :
-                    ((xhr.responseJSON == null || xhr.responseJSON.data == null ? undefined : xhr.responseJSON.data.message) || __('Network error.', 'optistate')),
+                    (osResponseMessage(xhr) || getRateLimitMessage(false)) :
+                    (osResponseMessage(xhr) || __('Network error.', 'optistate')),
                     xhr.status === 429 ? 'warning' : 'error'
                 );
                 $loading.hide();
@@ -4850,9 +4854,10 @@ const mtimeText = (info && info.mtime_formatted) ? info.mtime_formatted : __('N/
                     resetButton();
                 }
             }).fail(function(xhr) {
+                const serverMsg = osResponseMessage(xhr);
                 let errorMsg = __('Connection error.', 'optistate');
-                if (xhr.responseJSON && xhr.responseJSON.data && xhr.responseJSON.data.message) {
-                    errorMsg = xhr.responseJSON.data.message;
+                if (serverMsg) {
+                    errorMsg = serverMsg;
                 } else if (xhr.status === 429) {
                     errorMsg = getRateLimitMessage(false);
                 }
@@ -5042,9 +5047,10 @@ const mtimeText = (info && info.mtime_formatted) ? info.mtime_formatted : __('N/
                         $btn.prop('disabled', false).text(__('Unblock', 'optistate'));
                     }
                 }).fail(function(xhr) {
+                    const serverMsg = osResponseMessage(xhr);
                     let errorMsg = __('An error occurred while unblocking the user.', 'optistate');
-                    if (xhr.responseJSON && xhr.responseJSON.data && xhr.responseJSON.data.message) {
-                        errorMsg = xhr.responseJSON.data.message;
+                    if (serverMsg) {
+                        errorMsg = serverMsg;
                     } else if (xhr.status === 403) {
                         errorMsg = __('Access denied. Please refresh the page and try again.', 'optistate');
                     }
@@ -5101,7 +5107,7 @@ const mtimeText = (info && info.mtime_formatted) ? info.mtime_formatted : __('N/
 
     function checkBackupStatusOnLoad() {
         if (isProcessing) return;
-        $.post(optistate_BackupMgr.ajax_url, {
+        $.post(optistate_BackupMgr.ajaxurl, {
             action: 'optistate_check_manual_backup_on_load',
             nonce: optistate_BackupMgr.nonce
         }).done(function(response) {
@@ -5258,9 +5264,10 @@ const mtimeText = (info && info.mtime_formatted) ? info.mtime_formatted : __('N/
                 $btn.prop('disabled', false).text(__('Restore', 'optistate'));
             }
         }).fail(function(xhr) {
+            const serverMsg = osResponseMessage(xhr);
             let errorMsg = __('Network error.', 'optistate');
-            if (xhr.responseJSON && xhr.responseJSON.data && xhr.responseJSON.data.message) {
-                errorMsg = xhr.responseJSON.data.message;
+            if (serverMsg) {
+                errorMsg = serverMsg;
             } else if (xhr.status === 403) {
                 errorMsg = __('Access denied. Please refresh the page and try again.', 'optistate');
             } else if (xhr.status === 429) {
@@ -5289,9 +5296,10 @@ const mtimeText = (info && info.mtime_formatted) ? info.mtime_formatted : __('N/
                 $btn.prop('disabled', false).text(__('Delete Permanently', 'optistate'));
             }
         }).fail(function(xhr) {
+            const serverMsg = osResponseMessage(xhr);
             let errorMsg = __('Network error.', 'optistate');
-            if (xhr.responseJSON && xhr.responseJSON.data && xhr.responseJSON.data.message) {
-                errorMsg = xhr.responseJSON.data.message;
+            if (serverMsg) {
+                errorMsg = serverMsg;
             } else if (xhr.status === 403) {
                 errorMsg = __('Access denied. Please refresh the page and try again.', 'optistate');
             } else if (xhr.status === 429) {
