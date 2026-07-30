@@ -24,7 +24,6 @@ class OPTISTATE_TwoFactor
     ) {
         $this->main_plugin = $main_plugin;
         $this->globally_enabled = $globally_enabled;
-        $this->register_ajax_handlers();
         if ($this->globally_enabled) {
             $this->init_hooks();
             add_action("admin_init", [
@@ -60,30 +59,6 @@ class OPTISTATE_TwoFactor
                 );
             }
         }
-    }
-
-    private function register_ajax_handlers(): void
-    {
-        add_action("wp_ajax_optistate_generate_2fa_secret", [
-            $this,
-            "ajax_generate_secret",
-        ]);
-        add_action("wp_ajax_optistate_verify_2fa_code", [
-            $this,
-            "ajax_verify_code",
-        ]);
-        add_action("wp_ajax_optistate_regenerate_backup_codes", [
-            $this,
-            "ajax_regenerate_backup_codes",
-        ]);
-        add_action("wp_ajax_optistate_save_two_factor_setting", [
-            $this,
-            "ajax_save_global_setting",
-        ]);
-        add_action("wp_ajax_optistate_admin_reset_2fa", [
-            $this,
-            "ajax_admin_reset_2fa",
-        ]);
     }
 
     private function init_hooks(): void
@@ -850,7 +825,9 @@ if ($enabled) {
 
     private function profile_js(): void
     {
-        $nonce = wp_create_nonce(OPTISTATE::TWO_FACTOR_NONCE_ACTION); ?> <script type="text/javascript"> var optistate2fa = { ajax_nonce: <?php echo wp_json_encode(
+        $nonce = wp_create_nonce(
+            OPTISTATE::TWO_FACTOR_NONCE_ACTION
+        ); ?> <script type="text/javascript"> var optistate2fa = { ajax_nonce: <?php echo wp_json_encode(
      $nonce
  ); ?> }; </script> <script type="text/javascript"> jQuery(document).ready(function($) { function handleAjaxError(xhr, defaultMsg) { var msg = defaultMsg; if (xhr.responseJSON && xhr.responseJSON.data && xhr.responseJSON.data.message) { msg = xhr.responseJSON.data.message; } else if (xhr.responseJSON && xhr.responseJSON.message) { msg = xhr.responseJSON.message; } else if (xhr.status === 429) { msg = '<?php echo esc_js(
      __("Rate limit exceeded. Please wait a moment.", "optistate")

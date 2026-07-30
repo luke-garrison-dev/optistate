@@ -3,8 +3,6 @@
 }
 class OPTISTATE_Backup_Utilities
 {
-    private const DISK_SAFETY_BUFFER_BYTES = 100 * 1024 * 1024;
-
     public static function cleanup_old_temp_files_daily(
         OPTISTATE $main_plugin,
         OPTISTATE_Process_Store $process_store
@@ -180,7 +178,7 @@ class OPTISTATE_Backup_Utilities
             return ["success" => true];
         }
         $free_space = false;
-        if (!self::is_php_function_disabled("disk_free_space")) {
+        if (OPTISTATE_Utils::is_function_available("disk_free_space")) {
             try {
                 $free_space = @disk_free_space(WP_CONTENT_DIR);
             } catch (\Throwable $e) {
@@ -191,7 +189,7 @@ class OPTISTATE_Backup_Utilities
             return ["success" => true];
         }
         $required_space = 0;
-        $safety_buffer = self::DISK_SAFETY_BUFFER_BYTES;
+        $safety_buffer = OPTISTATE_Utils::DISK_SAFETY_BUFFER_BYTES;
         if ($backup_filepath && $filesystem->exists($backup_filepath)) {
             $backup_file_size = $filesystem->size($backup_filepath);
             $is_compressed = preg_match('/\.gz$/i', $backup_filepath);
@@ -231,26 +229,6 @@ class OPTISTATE_Backup_Utilities
             return ["success" => false, "message" => $message];
         }
         return ["success" => true];
-    }
-
-    private static function is_php_function_disabled(
-        string $function_name
-    ): bool {
-        if (!function_exists($function_name)) {
-            return true;
-        }
-        $disabled_functions = @ini_get("disable_functions");
-        $disabled_string = is_string($disabled_functions)
-            ? $disabled_functions
-            : "";
-        if ($disabled_string === "") {
-            return false;
-        }
-        $disabled_list = array_map(
-            "trim",
-            explode(",", strtolower($disabled_string))
-        );
-        return in_array(strtolower($function_name), $disabled_list, true);
     }
 
     public static function verify_backup_file(
@@ -400,7 +378,11 @@ class OPTISTATE_Backup_Utilities
             "readable" => false,
             "message" => "",
             "db_name" => null,
-            "core_tables" => ["options" => false, "posts" => false, "users" => false],
+            "core_tables" => [
+                "options" => false,
+                "posts" => false,
+                "users" => false,
+            ],
             "truncated" => false,
             "charset" => null,
         ];
@@ -423,10 +405,7 @@ class OPTISTATE_Backup_Utilities
             if ($header === false) {
                 $result["message"] = $is_gzipped
                     ? esc_html__("Gzip file corrupted.", "optistate")
-                    : esc_html__(
-                        "Backup file could not be read.",
-                        "optistate"
-                    );
+                    : esc_html__("Backup file could not be read.", "optistate");
                 return $result;
             }
             $result["readable"] = true;
@@ -473,10 +452,7 @@ class OPTISTATE_Backup_Utilities
                 if ($table === null) {
                     continue;
                 }
-                if (
-                    $base_prefix !== "" &&
-                    strpos($table, $base_prefix) !== 0
-                ) {
+                if ($base_prefix !== "" && strpos($table, $base_prefix) !== 0) {
                     continue;
                 }
                 foreach ($result["core_tables"] as $role => $found) {
@@ -514,8 +490,9 @@ class OPTISTATE_Backup_Utilities
         return $result;
     }
 
-    private static function extract_created_table_name(string $statement): ?string
-    {
+    private static function extract_created_table_name(
+        string $statement
+    ): ?string {
         if (
             preg_match(
                 '/^CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[`"\']?([A-Za-z0-9_$]+)[`"\']?/i',
@@ -562,11 +539,11 @@ class OPTISTATE_Backup_Utilities
 
     public static function is_shell_exec_available(): bool
     {
-        return !self::is_php_function_disabled("shell_exec");
+        return OPTISTATE_Utils::is_function_available("shell_exec");
     }
     public static function is_exec_available(): bool
     {
-        return !self::is_php_function_disabled("exec");
+        return OPTISTATE_Utils::is_function_available("exec");
     }
 
     public static function format_row_for_sql(

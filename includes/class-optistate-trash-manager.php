@@ -78,23 +78,6 @@ class OPTISTATE_Trash_Manager
     public function __construct(OPTISTATE $main_plugin)
     {
         $this->main_plugin = $main_plugin;
-
-        add_action("wp_ajax_optistate_list_trash_items", [
-            $this,
-            "ajax_list_trash_items",
-        ]);
-        add_action("wp_ajax_optistate_restore_trash_item", [
-            $this,
-            "ajax_restore_trash_item",
-        ]);
-        add_action("wp_ajax_optistate_permanently_delete_trash_item", [
-            $this,
-            "ajax_permanently_delete_trash_item",
-        ]);
-        add_action("wp_ajax_optistate_delete_all_trash", [
-            $this,
-            "ajax_delete_all_trash",
-        ]);
     }
     private function trash_table(): string
     {
@@ -330,16 +313,6 @@ class OPTISTATE_Trash_Manager
 
         return $normalized;
     }
-    private function path_has_traversal(string $path): bool
-    {
-        foreach (explode("/", wp_normalize_path($path)) as $segment) {
-            if ($segment === "..") {
-                return true;
-            }
-        }
-
-        return false;
-    }
     private function resolve_intended_path(string $path): string
     {
         $normalized = wp_normalize_path($path);
@@ -446,7 +419,7 @@ class OPTISTATE_Trash_Manager
             return;
         }
 
-        if ($this->can_flush_cache_group()) {
+        if (OPTISTATE_Utils::can_flush_cache_group()) {
             wp_cache_flush_group($cache_group);
 
             return;
@@ -455,10 +428,6 @@ class OPTISTATE_Trash_Manager
         foreach ($object_ids as $object_id => $ignored) {
             wp_cache_delete((int) $object_id, $cache_group);
         }
-    }
-    private function can_flush_cache_group(): bool
-    {
-        return OPTISTATE_Utils::can_flush_cache_group();
     }
     private function is_inside_allowed_base(string $path): bool
     {
@@ -1148,7 +1117,7 @@ class OPTISTATE_Trash_Manager
         $last_id = 0;
         $written = 0;
         $write_failed = false;
-        $collect_ids = !$this->can_flush_cache_group();
+        $collect_ids = !OPTISTATE_Utils::can_flush_cache_group();
         $object_ids = [];
 
         while (true) {
@@ -1416,7 +1385,7 @@ class OPTISTATE_Trash_Manager
 
         if (
             $original_path === "" ||
-            $this->path_has_traversal($original_path)
+            OPTISTATE_Utils::path_has_traversal($original_path)
         ) {
             $this->main_plugin->log_entry(
                 "❌ " .
@@ -1689,7 +1658,7 @@ class OPTISTATE_Trash_Manager
 
         $batch = [];
         $failed = false;
-        $collect_ids = !$this->can_flush_cache_group();
+        $collect_ids = !OPTISTATE_Utils::can_flush_cache_group();
         $object_ids = [];
 
         foreach ($entries as $entry) {

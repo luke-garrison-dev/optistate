@@ -515,90 +515,301 @@ final class OPTISTATE
             "cleanup_deleted_user_from_access_list",
         ]);
     }
+    private function get_ajax_routes(): array
+    {
+        $caching_unavailable = __(
+            "Server caching is disabled or not available.",
+            "optistate"
+        );
+
+        return [
+            "apply_preset" => ["self", "ajax_apply_preset"],
+            "download_activity_log" => ["self", "ajax_download_activity_log"],
+            "download_error_log" => ["self", "ajax_download_error_log"],
+            "download_htaccess" => ["self", "ajax_download_htaccess"],
+            "get_optimization_log" => ["self", "ajax_get_optimization_log"],
+            "get_stats" => ["self", "ajax_get_stats"],
+
+            "get_cache_stats" => [
+                "server_caching",
+                "ajax_get_cache_stats",
+                $caching_unavailable,
+                __(
+                    "An unexpected error occurred while fetching cache stats.",
+                    "optistate"
+                ),
+            ],
+            "get_preload_status" => [
+                "server_caching",
+                "ajax_get_preload_status",
+                $caching_unavailable,
+                __(
+                    "An unexpected error occurred while fetching preload status.",
+                    "optistate"
+                ),
+            ],
+            "purge_page_cache" => [
+                "server_caching",
+                "ajax_purge_page_cache",
+                $caching_unavailable,
+                __(
+                    "An unexpected error occurred while purging the cache.",
+                    "optistate"
+                ),
+            ],
+            "start_preload" => [
+                "server_caching",
+                "ajax_start_preload",
+                $caching_unavailable,
+                __(
+                    "An unexpected error occurred while starting the preload.",
+                    "optistate"
+                ),
+            ],
+            "stop_preload" => [
+                "server_caching",
+                "ajax_stop_preload",
+                $caching_unavailable,
+                __(
+                    "An unexpected error occurred while stopping the preload.",
+                    "optistate"
+                ),
+            ],
+            "export_settings" => ["settings_manager", "ajax_export_settings"],
+            "import_settings" => ["settings_manager", "ajax_import_settings"],
+            "save_auto_settings" => [
+                "settings_manager",
+                "ajax_save_auto_settings",
+            ],
+            "save_max_backups" => ["settings_manager", "ajax_save_max_backups"],
+            "save_one_click_extra_items" => [
+                "settings_manager",
+                "ajax_save_one_click_extra_items",
+            ],
+            "save_user_access" => ["settings_manager", "ajax_save_user_access"],
+            "check_htaccess_status" => [
+                "performance_manager",
+                "ajax_check_htaccess_status",
+            ],
+            "cron_manager_action" => [
+                "performance_manager",
+                "ajax_cron_manager_action",
+            ],
+            "get_performance_features" => [
+                "performance_manager",
+                "ajax_get_performance_features",
+            ],
+            "save_performance_features" => [
+                "performance_manager",
+                "ajax_save_performance_features",
+            ],
+
+            "check_backup_status" => [
+                "db_backup_manager",
+                "ajax_check_backup_status",
+            ],
+            "check_decompression_status" => [
+                "db_backup_manager",
+                "ajax_check_decompression_status",
+            ],
+            "check_manual_backup_on_load" => [
+                "db_backup_manager",
+                "ajax_check_manual_backup_on_load",
+            ],
+            "check_restore_status" => [
+                "db_backup_manager",
+                "ajax_check_restore_status",
+            ],
+            "create_backup" => ["db_backup_manager", "ajax_create_backup"],
+            "delete_backup" => ["db_backup_manager", "ajax_delete_backup"],
+            "get_restore_status" => [
+                "db_backup_manager",
+                "ajax_get_restore_status",
+            ],
+            "restore_backup" => ["db_backup_manager", "ajax_restore_backup"],
+            "restore_from_file" => [
+                "db_backup_manager",
+                "ajax_restore_from_file",
+            ],
+            "upload_restore_file" => [
+                "db_backup_upload",
+                "ajax_upload_restore_file",
+            ],
+
+            "analyze_indexes" => ["advanced_tools", "ajax_analyze_indexes"],
+            "check_index_status" => [
+                "advanced_tools",
+                "ajax_check_index_status",
+            ],
+            "delete_table" => ["advanced_tools", "ajax_delete_table"],
+            "get_table_analysis" => [
+                "advanced_tools",
+                "ajax_get_table_analysis",
+            ],
+            "initiate_analyze_repair" => [
+                "advanced_tools",
+                "ajax_initiate_analyze_repair",
+            ],
+            "manage_index" => ["advanced_tools", "ajax_manage_index"],
+            "optimize_tables" => ["advanced_tools", "ajax_optimize_tables"],
+            "run_analyze_repair_chunk" => [
+                "advanced_tools",
+                "ajax_run_analyze_repair_chunk",
+            ],
+
+            "fix_integrity" => ["tools_utilities", "run_fix_integrity"],
+            "optimize_autoload" => ["tools_utilities", "run_optimize_autoload"],
+            "preview_autoload_options" => [
+                "tools_utilities",
+                "run_preview_autoload_options",
+            ],
+            "restore_autoload_backup" => [
+                "tools_utilities",
+                "run_restore_autoload_backup",
+            ],
+            "scan_integrity" => ["tools_utilities", "run_scan_integrity"],
+
+            "clean_item" => ["cleanup_functions", "ajax_clean_item"],
+            "one_click_optimize" => [
+                "cleanup_functions",
+                "ajax_one_click_optimize",
+            ],
+
+            "delete_all_trash" => ["trash_manager", "ajax_delete_all_trash"],
+            "list_trash_items" => ["trash_manager", "ajax_list_trash_items"],
+            "permanently_delete_trash_item" => [
+                "trash_manager",
+                "ajax_permanently_delete_trash_item",
+            ],
+            "restore_trash_item" => [
+                "trash_manager",
+                "ajax_restore_trash_item",
+            ],
+
+            "delete_legacy_data" => [
+                "legacy_scanner",
+                "ajax_delete_legacy_data",
+            ],
+            "scan_legacy_data" => ["legacy_scanner", "ajax_scan_legacy_data"],
+
+            "search_replace_dry_run" => [
+                "search_replace_engine",
+                "ajax_dry_run",
+            ],
+            "search_replace_execute" => [
+                "search_replace_engine",
+                "ajax_execute",
+            ],
+
+            "get_health_score" => ["health_score", "ajax_get_health_score"],
+
+            "check_pagespeed_status" => [
+                "performance_audit",
+                "ajax_check_pagespeed_status",
+            ],
+            "run_pagespeed_audit" => [
+                "performance_audit",
+                "ajax_run_pagespeed_audit",
+            ],
+            "run_pagespeed_worker_async" => [
+                "performance_audit",
+                "ajax_run_pagespeed_worker_async",
+            ],
+            "save_pagespeed_settings" => [
+                "performance_audit",
+                "ajax_save_pagespeed_settings",
+            ],
+
+            "save_ip_blocker" => ["login_protection", "ajax_save_ip_blocker"],
+            "save_login_protection" => [
+                "login_protection",
+                "ajax_save_settings",
+            ],
+            "unblock_user" => ["login_protection", "ajax_unblock_user"],
+
+            "admin_reset_2fa" => ["two_factor", "ajax_admin_reset_2fa"],
+            "generate_2fa_secret" => ["two_factor", "ajax_generate_secret"],
+            "regenerate_backup_codes" => [
+                "two_factor",
+                "ajax_regenerate_backup_codes",
+            ],
+            "save_two_factor_setting" => [
+                "two_factor",
+                "ajax_save_global_setting",
+            ],
+            "verify_2fa_code" => ["two_factor", "ajax_verify_code"],
+        ];
+    }
+
+    private function resolve_ajax_target(string $target)
+    {
+        if ($target === "self") {
+            return $this;
+        }
+
+        if ($target === "settings_manager") {
+            return $this->settings_manager;
+        }
+
+        if ($target === "performance_manager") {
+            return $this->performance_manager;
+        }
+
+        return $this->get_service($target);
+    }
+
+    private function dispatch_ajax_route(array $route): void
+    {
+        $target = $route[0];
+        $method = $route[1];
+
+        if ($target === "tools_utilities") {
+            OPTISTATE_Tools_Utilities::{$method}($this);
+
+            return;
+        }
+
+        $instance = $this->resolve_ajax_target($target);
+
+        if (!is_object($instance) || !is_callable([$instance, $method])) {
+            OPTISTATE_Utils::send_json_error(
+                $route[2] ??
+                    __(
+                        "This feature is not available right now. Please reload the page.",
+                        "optistate"
+                    )
+            );
+
+            return;
+        }
+
+        if (!isset($route[3])) {
+            $instance->{$method}();
+
+            return;
+        }
+
+        try {
+            $instance->{$method}();
+        } catch (Throwable $e) {
+            OPTISTATE_Utils::log_critical_error(
+                $method . " failed: " . $e->getMessage(),
+                ["trace" => $e->getTraceAsString()]
+            );
+
+            OPTISTATE_Utils::send_json_error($route[3]);
+        }
+    }
 
     private function register_ajax_handlers(): void
     {
-        add_action("wp_ajax_optistate_get_stats", [$this, "ajax_get_stats"]);
-        add_action("wp_ajax_optistate_get_optimization_log", [
-            $this,
-            "ajax_get_optimization_log",
-        ]);
-        add_action("wp_ajax_optistate_purge_page_cache", [
-            $this,
-            "ajax_purge_page_cache",
-        ]);
-        add_action("wp_ajax_optistate_get_cache_stats", [
-            $this,
-            "ajax_get_cache_stats",
-        ]);
-        add_action("wp_ajax_optistate_start_preload", [
-            $this,
-            "ajax_start_preload",
-        ]);
-        add_action("wp_ajax_optistate_stop_preload", [
-            $this,
-            "ajax_stop_preload",
-        ]);
-        add_action("wp_ajax_optistate_get_preload_status", [
-            $this,
-            "ajax_get_preload_status",
-        ]);
-        add_action("wp_ajax_optistate_download_error_log", [
-            $this,
-            "ajax_download_error_log",
-        ]);
-        add_action("wp_ajax_optistate_download_activity_log", [
-            $this,
-            "ajax_download_activity_log",
-        ]);
-        add_action("wp_ajax_optistate_download_htaccess", [
-            $this,
-            "ajax_download_htaccess",
-        ]);
-        add_action("wp_ajax_optistate_apply_preset", [
-            $this,
-            "ajax_apply_preset",
-        ]);
-        add_action("wp_ajax_optistate_save_max_backups", [
-            $this->settings_manager,
-            "ajax_save_max_backups",
-        ]);
-        add_action("wp_ajax_optistate_save_auto_settings", [
-            $this->settings_manager,
-            "ajax_save_auto_settings",
-        ]);
-        add_action("wp_ajax_optistate_export_settings", [
-            $this->settings_manager,
-            "ajax_export_settings",
-        ]);
-        add_action("wp_ajax_optistate_import_settings", [
-            $this->settings_manager,
-            "ajax_import_settings",
-        ]);
-        add_action("wp_ajax_optistate_save_user_access", [
-            $this->settings_manager,
-            "ajax_save_user_access",
-        ]);
-        add_action("wp_ajax_optistate_save_one_click_extra_items", [
-            $this->settings_manager,
-            "ajax_save_one_click_extra_items",
-        ]);
-        add_action("wp_ajax_optistate_get_performance_features", [
-            $this->performance_manager,
-            "ajax_get_performance_features",
-        ]);
-        add_action("wp_ajax_optistate_save_performance_features", [
-            $this->performance_manager,
-            "ajax_save_performance_features",
-        ]);
-        add_action("wp_ajax_optistate_check_htaccess_status", [
-            $this->performance_manager,
-            "ajax_check_htaccess_status",
-        ]);
-        add_action("wp_ajax_optistate_cron_manager_action", [
-            $this->performance_manager,
-            "ajax_cron_manager_action",
-        ]);
+        foreach ($this->get_ajax_routes() as $action => $route) {
+            add_action("wp_ajax_optistate_" . $action, function () use (
+                $route
+            ): void {
+                $this->dispatch_ajax_route($route);
+            });
+        }
     }
 
     private function get_dynamic_cache_keys(): array
@@ -3069,87 +3280,6 @@ final class OPTISTATE
         }
     }
 
-    private function delegate_to_server_caching(
-        string $method,
-        string $error_message
-    ): void {
-        $caching = $this->get_service("server_caching");
-
-        if (!$caching instanceof OPTISTATE_Server_Caching) {
-            OPTISTATE_Utils::send_json_error(
-                __("Server caching is disabled or not available.", "optistate")
-            );
-
-            return;
-        }
-
-        try {
-            $caching->{$method}();
-        } catch (Throwable $e) {
-            OPTISTATE_Utils::log_critical_error(
-                $method . " failed: " . $e->getMessage(),
-                ["trace" => $e->getTraceAsString()]
-            );
-
-            OPTISTATE_Utils::send_json_error($error_message);
-        }
-    }
-
-    public function ajax_purge_page_cache(): void
-    {
-        $this->delegate_to_server_caching(
-            "ajax_purge_page_cache",
-            __(
-                "An unexpected error occurred while purging the cache.",
-                "optistate"
-            )
-        );
-    }
-
-    public function ajax_get_cache_stats(): void
-    {
-        $this->delegate_to_server_caching(
-            "ajax_get_cache_stats",
-            __(
-                "An unexpected error occurred while fetching cache stats.",
-                "optistate"
-            )
-        );
-    }
-
-    public function ajax_start_preload(): void
-    {
-        $this->delegate_to_server_caching(
-            "ajax_start_preload",
-            __(
-                "An unexpected error occurred while starting the preload.",
-                "optistate"
-            )
-        );
-    }
-
-    public function ajax_stop_preload(): void
-    {
-        $this->delegate_to_server_caching(
-            "ajax_stop_preload",
-            __(
-                "An unexpected error occurred while stopping the preload.",
-                "optistate"
-            )
-        );
-    }
-
-    public function ajax_get_preload_status(): void
-    {
-        $this->delegate_to_server_caching(
-            "ajax_get_preload_status",
-            __(
-                "An unexpected error occurred while fetching preload status.",
-                "optistate"
-            )
-        );
-    }
-
     public function update_cron_schedule(
         int $days,
         string $time = "02:00"
@@ -4154,7 +4284,7 @@ final class OPTISTATE
         ]);
 
         wp_localize_script("optistate-admin-script", "optistate_BackupMgr", [
-            "ajax_url" => admin_url("admin-ajax.php"),
+            "ajaxurl" => admin_url("admin-ajax.php"),
             "nonce" => wp_create_nonce(self::BACKUP_NONCE_ACTION),
         ]);
 

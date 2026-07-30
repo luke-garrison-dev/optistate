@@ -11,7 +11,6 @@ class OPTISTATE_Tools_Utilities
     private const BATCH_SIZE_FETCH_STANDARD = 1000;
     private const BATCH_SIZE_FETCH_CLI = 2000;
     private const BATCH_SIZE_UPDATE = 1000;
-    private const DISK_SAFETY_BUFFER_BYTES = 100 * 1024 * 1024;
     private static $essential_regex = null;
     private static ?array $base_tables = null;
     private static array $released_db_locks = [];
@@ -1731,7 +1730,7 @@ class OPTISTATE_Tools_Utilities
 
         $result["available_space"] = $free_space;
         $result["required_space"] = $required_space;
-        $safety_buffer = self::DISK_SAFETY_BUFFER_BYTES;
+        $safety_buffer = OPTISTATE_Utils::DISK_SAFETY_BUFFER_BYTES;
 
         if ($free_space >= $required_space + $safety_buffer) {
             $result["success"] = true;

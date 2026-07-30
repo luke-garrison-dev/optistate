@@ -67,36 +67,12 @@ class OPTISTATE_Backup_Manager
 
     private function register_hooks(): void
     {
-        add_action("wp_ajax_optistate_create_backup", [
-            $this,
-            "ajax_create_backup",
-        ]);
-        add_action("wp_ajax_optistate_check_backup_status", [
-            $this,
-            "ajax_check_backup_status",
-        ]);
         add_action(
             "optistate_run_manual_backup_chunk",
             [$this, "run_manual_backup_chunk_worker"],
             10,
             1
         );
-        add_action("wp_ajax_optistate_delete_backup", [
-            $this,
-            "ajax_delete_backup",
-        ]);
-        add_action("wp_ajax_optistate_restore_backup", [
-            $this,
-            "ajax_restore_backup",
-        ]);
-        add_action("wp_ajax_optistate_restore_from_file", [
-            $this,
-            "ajax_restore_from_file",
-        ]);
-        add_action("wp_ajax_optistate_check_decompression_status", [
-            $this,
-            "ajax_check_decompression_status",
-        ]);
         add_action(
             "optistate_run_decompression_chunk",
             [$this, "run_decompression_chunk_worker"],
@@ -115,10 +91,6 @@ class OPTISTATE_Backup_Manager
             10,
             1
         );
-        add_action("wp_ajax_optistate_get_restore_status", [
-            $this,
-            "ajax_get_restore_status",
-        ]);
         add_action(
             "optistate_run_safety_backup_chunk",
             [$this, "run_safety_backup_chunk_worker"],
@@ -137,10 +109,6 @@ class OPTISTATE_Backup_Manager
             10,
             1
         );
-        add_action("wp_ajax_optistate_check_manual_backup_on_load", [
-            $this,
-            "ajax_check_manual_backup_on_load",
-        ]);
         add_action("admin_notices", [$this, "display_rollback_status_notice"]);
         add_action(
             "optistate_run_silent_backup_chunk",
@@ -148,10 +116,6 @@ class OPTISTATE_Backup_Manager
             10,
             1
         );
-        add_action("wp_ajax_optistate_check_restore_status", [
-            $this,
-            "ajax_check_restore_status",
-        ]);
     }
     public function display_backup_permission_warning(): void
     {
@@ -496,6 +460,88 @@ class OPTISTATE_Backup_Manager
         }
     }
 
+    /**
+     * Shared pre-flight for the two restore entry points.
+     *
+     * Performs exactly the same checks, in exactly the same order, that
+     * ajax_restore_backup() and ajax_restore_from_file() performed inline, emits
+     * the same JSON errors, and returns false as soon as one of them fires so
+     * callers keep their existing `return;` control flow.
+     *
+     * $clear_integrity_caches reproduces the one difference between the two
+     * callers: ajax_restore_backup() clears the integrity caches after the
+     * multisite guard, ajax_restore_from_file() does not.
+     */
+    private function restore_request_preflight(
+        bool $clear_integrity_caches
+    ): bool {
+        $this->ensure_required_tables_exist();
+
+        if (is_multisite()) {
+            OPTISTATE_Utils::send_json_error(
+                __(
+                    "🛑 Safety Stop! Database restore is not supported on Multisite installations to prevent network-wide data loss.",
+                    "optistate"
+                )
+            );
+
+            return false;
+        }
+
+        if ($clear_integrity_caches) {
+            $this->clear_all_integrity_caches();
+        }
+
+        $step = isset($_POST["step"])
+            ? sanitize_key(wp_unslash($_POST["step"]))
+            : "init";
+
+        if ($step !== "init") {
+            OPTISTATE_Utils::send_json_error(
+                __("Invalid request step.", "optistate")
+            );
+
+            return false;
+        }
+
+        $class_instance = $this;
+
+        register_shutdown_function(function () use ($class_instance) {
+            $error = error_get_last();
+
+            if (
+                $error !== null &&
+                in_array(
+                    $error["type"],
+                    [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR],
+                    true
+                )
+            ) {
+                OPTISTATE_Utils::deactivate_maintenance_mode();
+                $class_instance->process_store->delete(
+                    "optistate_restore_in_progress"
+                );
+            }
+        });
+
+        $existing_process = $this->process_store->get(
+            "optistate_restore_in_progress"
+        );
+
+        if ($existing_process !== false) {
+            OPTISTATE_Utils::send_json_error(
+                __(
+                    "A restore process is already running. Please wait for it to complete.",
+                    "optistate"
+                )
+            );
+
+            return false;
+        }
+
+        return true;
+    }
+
     public function ajax_restore_backup(): void
     {
         try {
@@ -506,53 +552,7 @@ class OPTISTATE_Backup_Manager
             ) {
                 return;
             }
-            $this->ensure_required_tables_exist();
-            if (is_multisite()) {
-                OPTISTATE_Utils::send_json_error(
-                    __(
-                        "🛑 Safety Stop! Database restore is not supported on Multisite installations to prevent network-wide data loss.",
-                        "optistate"
-                    )
-                );
-                return;
-            }
-            $this->clear_all_integrity_caches();
-            $step = isset($_POST["step"])
-                ? sanitize_key(wp_unslash($_POST["step"]))
-                : "init";
-            if ($step !== "init") {
-                OPTISTATE_Utils::send_json_error(
-                    __("Invalid request step.", "optistate")
-                );
-                return;
-            }
-            $class_instance = $this;
-            register_shutdown_function(function () use ($class_instance) {
-                $error = error_get_last();
-                if (
-                    $error !== null &&
-                    in_array(
-                        $error["type"],
-                        [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR],
-                        true
-                    )
-                ) {
-                    OPTISTATE_Utils::deactivate_maintenance_mode();
-                    $class_instance->process_store->delete(
-                        "optistate_restore_in_progress"
-                    );
-                }
-            });
-            $existing_process = $this->process_store->get(
-                "optistate_restore_in_progress"
-            );
-            if ($existing_process !== false) {
-                OPTISTATE_Utils::send_json_error(
-                    __(
-                        "A restore process is already running. Please wait for it to complete.",
-                        "optistate"
-                    )
-                );
+            if (!$this->restore_request_preflight(true)) {
                 return;
             }
 
@@ -2453,56 +2453,7 @@ class OPTISTATE_Backup_Manager
         ) {
             return;
         }
-        $this->ensure_required_tables_exist();
-
-        if (is_multisite()) {
-            OPTISTATE_Utils::send_json_error(
-                __(
-                    "🛑 Safety Stop! Database restore is not supported on Multisite installations to prevent network-wide data loss.",
-                    "optistate"
-                )
-            );
-            return;
-        }
-
-        $step = isset($_POST["step"])
-            ? sanitize_key(wp_unslash($_POST["step"]))
-            : "init";
-        if ($step !== "init") {
-            OPTISTATE_Utils::send_json_error(
-                __("Invalid request step.", "optistate")
-            );
-            return;
-        }
-
-        $class_instance = $this;
-        register_shutdown_function(function () use ($class_instance) {
-            $error = error_get_last();
-            if (
-                $error !== null &&
-                in_array(
-                    $error["type"],
-                    [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR],
-                    true
-                )
-            ) {
-                OPTISTATE_Utils::deactivate_maintenance_mode();
-                $class_instance->process_store->delete(
-                    "optistate_restore_in_progress"
-                );
-            }
-        });
-
-        $existing_process = $this->process_store->get(
-            "optistate_restore_in_progress"
-        );
-        if ($existing_process !== false) {
-            OPTISTATE_Utils::send_json_error(
-                __(
-                    "A restore process is already running. Please wait for it to complete.",
-                    "optistate"
-                )
-            );
+        if (!$this->restore_request_preflight(false)) {
             return;
         }
 

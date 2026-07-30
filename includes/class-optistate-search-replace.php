@@ -20,7 +20,7 @@ class OPTISTATE_Search_Replace
     private const PREVIEW_MAX_SNIPPETS_PER_CELL = 10;
     private const PREVIEW_SNIPPET_LENGTH = 160;
     private const PREVIEW_HIGHLIGHT_OPEN = '<strong style="background:#ffeb3b;">';
-	private const PREVIEW_HIGHLIGHT_CLOSE = '</strong>';
+    private const PREVIEW_HIGHLIGHT_CLOSE = "</strong>";
     private const EXECUTE_BATCH_SIZE = 300;
     private const DRY_RUN_BATCH_SIZE = 200;
     private const CHUNK_TIME_BUDGET = 4.0;
@@ -51,14 +51,6 @@ class OPTISTATE_Search_Replace
     public function __construct(OPTISTATE $main_plugin)
     {
         $this->main_plugin = $main_plugin;
-        add_action("wp_ajax_optistate_search_replace_dry_run", [
-            $this,
-            "ajax_dry_run",
-        ]);
-        add_action("wp_ajax_optistate_search_replace_execute", [
-            $this,
-            "ajax_execute",
-        ]);
     }
     private function build_pattern(
         string $search,

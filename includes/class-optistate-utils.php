@@ -15,6 +15,7 @@ class OPTISTATE_Utils
     const LCP_IMAGE_THRESHOLD = 2;
 
     private const CACHED_OPTIONS_LIMIT = 100;
+    public const DISK_SAFETY_BUFFER_BYTES = 100 * 1024 * 1024;
 
     private const SESSION_VAR_NAME_PATTERN = '/^[A-Za-z0-9_]{1,64}$/';
 
@@ -85,6 +86,34 @@ class OPTISTATE_Utils
         }
 
         return !isset(self::$disabled_functions[$function_name]);
+    }
+    public static function str_contains(string $haystack, string $needle): bool
+    {
+        return $needle === "" || strpos($haystack, $needle) !== false;
+    }
+    public static function str_ends_with(string $haystack, string $needle): bool
+    {
+        if (function_exists("str_ends_with")) {
+            return \str_ends_with($haystack, $needle);
+        }
+
+        $len = strlen($needle);
+
+        if ($len === 0) {
+            return true;
+        }
+
+        return substr($haystack, -$len) === $needle;
+    }
+    public static function path_has_traversal(string $path): bool
+    {
+        foreach (explode("/", wp_normalize_path($path)) as $segment) {
+            if ($segment === "..") {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public static function safe_set_time_limit(int $seconds): void

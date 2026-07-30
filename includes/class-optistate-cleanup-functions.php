@@ -17,11 +17,6 @@ class OPTISTATE_Cleanup_Functions
     public function __construct(OPTISTATE $main_plugin)
     {
         $this->main_plugin = $main_plugin;
-        add_action("wp_ajax_optistate_clean_item", [$this, "ajax_clean_item"]);
-        add_action("wp_ajax_optistate_one_click_optimize", [
-            $this,
-            "ajax_one_click_optimize",
-        ]);
     }
     private function is_time_exceeded(int $start_time, int $time_limit): bool
     {

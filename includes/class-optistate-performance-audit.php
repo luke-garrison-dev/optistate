@@ -11,22 +11,6 @@ class OPTISTATE_Performance_Audit
     public function __construct(OPTISTATE $main_plugin)
     {
         $this->main_plugin = $main_plugin;
-        add_action("wp_ajax_optistate_run_pagespeed_audit", [
-            $this,
-            "ajax_run_pagespeed_audit",
-        ]);
-        add_action("wp_ajax_optistate_save_pagespeed_settings", [
-            $this,
-            "ajax_save_pagespeed_settings",
-        ]);
-        add_action("wp_ajax_optistate_check_pagespeed_status", [
-            $this,
-            "ajax_check_pagespeed_status",
-        ]);
-        add_action("wp_ajax_optistate_run_pagespeed_worker_async", [
-            $this,
-            "ajax_run_pagespeed_worker_async",
-        ]);
     }
 
     public function run_pagespeed_worker(string $task_id): void
@@ -1099,7 +1083,10 @@ class OPTISTATE_Performance_Audit
 
         $is_valid_domain =
             $clean_test_host === $clean_home_host ||
-            $this->str_ends_with($clean_test_host, "." . $clean_home_host);
+            OPTISTATE_Utils::str_ends_with(
+                $clean_test_host,
+                "." . $clean_home_host
+            );
 
         if (!$is_valid_domain) {
             OPTISTATE_Utils::send_json_error(
@@ -1337,16 +1324,5 @@ class OPTISTATE_Performance_Audit
 
         $this->run_pagespeed_worker($task_id);
         wp_die();
-    }
-    private function str_ends_with(string $haystack, string $needle): bool
-    {
-        if (function_exists("str_ends_with")) {
-            return str_ends_with($haystack, $needle);
-        }
-        $len = strlen($needle);
-        if ($len === 0) {
-            return true;
-        }
-        return substr($haystack, -$len) === $needle;
     }
 }

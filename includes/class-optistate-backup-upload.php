@@ -23,10 +23,6 @@ class OPTISTATE_Backup_Upload
 
     public function register_hooks(): void
     {
-        add_action("wp_ajax_optistate_upload_restore_file", [
-            $this,
-            "ajax_upload_restore_file",
-        ]);
         add_action("init", [$this, "handle_download_backup"]);
     }
 
@@ -184,7 +180,11 @@ class OPTISTATE_Backup_Upload
 
     public function ajax_upload_restore_file(): void
     {
-        if (!$this->main_plugin->verify_ajax_request(OPTISTATE::BACKUP_NONCE_ACTION)) {
+        if (
+            !$this->main_plugin->verify_ajax_request(
+                OPTISTATE::BACKUP_NONCE_ACTION
+            )
+        ) {
             return;
         }
         $original_time_limit = (int) ini_get("max_execution_time");

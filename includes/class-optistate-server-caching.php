@@ -507,7 +507,40 @@ class OPTISTATE_Server_Caching
         header("Content-Type: text/html; charset=" . $charset);
         header("Vary: Accept-Encoding, Cookie");
     }
+    private function replay_cached_headers(array $cached_headers): void
+    {
+        $managed = [
+            "cache-control",
+            "expires",
+            "last-modified",
+            "content-type",
+            "vary",
+        ];
 
+        foreach ($cached_headers as $h) {
+            $h = trim($h);
+
+            if ($h === "") {
+                continue;
+            }
+
+            $colon = strpos($h, ":");
+
+            if ($colon === false) {
+                continue;
+            }
+
+            $name = strtolower(trim(substr($h, 0, $colon)));
+
+            if (in_array($name, $managed, true)) {
+                continue;
+            }
+
+            if (in_array($name, self::ALLOWED_CACHED_HEADERS, true)) {
+                header($h, false);
+            }
+        }
+    }
     private function normalize_uri_for_key(string $raw_uri): string
     {
         $uri = wp_unslash($raw_uri);
@@ -622,38 +655,7 @@ class OPTISTATE_Server_Caching
                             fgets($handle);
                             $cached_headers = json_decode($headers_json, true);
                             if (is_array($cached_headers)) {
-                                $our_headers = [
-                                    "cache-control",
-                                    "expires",
-                                    "last-modified",
-                                    "content-type",
-                                    "vary",
-                                ];
-                                foreach ($cached_headers as $h) {
-                                    $h = trim($h);
-                                    if ($h === "") {
-                                        continue;
-                                    }
-                                    $colon = strpos($h, ":");
-                                    if ($colon === false) {
-                                        continue;
-                                    }
-                                    $name = strtolower(
-                                        trim(substr($h, 0, $colon))
-                                    );
-                                    if (in_array($name, $our_headers, true)) {
-                                        continue;
-                                    }
-                                    if (
-                                        in_array(
-                                            $name,
-                                            self::ALLOWED_CACHED_HEADERS,
-                                            true
-                                        )
-                                    ) {
-                                        header($h, false);
-                                    }
-                                }
+                                $this->replay_cached_headers($cached_headers);
                                 $this->send_cached_page_headers(
                                     $lifetime,
                                     $file_time
@@ -677,38 +679,7 @@ class OPTISTATE_Server_Caching
                                 $headers_text = $parts[0];
                                 $body_start = $parts[1];
                                 $cached_headers = explode("\n", $headers_text);
-                                $our_headers = [
-                                    "cache-control",
-                                    "expires",
-                                    "last-modified",
-                                    "content-type",
-                                    "vary",
-                                ];
-                                foreach ($cached_headers as $h) {
-                                    $h = trim($h);
-                                    if ($h === "") {
-                                        continue;
-                                    }
-                                    $colon = strpos($h, ":");
-                                    if ($colon === false) {
-                                        continue;
-                                    }
-                                    $name = strtolower(
-                                        trim(substr($h, 0, $colon))
-                                    );
-                                    if (in_array($name, $our_headers, true)) {
-                                        continue;
-                                    }
-                                    if (
-                                        in_array(
-                                            $name,
-                                            self::ALLOWED_CACHED_HEADERS,
-                                            true
-                                        )
-                                    ) {
-                                        header($h, false);
-                                    }
-                                }
+                                $this->replay_cached_headers($cached_headers);
                                 $this->send_cached_page_headers(
                                     $lifetime,
                                     $file_time

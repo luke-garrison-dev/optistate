@@ -14,12 +14,6 @@ class OPTISTATE_Performance_Manager
     private array $hook_callback_cache = [];
     private ?bool $config_constants_loaded = null;
     private bool $cron_manager_bypass_pause_filter = false;
-    private static function _str_contains(
-        string $haystack,
-        string $needle
-    ): bool {
-        return $needle === "" || strpos($haystack, $needle) !== false;
-    }
     public function __construct(OPTISTATE $main_plugin)
     {
         $this->main_plugin = $main_plugin;
@@ -902,7 +896,7 @@ class OPTISTATE_Performance_Manager
 
         return $result;
     }
-    
+
     public function cleanup_orphaned_cron_state(): void
     {
         $state = $this->_cron_manager_get_state(true);
@@ -1906,7 +1900,12 @@ class OPTISTATE_Performance_Manager
             return;
         }
         $this->runtime_optimizations_applied = true;
-        add_filter("pre_schedule_event", [$this, "block_paused_cron_event"], 10, 3);
+        add_filter(
+            "pre_schedule_event",
+            [$this, "block_paused_cron_event"],
+            10,
+            3
+        );
         $settings = $this->get_performance_settings();
         if (
             isset($settings["heartbeat_api"]) &&
@@ -2506,7 +2505,7 @@ class OPTISTATE_Performance_Manager
             $font_settings = $settings["font_optimization"] ?? [];
         }
 
-        if (!self::_str_contains($href, "fonts.googleapis.com")) {
+        if (!OPTISTATE_Utils::str_contains($href, "fonts.googleapis.com")) {
             return $html;
         }
 
@@ -2592,7 +2591,7 @@ class OPTISTATE_Performance_Manager
         }
 
         $request_uri = $_SERVER["REQUEST_URI"] ?? "";
-        if (self::_str_contains($request_uri, "wp-login.php")) {
+        if (OPTISTATE_Utils::str_contains($request_uri, "wp-login.php")) {
             return;
         }
 

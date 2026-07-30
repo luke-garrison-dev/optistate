@@ -14,18 +14,6 @@ class OPTISTATE_Login_Protection
     public function __construct(OPTISTATE $main_plugin)
     {
         $this->main_plugin = $main_plugin;
-        add_action("wp_ajax_optistate_save_login_protection", [
-            $this,
-            "ajax_save_settings",
-        ]);
-        add_action("wp_ajax_optistate_unblock_user", [
-            $this,
-            "ajax_unblock_user",
-        ]);
-        add_action("wp_ajax_optistate_save_ip_blocker", [
-            $this,
-            "ajax_save_ip_blocker",
-        ]);
     }
 
     public function init_hooks(): void

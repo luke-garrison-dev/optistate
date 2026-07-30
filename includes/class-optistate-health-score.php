@@ -13,10 +13,6 @@ class OPTISTATE_Health_Score
     public function __construct(OPTISTATE $main_plugin)
     {
         $this->main_plugin = $main_plugin;
-        add_action("wp_ajax_optistate_get_health_score", [
-            $this,
-            "ajax_get_health_score",
-        ]);
     }
 
     public function ajax_get_health_score(): void

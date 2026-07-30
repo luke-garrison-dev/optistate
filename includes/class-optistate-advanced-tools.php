@@ -21,82 +21,9 @@ class OPTISTATE_Advanced_Tools
         $this->process_store = $process_store;
         $this->process_store->ensure_table_exists();
 
-        add_action(
-            "wp_ajax_optistate_optimize_autoload",
-            static function () use ($main_plugin): void {
-                if (!$main_plugin->verify_ajax_request()) {
-                    return;
-                }
-                OPTISTATE_Tools_Utilities::run_optimize_autoload($main_plugin);
-            }
-        );
-        add_action(
-            "wp_ajax_optistate_preview_autoload_options",
-            static function () use ($main_plugin): void {
-                if (!$main_plugin->verify_ajax_request()) {
-                    return;
-                }
-                OPTISTATE_Tools_Utilities::run_preview_autoload_options(
-                    $main_plugin
-                );
-            }
-        );
-        add_action(
-            "wp_ajax_optistate_restore_autoload_backup",
-            static function () use ($main_plugin): void {
-                if (!$main_plugin->verify_ajax_request()) {
-                    return;
-                }
-                OPTISTATE_Tools_Utilities::run_restore_autoload_backup(
-                    $main_plugin
-                );
-            }
-        );
-        add_action("wp_ajax_optistate_initiate_analyze_repair", [
-            $this,
-            "ajax_initiate_analyze_repair",
-        ]);
-        add_action("wp_ajax_optistate_run_analyze_repair_chunk", [
-            $this,
-            "ajax_run_analyze_repair_chunk",
-        ]);
-        add_action("wp_ajax_optistate_analyze_indexes", [
-            $this,
-            "ajax_analyze_indexes",
-        ]);
-        add_action("wp_ajax_optistate_manage_index", [
-            $this,
-            "ajax_manage_index",
-        ]);
-        add_action("wp_ajax_optistate_check_index_status", [
-            $this,
-            "ajax_check_index_status",
-        ]);
-        add_action("wp_ajax_optistate_scan_integrity", static function () use (
-            $main_plugin
-        ): void {
-            OPTISTATE_Tools_Utilities::run_scan_integrity($main_plugin);
-        });
-        add_action("wp_ajax_optistate_fix_integrity", static function () use (
-            $main_plugin
-        ): void {
-            OPTISTATE_Tools_Utilities::run_fix_integrity($main_plugin);
-        });
-        add_action("wp_ajax_optistate_get_table_analysis", [
-            $this,
-            "ajax_get_table_analysis",
-        ]);
         add_action("optistate_run_index_chunk", [
             $this,
             "run_index_chunk_worker",
-        ]);
-        add_action("wp_ajax_optistate_optimize_tables", [
-            $this,
-            "ajax_optimize_tables",
-        ]);
-        add_action("wp_ajax_optistate_delete_table", [
-            $this,
-            "ajax_delete_table",
         ]);
     }
 
